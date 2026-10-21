@@ -96,6 +96,12 @@ adb shell settings put secure accessibility_enabled 1
 # Home button, the cases Fire OS says nothing about (Home pressed twice quickly, the TV starting):
 # lets that service ask which screen is in front, at those moments only.
 adb shell cmd appops set app.glasshome.launcher GET_USAGE_STATS allow
+
+# Optional: Fire OS has been seen to turn that service off when the TV restarts. With this, Glass
+# Home turns it back on (at start-up, and when it opens), while Home Screen settings > Home Button
+# is on. It writes only the accessibility service list. To take it back:
+#   adb shell pm revoke app.glasshome.launcher android.permission.WRITE_SECURE_SETTINGS
+adb shell pm grant app.glasshome.launcher android.permission.WRITE_SECURE_SETTINGS
 ```
 
 **TMDB token** (for Movies, TV Shows and featured titles): copy
