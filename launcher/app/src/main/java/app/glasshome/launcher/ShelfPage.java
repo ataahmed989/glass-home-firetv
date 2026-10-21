@@ -179,6 +179,12 @@ final class ShelfPage extends ViewGroup {
     }
 
     /** Home's own background, which the page settles on once the hero has scrolled away. */
+    /** Another app is in front: gives back the pictures that are made again when next drawn. */
+    void trimMemory() {
+        painter.release();
+        teamColours.clear();
+    }
+
     void setHomeBackground(Bitmap b) {
         if (b == home) return;
         home = b;

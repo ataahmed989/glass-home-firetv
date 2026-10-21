@@ -57,6 +57,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private static final long CATALOG_REFRESH_MS = 2 * 60 * 1000L;
     private static final long SPORTS_LIVE_MS = 60 * 1000L, SPORTS_IDLE_MS = 10 * 60 * 1000L;
     private static final long FEATURED_WAIT_MS = 1200;
+    /** How long "Open …" waits for a title's link before opening the app itself. */
+    private static final long LINK_WAIT_MS = 2000;
+    /** "Open …" waiting for a title's link (main thread only); null when nothing is waiting. */
+    private Runnable linkWait;
+    /** How long after another app takes the screen Glass Home's given-up pictures are collected. */
+    private static final long COLLECT_AFTER_MS = 10_000;
     /** Once the screen has been still this long (focus and the tile's sway settled), its frame is kept for the Home button. */
     private static final long SNAPSHOT_IDLE_MS = 2800;
 
@@ -819,7 +825,74 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     public void onAction(ShelfPage source, PageModel.Feature feature, PageModel.Action action) {
         if (action.details) openDetails(source, feature.ref);
-        else if (action.appKey != null) launch(action.appKey);
+        else if (action.appKey != null) open(feature.ref, action.appKey);
+    }
+
+    /** "Open …" on a film or show: into the app at that title when its link is known, otherwise the app. */
+    private void open(Object ref, String app) {
+        if (!(ref instanceof Tmdb.Title)) {
+            launch(app);
+            return;
+        }
+        Tmdb.Title t = (Tmdb.Title) ref;
+        if (AppLinks.lookedUp(t)) {
+            openLink(t, app, AppLinks.known(t, app));
+            return;
+        }
+        // Not looked up yet (it usually is, from when the title came on screen): wait a moment for it
+        if (linkWait != null) return;   // pressed again while waiting
+        final Runnable[] wait = new Runnable[1];
+        wait[0] = () -> {
+            if (linkWait != wait[0]) return;
+            linkWait = null;
+            if (resumed) launch(app);
+        };
+        linkWait = wait[0];
+        main.postDelayed(wait[0], LINK_WAIT_MS);
+        pagesNet.execute(() -> {
+            String link = null;
+            try {
+                link = AppLinks.lookUp(this, t).get(app);
+            } catch (Exception ignored) {
+                // the app opens instead
+            }
+            final String found = link;
+            main.post(() -> {
+                if (linkWait != wait[0]) return;
+                linkWait = null;
+                main.removeCallbacks(wait[0]);
+                if (resumed) openLink(t, app, found);   // not if Glass Home was left meanwhile
+            });
+        });
+    }
+
+    private void openLink(Tmdb.Title t, String app, String link) {
+        Intent intent = link == null ? null : AppLinks.intent(this, app, link);
+        if (intent == null) {
+            launch(app);
+            return;
+        }
+        HomeButtonService.opening(app);
+        try {
+            startActivity(intent);
+            WatchHistory.opened(app, t);   // for Continue Watching, if the app does not say what it plays
+        } catch (ActivityNotFoundException | SecurityException e) {
+            launch(app);
+        }
+    }
+
+    /** Looks up where a film or show is in each of its apps while it is on screen, so "Open …" is instant. */
+    private void prefetchLinks(Object ref) {
+        if (!(ref instanceof Tmdb.Title) || AppLinks.lookedUp((Tmdb.Title) ref)) return;
+        Tmdb.Title t = (Tmdb.Title) ref;
+        if (!t.detailed || (t.streamingApps.isEmpty() && t.storeApps.isEmpty())) return;
+        pagesNet.execute(() -> {
+            try {
+                AppLinks.lookUp(this, t);
+            } catch (Exception ignored) {
+                // tried again when "Open …" is pressed
+            }
+        });
     }
 
     @Override
@@ -833,7 +906,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     public void onHeroShown(ShelfPage source) {
-        if (source == currentPage()) setBarBackdrop(source.backdrop());
+        if (source != currentPage()) return;
+        setBarBackdrop(source.backdrop());
+        PageModel.Feature hero = source.currentHero();
+        if (hero != null) prefetchLinks(hero.ref);
     }
 
     @Override
@@ -843,7 +919,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /**
      * Continue Watching: back into the app. The app's own "return to what was playing" link is
-     * used while its session is alive and this is the latest thing it played; otherwise the app opens.
+     * used while its session is alive and this is the latest thing it played; otherwise the app
+     * opens at the title's page (its own Resume is there) when that is known, or else at its home.
      */
     private void resume(WatchHistory.Entry e) {
         android.app.PendingIntent intent = MediaWatcher.RESUME.get(e.pkg);
@@ -863,6 +940,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 MediaWatcher.RESUME.remove(e.pkg);
             }
         }
+        if (e.tmdbId > 0) {
+            Tmdb.Title t = new Tmdb.Title(e.tmdbId, e.episode, e.name(), "", e.backdrop, "", "", new int[0]);
+            t.streamingApps.add(e.pkg);
+            if (!e.episode) t.minutes = (int) (e.durationMs / 60_000);
+            open(t, e.pkg);
+            return;
+        }
         launch(e.pkg);
     }
 
@@ -877,6 +961,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         Tmdb.Title t = (Tmdb.Title) ref;
         if (t.detailed) {
             showDetail(Catalog.feature(t, true), Tmdb.CREDIT);
+            prefetchLinks(t);
             return;
         }
         PageModel.Feature preview = new PageModel.Feature();
@@ -895,6 +980,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     if (titleDetail.isOpen() && titleDetail.feature() != null && titleDetail.feature().ref == t) {
                         titleDetail.show(Catalog.feature(t, true), Tmdb.CREDIT);
                     }
+                    prefetchLinks(t);   // now that it is known where it streams
                 });
             } catch (Exception e) {
                 main.post(() -> {
@@ -1492,7 +1578,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case PAGE_DETAIL:
                 PageModel.Action a = titleDetail.focusedAction();
-                if (a != null && a.appKey != null) launch(a.appKey);
+                if (a != null && a.appKey != null) open(titleDetail.feature() == null ? null : titleDetail.feature().ref, a.appKey);
                 return;
             case HERO:
                 if (presentedApp != null) launch(presentedApp);
@@ -1646,7 +1732,34 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         super.onPause();
     }
 
-    /** Out of sight, Glass Home keeps little: the TV has under 2 GB for Fire OS and every app. */
+    @Override
+    protected void onStart() {
+        super.onStart();
+        main.removeCallbacks(collect);
+    }
+
+    /**
+     * Out of sight, Glass Home keeps little: the TV has under 2 GB for Fire OS and every app. The
+     * Home button service keeps this process in the foreground as far as Android is concerned, so
+     * Android never says that Glass Home's screen is hidden (onTrimMemory with UI_HIDDEN does not
+     * come); it lets go here instead, once another app has the screen.
+     */
+    @Override
+    protected void onStop() {
+        super.onStop();
+        ImageCache.get(this).trimMemory();
+        for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
+        titleDetail.trimMemory();
+        main.removeCallbacks(collect);
+        main.postDelayed(collect, COLLECT_AFTER_MS);
+    }
+
+    /**
+     * The pictures given up are freed (with their copies on the GPU) only once collected, which an
+     * app sitting idle behind another may not do for hours. Not at once: the app just opened is starting.
+     */
+    private final Runnable collect = () -> worker.execute(() -> Runtime.getRuntime().gc());
+
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
@@ -1662,6 +1775,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     protected void onDestroy() {
+        main.removeCallbacks(collect);
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         worker.shutdownNow();

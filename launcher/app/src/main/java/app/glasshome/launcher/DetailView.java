@@ -46,6 +46,11 @@ final class DetailView extends View {
         return getVisibility() == VISIBLE;
     }
 
+    /** Another app is in front: the picture's shader is made again when next drawn. */
+    void trimMemory() {
+        painter.release();
+    }
+
     PageModel.Feature feature() {
         return feature;
     }

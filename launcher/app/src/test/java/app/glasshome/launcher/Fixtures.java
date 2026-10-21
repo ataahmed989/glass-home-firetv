@@ -27,6 +27,10 @@ final class Fixtures {
     static void install() {
         Clock.fixedMillis = RECORDED_AT;
         Clock.fixedZone = ZoneId.of("America/New_York");
+        // Links into the streaming apps are not recorded: "Open …" falls back to the app itself
+        AppLinks.poster = (url, json) -> {
+            throw new IOException("not recorded: " + url);
+        };
         Net.fetcher = (url, bearer) -> {
             File f = new File(DIR, Net.sha1(url));
             if (f.isFile()) return Files.readAllBytes(f.toPath());

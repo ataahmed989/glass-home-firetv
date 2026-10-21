@@ -93,7 +93,6 @@ final class ImageCache {
         return null;
     }
 
-    /** Loads still in flight (tests wait for these before capturing a screen). */
     /**
      * Another app is in front: give most decoded images back (they come from disk again quickly),
      * keeping the most recently drawn quarter, Home's own, so nothing pops in on the way back.
@@ -102,6 +101,7 @@ final class ImageCache {
         memory.trimToSize(memory.maxSize() / 4);
     }
 
+    /** Loads still in flight (tests wait for these before capturing a screen). */
     int pending() {
         return pending.size();
     }

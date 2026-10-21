@@ -21,6 +21,7 @@ import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.TextUtils;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -143,6 +144,12 @@ final class FeaturePainter {
     private ColorFilter dimFilter;
     private Shader scrimLeft, scrimBottom;
     private int scrimW, scrimH;
+
+    /** Lets go of the pictures (another app is in front); the shaders are made again when next drawn. */
+    void release() {
+        Arrays.fill(slotWhat, null);
+        Arrays.fill(slotShader, null);
+    }
 
     /** The background with its scrims as one shader, kept for the last few pictures (a crossfade draws two). */
     private Shader background(int w, int h, PageModel.Feature f, Bitmap art) {
