@@ -985,8 +985,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         lastZone = Zone.GRID;
         homeZone = Zone.GRID;
         if (position < Ui.COLUMNS) lastDockColumn = position;
-        dock.setChevronVisible(position < Ui.COLUMNS);
-        grid.invalidate();
         // The hero follows only once focus has rested; moving on cancels the pending update
         main.removeCallbacks(presentPending);
         pendingApp = app;
