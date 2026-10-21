@@ -609,7 +609,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void launch(AppEntry app) {
-        // The Appstore and Settings pass through Amazon's launcher on their way up; that is not the Home button
+        // Some of Amazon's screens pass through its launcher on their way up; that is not the Home button
         HomeButtonService.opening(app.key);
         try {
             startActivity(app.launchIntent, openingAnimation());

@@ -29,9 +29,10 @@ import android.view.accessibility.AccessibilityEvent;
  * The cover lifts at once for anything else that comes up instead (Fire TV's quick menu on a long
  * press, the screensaver, an app opened by voice), on any key, and after two seconds regardless.
  *
- * Amazon's launcher also hosts screens that are opened on purpose: the Appstore's app library and
- * Settings both pass through it. When Glass Home opens one of those, Amazon's launcher is left
- * alone until that screen is up, and while the remote moves around the Appstore.
+ * Amazon's launcher also hosts screens that are opened on purpose: Settings and the Appstore's
+ * app library can pass through it (Glass Home opens Settings and the Appstore's storefront
+ * directly, so only where those cannot be). When Glass Home opens one of those, Amazon's
+ * launcher is left alone until that screen is up, and while the remote moves around the library.
  *
  * What it is told: which app's window comes to the front, that Amazon's launcher redrew, and when
  * a remote key is pressed (never consumed; Home never arrives). It reads no screen content and
@@ -40,6 +41,8 @@ import android.view.accessibility.AccessibilityEvent;
 public final class HomeButtonService extends AccessibilityService {
     static final String AMAZON_LAUNCHER = "com.amazon.tv.launcher";
     static final String APPSTORE = "com.amazon.venezia";
+    /** The Appstore's launcher entry, which hands over to its app library on Amazon's home screen. */
+    private static final String APPSTORE_ENTRY = ".grid.AppsGridLauncherActivity";
     static final String EXTRA_HOME_BUTTON = "app.glasshome.launcher.HOME_BUTTON";
     /** Amazon's own screens, between which the remote moves without leaving Amazon's UI. */
     private static final String[] AMAZON_UI = {AMAZON_LAUNCHER, APPSTORE, "com.amazon.tv.settings.v2"};
@@ -142,10 +145,14 @@ public final class HomeButtonService extends AccessibilityService {
         CharSequence window = event.getClassName();
         boolean home = pkg.equals(AMAZON_LAUNCHER) && window != null && window.toString().endsWith(".HomeActivity_vNext");
         if (opening()) {
-            // Settings shows a window of its own: once that is up, the opening is over. The Appstore's
-            // library is Amazon's home window itself, which reports in more than once as it comes up,
-            // so the Appstore is left alone for the whole opening time.
-            if (!home && !appstore) openingAt = -OPENING_MS;
+            // Settings and the Appstore's storefront show windows of their own: once one is up, the
+            // opening is over. The Appstore's launcher entry (the fallback when the storefront cannot
+            // be opened) hands over to its library instead, which is Amazon's home window itself and
+            // reports in more than once as it comes up, so that is left alone for the whole opening time.
+            if (!home && !(window != null && window.toString().endsWith(APPSTORE_ENTRY))) {
+                openingAt = -OPENING_MS;
+                appstore = false;
+            }
             return;
         }
         if (!home) {
