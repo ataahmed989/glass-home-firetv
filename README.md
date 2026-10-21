@@ -92,6 +92,10 @@ adb shell dpm set-active-admin app.glasshome.launcher/.SleepAdmin
 # reads nothing on screen and sends nothing anywhere.
 adb shell settings put secure enabled_accessibility_services app.glasshome.launcher/app.glasshome.launcher.HomeButtonService
 adb shell settings put secure accessibility_enabled 1
+
+# Home button, the cases Fire OS says nothing about (Home pressed twice quickly, the TV starting):
+# lets that service ask which screen is in front, at those moments only.
+adb shell cmd appops set app.glasshome.launcher GET_USAGE_STATS allow
 ```
 
 **TMDB token** (for Movies, TV Shows and featured titles): copy
@@ -115,7 +119,7 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 | ☰ Menu | To the tab bar, closing anything open; again to go back down. |
 | Back | Closes what is open, then steps back toward Home. |
 | Play/Pause | On the Smart Stack, turns to the next widget (Rewind goes back). |
-| Home | Glass Home's Home page, closing anything open. Fire OS sends Home to Amazon's home first, so the screen is dark for about half a second on the way (0.5-0.9 s measured). |
+| Home | Glass Home's Home page, closing anything open, however often it is pressed. Fire OS sends Home to Amazon's home first, so the screen may go dark for a moment on the way (0-0.3 s measured). Held: Fire TV's quick menu. |
 
 ## Debloat
 

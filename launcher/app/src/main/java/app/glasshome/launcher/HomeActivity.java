@@ -20,6 +20,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
@@ -63,6 +64,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private Runnable linkWait;
     /** How long after another app takes the screen Glass Home's given-up pictures are collected. */
     private static final long COLLECT_AFTER_MS = 10_000;
+    /** After Glass Home's first frame back in front, how long the screen takes to show it (a couple of refreshes). */
+    private static final long SHOWN_AFTER_FRAME_MS = 50;
+    /** The cover over the trip back goes after this regardless (it also goes on any key). */
+    private static final long SHOWN_FALLBACK_MS = 1500;
     /** Once the screen has been still this long (focus and the tile's sway settled), its frame is kept for the Home button. */
     private static final long SNAPSHOT_IDLE_MS = 2800;
 
@@ -141,8 +146,22 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (resumed && showingHomeAsTheHomeButtonLeavesIt()) HomeSnapshot.capture(this);
     };
 
-    /** In case the window reports no enter animation: by now Glass Home is drawn in front. */
+    /** In case no frame is reported (none was needed): the cover goes regardless, a while after Glass Home resumed. */
     private final Runnable shownFallback = HomeButtonService::glassHomeShown;
+    private final Runnable shown = HomeButtonService::glassHomeShown;
+    private boolean waitingForFrame;
+    /**
+     * Back in front, the cover over the trip (see HomeButtonService) goes once Glass Home has drawn
+     * a frame, and a moment more for the screen to show it: its fade then reveals Glass Home, never
+     * the black behind a window not yet shown. Brought back by the Home button, Glass Home starts
+     * without an enter animation, so the window's own "shown" report may not come at all.
+     */
+    private final Window.OnFrameMetricsAvailableListener firstFrame = (window, metrics, dropped) -> main.post(() -> {
+        if (!waitingForFrame) return;
+        stopWaitingForFrame();
+        main.removeCallbacks(shown);
+        main.postDelayed(shown, SHOWN_AFTER_FRAME_MS);
+    });
 
     /** A streaming app's featured titles are slow to come: the plain background takes over meanwhile. */
     private final Runnable featuredLate = () -> {
@@ -1657,6 +1676,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         super.onResume();
         resumed = true;
         inFront = true;
+        HomeButtonService.glassHomeResumed();
         capsule.updateTime();
         restoreFocus();
         scheduleSlides();
@@ -1668,9 +1688,24 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         refreshMyTeams();
         refreshWatching();
         main.removeCallbacks(shownFallback);
-        main.postDelayed(shownFallback, 600);
+        main.removeCallbacks(shown);
+        main.postDelayed(shownFallback, SHOWN_FALLBACK_MS);
+        if (!waitingForFrame) {
+            waitingForFrame = true;
+            getWindow().addOnFrameMetricsAvailableListener(firstFrame, main);
+        }
         main.removeCallbacks(takeSnapshot);
         main.postDelayed(takeSnapshot, SNAPSHOT_IDLE_MS);
+    }
+
+    private void stopWaitingForFrame() {
+        if (!waitingForFrame) return;
+        waitingForFrame = false;
+        try {
+            getWindow().removeOnFrameMetricsAvailableListener(firstFrame);
+        } catch (IllegalArgumentException ignored) {
+            // already removed after its frame
+        }
     }
 
     /** Glass Home is drawn and in front: whatever covered the trip back (see HomeButtonService) can go. */
@@ -1718,6 +1753,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         resumed = false;
         inFront = false;
         main.removeCallbacks(shownFallback);
+        main.removeCallbacks(shown);
+        stopWaitingForFrame();
         main.removeCallbacks(takeSnapshot);
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
         HomeButtonService.leftUnexpectedly();
