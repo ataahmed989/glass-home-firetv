@@ -148,7 +148,7 @@ Settings > Device Usage Data, Collect App Usage Data and Interest-based Ads; Pre
 Featured Content > Allow Video Autoplay and Allow Audio Autoplay (Amazon's home is still opened
 by every Home press, for a moment, and no longer starts a preview video when it is).
 
-Sticks with Ambient Experience (the Fire TV Stick 4K 2nd gen, AFTKRT, here) hand the screensaver
+Sticks with Ambient Experience (the Fire TV Stick 4K Max, AFTKRT, here) hand the screensaver
 to `com.amazon.tv.ftvambient`. With it disabled, such a stick goes to sleep, and turns the TV off,
 when the screensaver should start (5 minutes by default), whatever the sleep setting. There, the
 screensaver start was set to the same hour as sleep, so the stick stays on its screen for an hour
