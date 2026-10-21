@@ -109,10 +109,11 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 
 ## Debloat
 
-`firetv/disabled-packages.txt` lists the 30 packages that were turned off with
-`pm disable-user --user 0` (telemetry, ads, recommendations, ambient, shopping, tutorials and
-unused extras such as miniTV and the games hub). Nothing was uninstalled, and Fire OS updates,
-voice, casting and mirroring were kept. `firetv/restore.sh` turns them all back on.
+`firetv/disabled-packages.txt` lists the 38 packages that were turned off with
+`pm disable-user --user 0` (telemetry, ads, recommendations, ambient, shopping, tutorials,
+smart-home and Alexa calling services, and unused extras such as miniTV, the games hub, Silk
+and Amazon Kids). Nothing was uninstalled, and Fire OS updates, voice, casting and mirroring
+were kept. `firetv/restore.sh` turns them all back on.
 
 Fire OS 8.1.8.5 refuses to disable some packages as protected, among them
 `com.amazon.device.metrics`, `com.amazon.device.logmanager`, `com.amazon.device.crashmanager`
