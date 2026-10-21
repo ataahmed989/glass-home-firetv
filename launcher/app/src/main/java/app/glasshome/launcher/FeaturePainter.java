@@ -168,13 +168,11 @@ final class FeaturePainter {
             base = new LinearGradient(0, 0, w, h, 0xFF101216, 0xFF262B34, Shader.TileMode.CLAMP);
         }
         if (w != scrimW || h != scrimH) {
-            // Each scrim as the share of the picture it lets through, to multiply by
             scrimW = w;
             scrimH = h;
-            scrimLeft = new LinearGradient(0, 0, w * 0.70f, 0, new int[] {through(0xD9), through(0x8C), through(0)},
-                    new float[] {0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
-            scrimBottom = new LinearGradient(0, h * 0.40f, 0, h, new int[] {through(0), through(0x4D), through(0xC7)},
-                    new float[] {0f, 0.43f, 1f}, Shader.TileMode.CLAMP);
+            Shader[] s = scrims(w, h);
+            scrimLeft = s[0];
+            scrimBottom = s[1];
         }
         Shader shader = new ComposeShader(new ComposeShader(base, scrimLeft, PorterDuff.Mode.MULTIPLY), scrimBottom, PorterDuff.Mode.MULTIPLY);
         slotWhat[slotNext] = what;
@@ -189,11 +187,26 @@ final class FeaturePainter {
         return 0xFF000000 | (255 - alpha) * 0x010101;
     }
 
+    /** The left and bottom scrims, each as the share of the picture it lets through, to multiply by. */
+    static Shader[] scrims(int w, int h) {
+        return new Shader[] {
+                new LinearGradient(0, 0, w * 0.70f, 0, new int[] {through(0xD9), through(0x8C), through(0)},
+                        new float[] {0f, 0.45f, 1f}, Shader.TileMode.CLAMP),
+                new LinearGradient(0, h * 0.40f, 0, h, new int[] {through(0), through(0x4D), through(0xC7)},
+                        new float[] {0f, 0.43f, 1f}, Shader.TileMode.CLAMP)};
+    }
+
     /** The away team's colour on the left blending into the home team's on the right, each glowing behind its logo. */
     static Shader[] teamShaders(int w, int h, Sports.Game g) {
+        return teamShaders(w, h, g, false);
+    }
+
+    /** As above; {@code clear} leaves the dark side transparent instead, for something to show through it. */
+    static Shader[] teamShaders(int w, int h, Sports.Game g, boolean clear) {
         int a = shade(g.away.color, 0.42f), b = shade(g.home.color, 0.42f);
         return new Shader[] {
-                new LinearGradient(0, 0, w, h * 0.3f, new int[] {0xFF07080B, a, b}, new float[] {0f, 0.55f, 1f}, Shader.TileMode.CLAMP),
+                new LinearGradient(0, 0, w, h * 0.3f, new int[] {clear ? withAlpha(a, 0) : 0xFF07080B, a, b},
+                        new float[] {0f, 0.55f, 1f}, Shader.TileMode.CLAMP),
                 new RadialGradient(w * 0.573f, h * 0.39f, w * 0.24f, withAlpha(g.away.color, 0x70), withAlpha(g.away.color, 0), Shader.TileMode.CLAMP),
                 new RadialGradient(w * 0.88f, h * 0.39f, w * 0.24f, withAlpha(g.home.color, 0x70), withAlpha(g.home.color, 0), Shader.TileMode.CLAMP),
         };

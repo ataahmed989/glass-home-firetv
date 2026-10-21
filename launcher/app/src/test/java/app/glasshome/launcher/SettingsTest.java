@@ -109,7 +109,7 @@ public class SettingsTest {
 
         h.back();
         h.back();
-        for (int i = 0; i < 4; i++) h.press(KEYCODE_DPAD_RIGHT);   // Apple TV, after TiviMate, FirePlayer, Netflix and YouTube
+        for (int i = 0; i < 4; i++) h.press(KEYCODE_DPAD_RIGHT);   // Apple TV, after TiviMate, Netflix, Prime Video and Max
         TestHome.advance(Ui.HERO_DWELL_MS + 50);
         TestHome.settle();
         assertEquals(4, h.focused());

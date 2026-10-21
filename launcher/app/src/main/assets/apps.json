@@ -6,21 +6,21 @@
   "tmdb_api_key": "",
   "order": [
     "ar.tvplayer.tv",
-    "app.fireplayer",
     "com.netflix.ninja",
-    "com.amazon.firetv.youtube",
+    "com.amazon.firebat",
+    "com.hbo.hbonow",
     "com.apple.atve.amazon.appletv",
     "com.disney.disneyplus",
-    "com.hbo.hbonow",
-    "com.amazon.firebat",
+    "app.fireplayer",
+    "com.amazon.firetv.youtube",
     "com.spotify.tv.android",
-    "com.apple.android.music",
     "gamepass.fire.tv",
-    "com.amazon.tv.livetv",
+    "settings",
     "com.amazon.venezia",
+    "com.amazon.tv.livetv",
     "com.esaba.downloader",
     "com.tailscale.ipn",
-    "settings"
+    "com.apple.android.music"
   ],
   "hidden": [
     "app.glasshome.launcher",

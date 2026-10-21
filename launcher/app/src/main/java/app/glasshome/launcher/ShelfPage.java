@@ -6,27 +6,38 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.LightingColorFilter;
 import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.ViewGroup;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
 
 /**
  * One tvOS-style browse page (Movies, TV Shows, Sports): a full-screen hero carousel with the first
  * shelf peeking below it, then shelves of cards. Moving down scrolls the hero away and settles the
- * focused shelf near the top; moving along a shelf slides it. The whole page is one focus target
- * that keeps its own position (a hero button, or a shelf and card), moved by HomeActivity's remote
- * handling, and it is drawn in one pass rather than as a view per card.
+ * focused shelf near the top, while the hero's picture gives way to Home's own background, darkened;
+ * moving along a shelf slides it. The whole page is one focus target that keeps its own position
+ * (a hero button, or a shelf and card), moved by HomeActivity's remote handling.
+ *
+ * The page draws itself in parts, each a child view ({@link Layer}): the background, the hero's
+ * text, and one per shelf. The GPU redraws only the parts that changed, so sliding a shelf redraws
+ * that shelf's band of the screen rather than all of it, and scrolling moves the shelves without
+ * drawing them again. Cards are drawn by hand rather than as a view each.
  */
-final class ShelfPage extends View {
+final class ShelfPage extends ViewGroup {
     interface Listener {
         void onAction(ShelfPage page, PageModel.Feature feature, PageModel.Action action);
 
@@ -51,6 +62,14 @@ final class ShelfPage extends View {
     private static final int RADIUS = 14;
     private static final float CARD_SCALE = 1.08f;
     private static final long HERO_EVERY_MS = 8000, HERO_FADE_MS = 650;
+    /** Room around a shelf's own band for its focused card to grow into and cast its shadow. */
+    private static final int ROW_MARGIN = 40;
+    /** How far Home's background is darkened under the shelves. */
+    private static final float SHELF_DIM = 0.6f;
+    /** The parts of the page that are not shelves (shelves are numbered from 0). */
+    private static final int BACKDROP = -2, HERO = -1;
+    /** On Sports, Home's background shows through the dark side of a game's colours. */
+    static boolean seeThroughGames = true;
 
     final String name;
     private final FeaturePainter painter;
@@ -92,7 +111,22 @@ final class ShelfPage extends View {
     private final RectF rect = new RectF();
     private final Matrix matrix = new Matrix();
     private final Map<Bitmap, BitmapShader> shaders = new WeakHashMap<>();
-    private final Runnable invalidator = this::invalidate;
+    private final Runnable invalidator = this::invalidateAll;
+
+    // The parts, and what each was last drawn with, so that only parts that change are redrawn
+    private final Layer backdropLayer, heroLayer;
+    private Layer[] rows = new Layer[0];
+    private boolean[] rowDrawn = new boolean[0];   // false: too far off screen to have been drawn
+    private float drawnShown = -1f, drawnTextAlpha = -1f;
+
+    // Home's own background, which the page settles on under the shelves
+    private Bitmap home;
+    private BitmapShader homeShader;
+    private int homeShaderW, homeShaderH;
+    private final Paint homePaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Paint colourPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final ColorFilter[] dimFilters = new ColorFilter[256];
+    private final Map<String, Bitmap> teamColours = new LinkedHashMap<>();
     private final Runnable advance = new Runnable() {
         @Override
         public void run() {
@@ -107,8 +141,14 @@ final class ShelfPage extends View {
         painter = new FeaturePainter(context);
         images = ImageCache.get(context);
         setFocusable(true);
+        setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
         setDefaultFocusHighlightEnabled(false);
         setContentDescription(name);
+        setChildrenDrawingOrderEnabled(true);
+        backdropLayer = new Layer(BACKDROP);
+        heroLayer = new Layer(HERO);
+        addView(backdropLayer);
+        addView(heroLayer);
         FeaturePainter.style(shelfTitle, context, 600, 28, 0xF2FFFFFF);
         FeaturePainter.style(cardTitle, context, 500, 22, 0xF2FFFFFF);
         FeaturePainter.style(cardSub, context, 400, 19, 0x99FFFFFF);
@@ -135,7 +175,107 @@ final class ShelfPage extends View {
 
     void setAppArt(Map<String, Bitmap> art) {
         appArt = art;
+        invalidateAll();
+    }
+
+    /** Home's own background, which the page settles on once the hero has scrolled away. */
+    void setHomeBackground(Bitmap b) {
+        if (b == home) return;
+        home = b;
+        homeShader = null;
+        teamColours.clear();   // a game's colours are clear where this shows through
+        backdropLayer.invalidate();
+        if (listener != null && model != null) listener.onHeroShown(this);
+    }
+
+    // ---- Parts ------------------------------------------------------------------------------
+
+    /** One part of the page, drawn by the page: the backdrop, the hero's text, or shelf {@code part} (0 and up). */
+    private final class Layer extends View {
+        final int part;
+
+        Layer(int part) {
+            super(ShelfPage.this.getContext());
+            this.part = part;
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            if (part == BACKDROP) drawBackdrop(c);
+            else if (part == HERO) drawHero(c);
+            else drawRow(c, part);
+        }
+    }
+
+    @Override
+    protected void onMeasure(int widthSpec, int heightSpec) {
+        int w = MeasureSpec.getSize(widthSpec), h = MeasureSpec.getSize(heightSpec);
+        setMeasuredDimension(w, h);
+        for (int i = 0; i < getChildCount(); i++) {
+            Layer l = (Layer) getChildAt(i);
+            int lh = l.part < 0 ? h : Math.round(rowHeight(model.shelves.get(l.part))) + 2 * Ui.px(ROW_MARGIN);
+            l.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(lh, MeasureSpec.EXACTLY));
+        }
+    }
+
+    /** The backdrop and the hero's text cover the page; each shelf sits in its band, moved up by the scroll. */
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        for (int i = 0; i < getChildCount(); i++) {
+            Layer l = (Layer) getChildAt(i);
+            int y = l.part < 0 ? 0 : Math.round(rowTop[l.part]) - Ui.px(ROW_MARGIN);
+            l.layout(0, y, l.getMeasuredWidth(), y + l.getMeasuredHeight());
+        }
+    }
+
+    /** The shelf with the focused card draws last, so the card's growth and shadow lie over its neighbours. */
+    @Override
+    protected int getChildDrawingOrder(int count, int i) {
+        int focused = focusRow >= 0 && focusRow < rows.length ? 2 + focusRow : -1;
+        if (focused < 0 || i < focused) return i;
+        return i == count - 1 ? focused : i + 1;
+    }
+
+    private void invalidateAll() {
+        backdropLayer.invalidate();
+        heroLayer.invalidate();
+        for (Layer l : rows) l.invalidate();
         invalidate();
+    }
+
+    private void invalidateRow(int r) {
+        if (r >= 0 && r < rows.length) rows[r].invalidate();
+    }
+
+    /**
+     * After a scroll: the shelves move with it without being drawn again, a shelf coming near the
+     * screen is drawn for the first time, and the backdrop and hero text redraw while they change.
+     */
+    private void applyScroll() {
+        for (int r = 0; r < rows.length; r++) {
+            rows[r].setTranslationY(-scrollY);
+            if (!rowDrawn[r] && near(r)) rows[r].invalidate();
+        }
+        float shown = shelvesShown();
+        if (shown != drawnShown) backdropLayer.invalidate();
+        float textAlpha = heroTextAlpha();
+        if (textAlpha > 0f || drawnTextAlpha != 0f) heroLayer.invalidate();
+        invalidate();   // the top fade and the credit line
+    }
+
+    /** Within a screen of the visible area: drawn, and asking for its artwork. */
+    private boolean near(int r) {
+        float top = rowTop[r] - scrollY, h = getHeight() > 0 ? getHeight() : Ui.px(1080);
+        return top < 2 * h && top + rowHeight(model.shelves.get(r)) > -h;
+    }
+
+    /** 0 while the hero is on screen, 1 once its banner has scrolled away. */
+    private float shelvesShown() {
+        return Math.min(1f, scrollY / Ui.px(700));
+    }
+
+    private float heroTextAlpha() {
+        return 1f - Math.min(1f, scrollY / Ui.px(420));
     }
 
     // ---- Content ----------------------------------------------------------------------------
@@ -168,6 +308,14 @@ final class ShelfPage extends View {
             }
         }
         layoutRows();
+        // A part per shelf, after the backdrop and the hero's text
+        if (getChildCount() > 2) removeViews(2, getChildCount() - 2);
+        rows = new Layer[n];
+        rowDrawn = new boolean[n];
+        for (int r = 0; r < n; r++) {
+            rows[r] = new Layer(r);
+            addView(rows[r]);
+        }
         if (hero >= m.hero.size()) hero = 0;
         heroFrom = -1;
         heroFade = 1f;
@@ -178,13 +326,14 @@ final class ShelfPage extends View {
         if (first) focusT = 1f;
         markFocus(false);
         schedule();
-        invalidate();
+        applyScroll();
+        invalidateAll();
         if (listener != null) listener.onHeroShown(this);
     }
 
     void setMessage(String text) {
         message = text;
-        if (model == null) invalidate();
+        if (model == null) backdropLayer.invalidate();
     }
 
     boolean hasModel() {
@@ -282,7 +431,7 @@ final class ShelfPage extends View {
         if (row == -1) {
             if (button > 0) {
                 button--;
-                invalidate();
+                heroLayer.invalidate();
             } else if (hero > 0) {
                 showHero(hero - 1);
             }
@@ -296,7 +445,7 @@ final class ShelfPage extends View {
         if (row == -1) {
             if (button < heroActions() - 1) {
                 button++;
-                invalidate();
+                heroLayer.invalidate();
             } else if (hero < model.hero.size() - 1) {
                 showHero(hero + 1);
             }
@@ -368,7 +517,7 @@ final class ShelfPage extends View {
         if (scrollAnim != null) scrollAnim.cancel();
         if (Ui.reducedMotion) {
             scrollY = target;
-            invalidate();
+            applyScroll();
             return;
         }
         scrollAnim = ValueAnimator.ofFloat(scrollY, target);
@@ -376,16 +525,17 @@ final class ShelfPage extends View {
         scrollAnim.setInterpolator(Ui.EASE);
         scrollAnim.addUpdateListener(a -> {
             scrollY = (float) a.getAnimatedValue();
-            invalidate();
+            applyScroll();
         });
         scrollAnim.start();
     }
 
+    /** Slides shelf {@code r}; only that shelf is drawn again. */
     private void animateRow(int r, float target) {
         if (rowAnim != null) rowAnim.end();
         if (Ui.reducedMotion || rowX[r] == target) {
             rowX[r] = target;
-            invalidate();
+            invalidateRow(r);
             return;
         }
         rowAnim = ValueAnimator.ofFloat(rowX[r], target);
@@ -393,16 +543,17 @@ final class ShelfPage extends View {
         rowAnim.setInterpolator(Ui.EASE);
         rowAnim.addUpdateListener(a -> {
             rowX[r] = (float) a.getAnimatedValue();
-            invalidate();
+            invalidateRow(r);
         });
         rowAnim.start();
     }
 
-    /** The focused card grows in while the previous one settles back. */
+    /** The focused card grows in while the previous one settles back; only their shelves are drawn again. */
     private void markFocus(boolean animate) {
         int newRow = isFocused() ? row : Integer.MIN_VALUE;
         int newCol = newRow >= 0 ? cols[newRow] : 0;
         if (newRow == focusRow && newCol == focusCol) return;
+        if (newRow != focusRow) invalidate();   // the focused shelf draws last
         prevRow = focusRow;
         prevCol = focusCol;
         prevT = focusT;
@@ -412,7 +563,8 @@ final class ShelfPage extends View {
         if (!animate || Ui.reducedMotion) {
             focusT = 1f;
             prevT = 0f;
-            invalidate();
+            invalidateRow(prevRow);
+            invalidateRow(focusRow);
             return;
         }
         focusT = 0f;
@@ -424,7 +576,8 @@ final class ShelfPage extends View {
             float t = (float) a.getAnimatedValue();
             focusT = t;
             prevT = prevStart * (1f - t);
-            invalidate();
+            invalidateRow(prevRow);
+            invalidateRow(focusRow);
         });
         focusAnim.start();
     }
@@ -434,7 +587,7 @@ final class ShelfPage extends View {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect);
         markFocus(true);
         schedule();
-        invalidate();
+        invalidateAll();
     }
 
     // ---- Hero carousel ----------------------------------------------------------------------
@@ -456,11 +609,13 @@ final class ShelfPage extends View {
             heroAnim.addUpdateListener(a -> {
                 heroFade = (float) a.getAnimatedValue();
                 if (heroFade >= 1f) heroFrom = -1;
-                invalidate();
+                backdropLayer.invalidate();
+                heroLayer.invalidate();
             });
             heroAnim.start();
         }
-        invalidate();
+        backdropLayer.invalidate();
+        heroLayer.invalidate();
         if (listener != null) listener.onHeroShown(this);
     }
 
@@ -492,16 +647,22 @@ final class ShelfPage extends View {
         Bitmap small = Bitmap.createBitmap(Backdrop.W, Backdrop.H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(small);
         PageModel.Feature f = currentHero();
-        Bitmap a = f == null ? null : images.peek(f.imageUrl, getWidth());
-        painter.drawBackground(c, Backdrop.W, Backdrop.H, f, a);
+        if (f != null && f.game != null) {
+            drawHeroPicture(c, Backdrop.W, Backdrop.H, f, 0f, 1f);   // a game's colours need no artwork
+        } else {
+            painter.drawBackground(c, Backdrop.W, Backdrop.H, f, f == null ? null : images.peek(f.imageUrl, getWidth()));
+        }
         Backdrop.blur(small, Backdrop.RADIUS);
         return small;
     }
 
     // ---- Drawing ----------------------------------------------------------------------------
 
-    @Override
-    protected void onDraw(Canvas c) {
+    /**
+     * The backdrop: the hero's background, which gives way to Home's own background, darkened, as the
+     * banner scrolls away. Browsing the shelves then draws only that one picture behind them.
+     */
+    private void drawBackdrop(Canvas c) {
         int w = getWidth(), h = getHeight();
         if (model == null) {
             painter.drawBackground(c, w, h, null, null);
@@ -509,11 +670,121 @@ final class ShelfPage extends View {
             drawSkeleton(c);
             return;
         }
-        float scrolled = Math.min(1f, scrollY / Ui.px(700));
-        drawHeroBackground(c, w, h, 0.86f * scrolled);
-        float textAlpha = 1f - Math.min(1f, scrollY / Ui.px(420));
-        if (textAlpha > 0f) drawHeroText(c, textAlpha);
-        drawShelves(c, w, h);
+        float shown = shelvesShown();
+        drawnShown = shown;
+        if (shown > 0f) drawHome(c, w, h, SHELF_DIM);
+        if (shown < 1f) drawHeroBackground(c, w, h, SHELF_DIM * shown, 1f - shown);
+    }
+
+    /** The hero's background, darkened by {@code dim}, at {@code alpha}; a new one fades in over the old. */
+    private void drawHeroBackground(Canvas c, int w, int h, float dim, float alpha) {
+        PageModel.Feature cur = currentHero();
+        if (heroFrom >= 0 && heroFrom < model.hero.size() && heroFade < 1f) {
+            drawHeroPicture(c, w, h, model.hero.get(heroFrom), dim, alpha);
+            drawHeroPicture(c, w, h, cur, dim, alpha * heroFade);
+        } else {
+            drawHeroPicture(c, w, h, cur, dim, alpha);
+        }
+    }
+
+    /**
+     * One hero's background under its scrims: its artwork, or for a game the teams' colours. Over
+     * Home's background, a game's colours are clear on their dark side, so that background shows
+     * through it (see {@link #seeThroughGames}).
+     */
+    private void drawHeroPicture(Canvas c, int w, int h, PageModel.Feature f, float dim, float alpha) {
+        if (f == null || f.game == null) {
+            painter.drawBackground(c, w, h, f, heroArt(f, w), dim, alpha);
+            return;
+        }
+        boolean clear = seeThroughGames && home != null;
+        if (clear) painter.drawBackground(c, w, h, null, home, dim, alpha);
+        colourPaint.setColorFilter(dimFilter(dim));
+        colourPaint.setAlpha(Math.round(255 * alpha));
+        rect.set(0, 0, w, h);
+        c.drawBitmap(teamColours(f.game, clear), null, rect, colourPaint);
+    }
+
+    private Bitmap heroArt(PageModel.Feature f, int w) {
+        return f == null || f.imageUrl == null ? null : images.get(f.imageUrl, w, false, invalidator);
+    }
+
+    /**
+     * A game's colours with the hero's scrims multiplied in, drawn once into a small image: they are
+     * soft gradients, so a quarter of the screen's size loses nothing when drawn full size, and the
+     * GPU then draws one image instead of working out five gradients for every pixel on every frame.
+     * The scrims darken the colours but not their coverage, so where they are clear the picture
+     * under them takes the same scrims from its own pass.
+     */
+    private Bitmap teamColours(Sports.Game g, boolean clear) {
+        String key = g.id + (clear ? "/clear" : "/dark");
+        Bitmap b = teamColours.get(key);
+        if (b != null) return b;
+        int w = Backdrop.W, h = Backdrop.H;
+        b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        Paint p = new Paint();
+        for (Shader s : FeaturePainter.teamShaders(w, h, g, clear)) {
+            p.setShader(s);
+            c.drawRect(0, 0, w, h, p);
+        }
+        p.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.MULTIPLY));
+        for (Shader s : FeaturePainter.scrims(w, h)) {
+            p.setShader(s);
+            c.drawRect(0, 0, w, h, p);
+        }
+        if (teamColours.size() >= 4) teamColours.remove(teamColours.keySet().iterator().next());
+        teamColours.put(key, b);
+        return b;
+    }
+
+    /** Home's own background, centre-cropped and darkened by {@code dim}; graphite until it has loaded. */
+    private void drawHome(Canvas c, int w, int h, float dim) {
+        if (home == null) {
+            painter.drawBackground(c, w, h, null, null, dim, 1f);
+            return;
+        }
+        if (homeShader == null || homeShaderW != w || homeShaderH != h) {
+            homeShader = new BitmapShader(home, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            float k = Math.max(w / (float) home.getWidth(), h / (float) home.getHeight());
+            Matrix m = new Matrix();
+            m.setScale(k, k);
+            m.postTranslate((w - home.getWidth() * k) / 2f, (h - home.getHeight() * k) / 2f);
+            homeShader.setLocalMatrix(m);
+            homeShaderW = w;
+            homeShaderH = h;
+        }
+        homePaint.setShader(homeShader);
+        homePaint.setColorFilter(dimFilter(dim));
+        c.drawRect(0, 0, w, h, homePaint);
+    }
+
+    /** Multiplies colour by 1 - {@code dim}, leaving alpha alone; one filter per step, made once. */
+    private ColorFilter dimFilter(float dim) {
+        int keep = Math.round(255 * (1f - Math.max(0f, Math.min(1f, dim))));
+        if (keep >= 255) return null;
+        if (dimFilters[keep] == null) dimFilters[keep] = new LightingColorFilter(0xFF000000 | keep * 0x010101, 0);
+        return dimFilters[keep];
+    }
+
+    /** The hero's text, which scrolls up with it and fades on the way. */
+    private void drawHero(Canvas c) {
+        float alpha = heroTextAlpha();
+        drawnTextAlpha = alpha;
+        if (model != null && alpha > 0f) drawHeroText(c, alpha);
+    }
+
+    /** Above the shelves: the credit line after the last one, and the fade at the top of the screen. */
+    @Override
+    protected void dispatchDraw(Canvas c) {
+        super.dispatchDraw(c);
+        if (model == null) return;
+        int w = getWidth(), h = getHeight();
+        if (!model.credit.isEmpty() && rowTop.length > 0) {
+            float end = rowTop[rowTop.length - 1] + rowHeight(model.shelves.get(rowTop.length - 1)) - scrollY;
+            if (end < h) c.drawText(model.credit, Ui.px(LEFT), end + Ui.px(10), credit);
+        }
+        float scrolled = shelvesShown();
         if (scrolled > 0f) {
             // The shelf above the focused one fades into the top edge instead of being cut off
             float fadeH = Ui.px(FOCUS_ROW_TOP - 10);
@@ -525,22 +796,6 @@ final class ShelfPage extends View {
     }
 
     private final Paint topFade = new Paint();
-
-    /** The hero's background, darkened by {@code dim} as the shelves scroll over it; a new one fades in over the old. */
-    private void drawHeroBackground(Canvas c, int w, int h, float dim) {
-        PageModel.Feature cur = currentHero();
-        if (heroFrom >= 0 && heroFrom < model.hero.size() && heroFade < 1f) {
-            PageModel.Feature from = model.hero.get(heroFrom);
-            painter.drawBackground(c, w, h, from, heroArt(from, w), dim, 1f);
-            painter.drawBackground(c, w, h, cur, heroArt(cur, w), dim, heroFade);
-        } else {
-            painter.drawBackground(c, w, h, cur, heroArt(cur, w), dim, 1f);
-        }
-    }
-
-    private Bitmap heroArt(PageModel.Feature f, int w) {
-        return f == null || f.imageUrl == null ? null : images.get(f.imageUrl, w, false, invalidator);
-    }
 
     private void drawHeroText(Canvas c, float alpha) {
         if (model.hero.isEmpty()) return;
@@ -586,42 +841,40 @@ final class ShelfPage extends View {
         }
     }
 
-    private void drawShelves(Canvas c, int w, int h) {
-        float focusedX = 0, focusedY = 0;
-        PageModel.Shelf focusedShelf = null;
-        for (int r = 0; r < model.shelves.size(); r++) {
-            PageModel.Shelf s = model.shelves.get(r);
-            float top = rowTop[r] - scrollY;
-            if (top > h || top + rowHeight(s) < 0) continue;
-            c.drawText(s.title, Ui.px(LEFT), top + Ui.px(36), shelfTitle);
-            float cardTop = top + Ui.px(TITLE_H);
-            if (s.cards.isEmpty()) {
-                drawEmpty(c, s, cardTop);
-                continue;
-            }
-            float pitch = pitch(s);
-            int first = Math.max(0, (int) Math.floor((rowX[r] - Ui.px(LEFT)) / pitch) - 1);
-            for (int i = first; i < s.cards.size(); i++) {
-                float x = Ui.px(LEFT) + i * pitch - rowX[r];
-                if (x > w) break;
-                float t = focusAmount(r, i);
-                if (r == focusRow && i == focusCol && t > 0f) {
-                    focusedShelf = s;
-                    focusedX = x;
-                    focusedY = cardTop;
-                    continue;   // drawn last, above its neighbours
-                }
-                drawCard(c, s, s.cards.get(i), x, cardTop, t);
-            }
-            // Ask for the next card's artwork before it scrolls in
-            int ahead = (int) ((rowX[r] + w) / pitch) + 1;
-            if (ahead < s.cards.size()) prefetch(s, s.cards.get(ahead));
+    /**
+     * Shelf {@code r} in its own part, whose top is ROW_MARGIN above the shelf: its title, then its
+     * cards, the focused one last, above its neighbours. A shelf far off screen is left blank until
+     * it comes near (see applyScroll), so it does not ask for its artwork early.
+     */
+    private void drawRow(Canvas c, int r) {
+        if (model == null || r >= model.shelves.size()) return;
+        rowDrawn[r] = near(r);
+        if (!rowDrawn[r]) return;
+        int w = getWidth();
+        PageModel.Shelf s = model.shelves.get(r);
+        float top = Ui.px(ROW_MARGIN);
+        c.drawText(s.title, Ui.px(LEFT), top + Ui.px(36), shelfTitle);
+        float cardTop = top + Ui.px(TITLE_H);
+        if (s.cards.isEmpty()) {
+            drawEmpty(c, s, cardTop);
+            return;
         }
-        if (focusedShelf != null) drawCard(c, focusedShelf, focusedShelf.cards.get(focusCol), focusedX, focusedY, focusT);
-        if (!model.credit.isEmpty() && rowTop.length > 0) {
-            float end = rowTop[rowTop.length - 1] + rowHeight(model.shelves.get(rowTop.length - 1)) - scrollY;
-            if (end < h) c.drawText(model.credit, Ui.px(LEFT), end + Ui.px(10), credit);
+        float pitch = pitch(s), focusedX = Float.NaN;
+        int first = Math.max(0, (int) Math.floor((rowX[r] - Ui.px(LEFT)) / pitch) - 1);
+        for (int i = first; i < s.cards.size(); i++) {
+            float x = Ui.px(LEFT) + i * pitch - rowX[r];
+            if (x > w) break;
+            float t = focusAmount(r, i);
+            if (r == focusRow && i == focusCol && t > 0f) {
+                focusedX = x;
+                continue;   // drawn last, above its neighbours
+            }
+            drawCard(c, s, s.cards.get(i), x, cardTop, t);
         }
+        if (!Float.isNaN(focusedX)) drawCard(c, s, s.cards.get(focusCol), focusedX, cardTop, focusT);
+        // Ask for the next card's artwork before it scrolls in
+        int ahead = (int) ((rowX[r] + w) / pitch) + 1;
+        if (ahead < s.cards.size()) prefetch(s, s.cards.get(ahead));
     }
 
     private float focusAmount(int r, int i) {

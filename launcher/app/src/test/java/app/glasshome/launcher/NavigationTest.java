@@ -29,8 +29,9 @@ import org.robolectric.shadows.ShadowActivity;
 import app.glasshome.launcher.HomeActivity.Zone;
 
 /**
- * Remote navigation on the real HomeActivity. 13 apps: rows of 6, 6 and 1
- * (0 FirePlayer … 5 Max | 6 TiviMate, 7 Prime Video, 8 Spotify, 9 Game Pass, 10 Downloader, 11 Tailscale | 12 Settings).
+ * Remote navigation on the real HomeActivity. 13 apps: rows of 6, 6 and 1 (0 TiviMate, 1 Netflix,
+ * 2 Prime Video, 3 Max, 4 Apple TV, 5 Disney+ | 6 FirePlayer, 7 YouTube, 8 Spotify, 9 Game Pass,
+ * 10 Settings, 11 Downloader | 12 Tailscale).
  */
 @RunWith(RobolectricTestRunner.class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -99,7 +100,6 @@ public class NavigationTest {
     @Test
     public void heroWithActionIsReachableAndLinksToWeather() throws Exception {
         TestHome h = new TestHome();
-        h.press(KEYCODE_DPAD_RIGHT);            // FirePlayer
         h.press(KEYCODE_DPAD_RIGHT);            // Netflix
         TestHome.advance(Ui.HERO_DWELL_MS + 50);
         h.injectFeaturedSlide("com.netflix.ninja", "Netflix");
@@ -114,7 +114,7 @@ public class NavigationTest {
         assertEquals(Zone.HERO, h.zone());
         h.press(KEYCODE_DPAD_DOWN);
         assertEquals(Zone.GRID, h.zone());
-        assertEquals(2, h.focused());
+        assertEquals(1, h.focused());
 
         // Select on the hero opens the presented app, once
         h.press(KEYCODE_DPAD_UP);
@@ -179,7 +179,7 @@ public class NavigationTest {
     @Test
     public void selectActivatesOncePerPressEvenWhenHeld() throws Exception {
         TestHome h = new TestHome();
-        h.press(KEYCODE_DPAD_RIGHT);            // FirePlayer, second after TiviMate
+        h.press(KEYCODE_DPAD_DOWN);             // FirePlayer, first in the second row
         h.hold(KEYCODE_DPAD_CENTER, 1500, 50);
         ShadowActivity sa = shadowOf(h.activity);
         Intent started = sa.getNextStartedActivity();
@@ -238,9 +238,9 @@ public class NavigationTest {
         h.press(KEYCODE_DPAD_DOWN);
         assertEquals("12 apps fill two rows exactly: no row below", 8, h.focused());
         for (int i = 0; i < 3; i++) h.press(KEYCODE_DPAD_RIGHT);
-        assertEquals(11, h.focused());  // Settings, end of the second row
-        uninstall(h, "com.tailscale.ipn");
-        assertEquals("still on Settings, which moved into Tailscale's place", 10, h.focused());
+        assertEquals(11, h.focused());  // Tailscale, end of the second row
+        uninstall(h, "com.esaba.downloader");
+        assertEquals("still on Tailscale, which moved into Downloader's place", 10, h.focused());
         assertEquals(801, h.focusedRowTop());
     }
 
@@ -249,9 +249,9 @@ public class NavigationTest {
         TestHome h = new TestHome();
         for (int i = 0; i < 5; i++) h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(11, h.focused());  // Tailscale, last tile of row 2
-        uninstall(h, "com.tailscale.ipn");
-        // Settings moves up into row 2; focus stays on the nearest valid tile at the end of that row
+        assertEquals(11, h.focused());  // Downloader, last tile of row 2
+        uninstall(h, "com.esaba.downloader");
+        // Tailscale moves up into row 2; focus stays on the nearest valid tile at the end of that row
         assertEquals(11, h.focused());
         assertEquals(12, h.grid.getAdapter().getItemCount());
         h.press(KEYCODE_DPAD_DOWN);

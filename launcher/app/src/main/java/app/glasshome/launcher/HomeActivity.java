@@ -371,6 +371,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (b == null || chosen == null || !chosen.name.equals(entry.name)) return;
                 background = b;
                 backgroundName = entry.name;
+                // The browse pages settle on the same picture once their banner scrolls away
+                for (int p = MOVIES; p <= SPORTS; p++) pages[p].setHomeBackground(b);
                 // A featured slide already showing stays; otherwise the background shows now
                 HeroSlide current = stage.current();
                 if (current == null || !current.isFeatured()) showBackground();
@@ -709,13 +711,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
     }
 
+    /**
+     * Page fades run through GPU layers: each view is drawn once and then only blended, where a
+     * translucent view would otherwise be drawn into a buffer of its own on every frame.
+     */
     private static void fadeIn(View v, long ms) {
         v.animate().cancel();
         if (v.getVisibility() != View.VISIBLE) {
             v.setAlpha(ms > 0 ? 0f : 1f);
             v.setVisibility(View.VISIBLE);
         }
-        if (ms > 0) v.animate().alpha(1f).setDuration(ms).setInterpolator(Ui.EASE).withEndAction(null).start();
+        if (ms > 0) v.animate().alpha(1f).setDuration(ms).setInterpolator(Ui.EASE).withLayer().withEndAction(null).start();
         else v.setAlpha(1f);
     }
 
@@ -725,7 +731,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             v.setVisibility(View.GONE);
             return;
         }
-        v.animate().alpha(0f).setDuration(ms).setInterpolator(Ui.EASE).withEndAction(() -> v.setVisibility(View.GONE)).start();
+        v.animate().alpha(0f).setDuration(ms).setInterpolator(Ui.EASE).withLayer().withEndAction(() -> v.setVisibility(View.GONE)).start();
     }
 
     /** Loads (or refreshes) a browse page off the main thread; a page keeps its old content if this fails. */

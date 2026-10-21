@@ -8,9 +8,13 @@ no ads and no sponsored rows.
 ## What it has
 
 - **Home**: a constant background (five included), or a featured title when a streaming app
-  is focused, behind a glass dock of 5:3 app tiles six to a row (TiviMate and FirePlayer
-  first), and the widgets on the right. Tiles are layered icons: on focus the layers sway a
-  little and settle, a soft light moves across them and the edge catches a glare.
+  is focused, behind a glass dock of 5:3 app tiles six to a row, and the widgets on the right.
+  The order: TiviMate, Netflix, Prime Video, HBO Max, Apple TV, Disney+; then FirePlayer,
+  YouTube, Spotify, Game Pass, Settings, the Appstore; then Live TV, Downloader, Tailscale.
+  Tiles are layered icons: on focus the layers sway a little and settle, a soft light moves
+  across them and the edge catches a glare.
+- **Movies, TV Shows and Sports** scroll from their banner into shelves, where the banner's
+  picture gives way to the Home background, darkened.
 - **Tabs** at the top: Home, Movies, TV Shows and Sports. The remote's ☰ (Menu) button jumps to
   them from anywhere; pressing Up repeatedly ends there too.
 - **Movies and TV Shows** (TMDB): a hero carousel with title logos, Continue Watching, Top 10,
