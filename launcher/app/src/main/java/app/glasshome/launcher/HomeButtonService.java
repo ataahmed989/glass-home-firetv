@@ -108,10 +108,12 @@ public final class HomeButtonService extends AccessibilityService {
         return SystemClock.uptimeMillis() - openingAt < OPENING_MS;
     }
 
-    /** Tests start each case with nothing being opened. */
-    static void forgetOpening() {
+    /** Tests start each case with nothing being opened, Glass Home not just gone to the back, and no trip made. */
+    static void forgetTrips() {
         openingAt = -OPENING_MS;
         library = false;
+        leftAt = -LEFT_MS;
+        redirectedAt = -REDIRECT_GAP_MS;
     }
 
     /**

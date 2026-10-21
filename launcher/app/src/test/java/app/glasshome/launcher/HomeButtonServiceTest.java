@@ -44,6 +44,8 @@ public class HomeButtonServiceTest {
     public void start() {
         app = RuntimeEnvironment.getApplication();
         HomeActivity.inFront = false;
+        // The service's timing is static, and the clock starts again for each case: none may carry over
+        HomeButtonService.forgetTrips();
         service = Robolectric.setupService(HomeButtonService.class);
     }
 
@@ -51,7 +53,7 @@ public class HomeButtonServiceTest {
     public void stop() {
         HomeActivity.inFront = false;
         HomeButtonService.glassHomeResumed();
-        HomeButtonService.forgetOpening();
+        HomeButtonService.forgetTrips();
         service.onUnbind(new Intent());
     }
 
@@ -83,6 +85,7 @@ public class HomeButtonServiceTest {
         HomeActivity.inFront = true;
         HomeButtonService.glassHomeResumed();
         HomeActivity.inFront = false;   // the second press
+        HomeButtonService.leftUnexpectedly();   // as Glass Home's onPause says
         redraw("com.amazon.tv.launcher");
         assertGlassHomeStarted();
     }
