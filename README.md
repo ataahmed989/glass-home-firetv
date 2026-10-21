@@ -148,6 +148,16 @@ Settings > Device Usage Data, Collect App Usage Data and Interest-based Ads; Pre
 Featured Content > Allow Video Autoplay and Allow Audio Autoplay (Amazon's home is still opened
 by every Home press, for a moment, and no longer starts a preview video when it is).
 
+Sticks with Ambient Experience (the Fire TV Stick 4K 2nd gen, AFTKRT, here) hand the screensaver
+to `com.amazon.tv.ftvambient`. With it disabled, such a stick goes to sleep, and turns the TV off,
+when the screensaver should start (5 minutes by default), whatever the sleep setting. There, the
+screensaver start was set to the same hour as sleep, so the stick stays on its screen for an hour
+of inactivity and then sleeps (Amazon's screensaver settings show only 5, 10 or 15 minutes, and
+choosing one there brings the early sleep back):
+`settings put system screen_off_timeout 3600000; settings put secure sleep_timeout 3600000`.
+The Fire TV Stick 4K Plus has no Ambient Experience: its screensaver starts at 15 minutes as
+usual, and it sleeps after an hour (`settings put secure sleep_timeout 3600000`; it was 20 minutes).
+
 Fire OS 8.1.8.5 refuses to disable some packages as protected, among them
 `com.amazon.device.metrics`, `com.amazon.device.logmanager`, `com.amazon.device.crashmanager`
 and `com.amazon.ftvads.deeplinking`.
