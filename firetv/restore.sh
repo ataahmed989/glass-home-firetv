@@ -9,11 +9,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 adb connect "$DEV"
 while read -r p; do
   [ -n "$p" ] || continue
-  adb -s "$DEV" shell pm enable "$p"
+  adb -s "$DEV" shell pm enable "$p" < /dev/null   # adb would otherwise read the rest of the list
 done < "$DIR/disabled-packages.txt"
 while read -r p; do
   [ -n "$p" ] || continue
-  adb -s "$DEV" shell cmd appops set "$p" RUN_ANY_IN_BACKGROUND allow
+  adb -s "$DEV" shell cmd appops set "$p" RUN_ANY_IN_BACKGROUND allow < /dev/null
 done < "$DIR/background-restricted.txt"
 adb -s "$DEV" shell settings put global private_dns_mode opportunistic
 echo "Restored. Reboot the Fire TV to finish: adb -s $DEV reboot"

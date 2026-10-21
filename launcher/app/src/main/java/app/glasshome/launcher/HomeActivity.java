@@ -78,6 +78,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final ExecutorService pagesNet = Executors.newFixedThreadPool(2);
+    /** Look-ups of titles' links (one at a time, apart from the pages' own loading). */
+    private final ExecutorService linksNet = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
 
     private HomeConfig config;
@@ -866,9 +868,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             linkWait = null;
             if (resumed) launch(app);
         };
-        linkWait = wait[0];
-        main.postDelayed(wait[0], LINK_WAIT_MS);
-        pagesNet.execute(() -> {
+        if (!lookUpLinks(() -> {
             String link = null;
             try {
                 link = AppLinks.lookUp(this, t).get(app);
@@ -882,7 +882,30 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 main.removeCallbacks(wait[0]);
                 if (resumed) openLink(t, app, found);   // not if Glass Home was left meanwhile
             });
-        });
+        })) {
+            launch(app);
+            return;
+        }
+        linkWait = wait[0];
+        main.postDelayed(wait[0], LINK_WAIT_MS);
+    }
+
+    /** "Open …" stops waiting for its link: Back, Home, or Glass Home left. */
+    private void cancelLinkWait() {
+        if (linkWait == null) return;
+        main.removeCallbacks(linkWait);
+        linkWait = null;
+    }
+
+    /** Runs a look-up of links, unless Glass Home is closing; false if it was not run. */
+    private boolean lookUpLinks(Runnable lookUp) {
+        if (isDestroyed() || linksNet.isShutdown()) return false;
+        try {
+            linksNet.execute(lookUp);
+            return true;
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            return false;
+        }
     }
 
     private void openLink(Tmdb.Title t, String app, String link) {
@@ -905,7 +928,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (!(ref instanceof Tmdb.Title) || AppLinks.lookedUp((Tmdb.Title) ref)) return;
         Tmdb.Title t = (Tmdb.Title) ref;
         if (!t.detailed || (t.streamingApps.isEmpty() && t.storeApps.isEmpty())) return;
-        pagesNet.execute(() -> {
+        lookUpLinks(() -> {
             try {
                 AppLinks.lookUp(this, t);
             } catch (Exception ignored) {
@@ -954,19 +977,26 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             try {
                 HomeButtonService.opening(e.pkg);
                 intent.send();
+                // What plays next there is this title again, for apps that do not name it
+                if (e.tmdbId > 0) WatchHistory.opened(e.pkg, titleOf(e));
                 return;
             } catch (android.app.PendingIntent.CanceledException ignored) {
                 MediaWatcher.RESUME.remove(e.pkg);
             }
         }
         if (e.tmdbId > 0) {
-            Tmdb.Title t = new Tmdb.Title(e.tmdbId, e.episode, e.name(), "", e.backdrop, "", "", new int[0]);
-            t.streamingApps.add(e.pkg);
-            if (!e.episode) t.minutes = (int) (e.durationMs / 60_000);
-            open(t, e.pkg);
+            open(titleOf(e), e.pkg);
             return;
         }
         launch(e.pkg);
+    }
+
+    /** A Continue Watching entry known on TMDB, as the title "Open …" takes into its app. */
+    private static Tmdb.Title titleOf(WatchHistory.Entry e) {
+        Tmdb.Title t = new Tmdb.Title(e.tmdbId, e.episode, e.name(), "", e.backdrop, "", "", new int[0]);
+        t.streamingApps.add(e.pkg);
+        if (!e.episode) t.minutes = (int) (e.durationMs / 60_000);
+        return t;
     }
 
     /** Opens the detail page at once with what is known, then fills in where to watch. */
@@ -1024,6 +1054,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void closeDetailPage() {
+        cancelLinkWait();
         titleDetail.animate().cancel();
         titleDetail.setVisibility(View.GONE);
         focusPage();
@@ -1074,6 +1105,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 hideControlCenter();
                 break;
             case PAGE_DETAIL:
+                cancelLinkWait();
                 titleDetail.animate().cancel();
                 titleDetail.setVisibility(View.GONE);
                 break;
@@ -1721,6 +1753,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         super.onNewIntent(intent);
         setIntent(intent);
         if (!intent.getBooleanExtra(HomeButtonService.EXTRA_HOME_BUTTON, false)) return;
+        cancelLinkWait();
         // Everything changes at once, under the snapshot of Home that covers the trip back (see HomeSnapshot)
         if (panel.isOpen()) {
             panel.animate().cancel();
@@ -1752,6 +1785,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     protected void onPause() {
         resumed = false;
         inFront = false;
+        cancelLinkWait();
         main.removeCallbacks(shownFallback);
         main.removeCallbacks(shown);
         stopWaitingForFrame();
@@ -1818,6 +1852,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         worker.shutdownNow();
         network.shutdownNow();
         pagesNet.shutdownNow();
+        linksNet.shutdownNow();
         super.onDestroy();
     }
 }

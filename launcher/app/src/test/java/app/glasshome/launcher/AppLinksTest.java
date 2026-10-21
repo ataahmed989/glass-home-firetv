@@ -13,6 +13,7 @@ import android.net.Uri;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -20,14 +21,17 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 import org.robolectric.shadows.ShadowPackageManager;
+import org.robolectric.shadows.ShadowSystemClock;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** "Open …" on a film or show: which link each app gets, from JustWatch's answer. */
 @RunWith(RobolectricTestRunner.class)
@@ -39,9 +43,15 @@ public class AppLinksTest {
     private static final String RENT_LINK = "https://app.primevideo.com/detail?gti=amzn1.dv.gti.rent";
     private static final String BUY_LINK = "https://app.primevideo.com/detail?gti=amzn1.dv.gti.buy";
 
+    @Before
+    public void nothingLookedUp() {
+        AppLinks.reset();
+    }
+
     @After
     public void restore() {
         AppLinks.poster = AppLinks::http;
+        AppLinks.reset();
     }
 
     @Test
@@ -136,21 +146,37 @@ public class AppLinksTest {
         assertNull(AppLinks.known(t, PRIME));
     }
 
-    /** A failed look-up is not kept, so the next "Open …" tries again (and meanwhile the app opens). */
+    /**
+     * A failed look-up is not kept (the app opens meanwhile), and the title is tried again only after
+     * a while; several failures in a row pause look-ups altogether.
+     */
     @Test
-    public void aFailedLookUpIsTriedAgain() {
+    public void aFailedLookUpIsTriedAgainLater() throws Exception {
         Application app = RuntimeEnvironment.getApplication();
         Tmdb.Title t = new Tmdb.Title(990001, true, "A Test Series", "", "", "", "2026-01-01", new int[0]);
         t.streamingApps.add("com.apple.atve.amazon.appletv");
+        AtomicInteger posts = new AtomicInteger();
         AppLinks.poster = (url, json) -> {
+            posts.incrementAndGet();
             throw new IOException("offline");
         };
-        try {
-            AppLinks.lookUp(app, t);
-        } catch (Exception expected) {
-            // the app itself opens
+        for (int i = 0; i < 2; i++) {
+            try {
+                AppLinks.lookUp(app, t);
+            } catch (IOException expected) {
+                // the app itself opens
+            }
         }
         assertFalse(AppLinks.lookedUp(t));
+        assertEquals("not asked again at once", 1, posts.get());
+
+        ShadowSystemClock.advanceBy(Duration.ofMinutes(11));
+        try {
+            AppLinks.lookUp(app, t);
+        } catch (IOException expected) {
+            // still offline
+        }
+        assertEquals(2, posts.get());
     }
 
     private static Tmdb.Title movie(String streaming, String... stores) {

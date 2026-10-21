@@ -172,7 +172,12 @@ public final class MediaWatcher extends NotificationListenerService {
 
     private void detach(MediaSession.Token token) {
         Watched w = watched.remove(token);
-        if (w != null) w.controller.unregisterCallback(w);
+        if (w == null) return;
+        w.controller.unregisterCallback(w);
+        // The app's own way back is kept only while it has a session: past that it may lead anywhere
+        String pkg = w.controller.getPackageName();
+        for (Watched other : watched.values()) if (other.controller.getPackageName().equals(pkg)) return;
+        RESUME.remove(pkg);
     }
 
     private void save(Watched w) {
@@ -201,7 +206,7 @@ public final class MediaWatcher extends NotificationListenerService {
                 w.opened = null;   // something else has started
                 w.playedMs = 0;
             }
-            if (w.opened == null && !w.ending && state.getState() == PlaybackState.STATE_PLAYING) w.opened = WatchHistory.takeOpened(s.pkg);
+            if (w.opened == null && !w.ending && state.getState() == PlaybackState.STATE_PLAYING) w.opened = WatchHistory.openedIn(s.pkg);
             if (w.opened == null) return;
             s.opened = w.opened;
         }

@@ -155,7 +155,8 @@ names resolve. Set the resolver as a nameserver in Tailscale's DNS settings inst
 - Film and TV data and artwork: [TMDB](https://www.themoviedb.org/). This product uses the TMDB
   API but is not endorsed or certified by TMDB. Streaming availability: JustWatch, via TMDB.
 - Links into the streaming apps: JustWatch's public GraphQL API, which is unofficial and may
-  change (then "Open …" opens the app itself). Only the title's name is sent.
+  change (then "Open …" opens the app itself). Only a title's name is sent: for the banner's titles
+  and a details page as they are shown, and for a Continue Watching title when its card is opened.
 - Scores and schedules: ESPN's public scoreboard feed, which is unofficial and may change.
 - Weather: [Open-Meteo](https://open-meteo.com/).
 - Font: [Inter](https://rsms.me/inter/), SIL Open Font License 1.1 (`assets/fonts/Inter-OFL.txt`).

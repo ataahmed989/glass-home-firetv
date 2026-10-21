@@ -23,7 +23,6 @@ import android.view.ViewGroup;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.WeakHashMap;
 
 /**
  * One tvOS-style browse page (Movies, TV Shows, Sports): a full-screen hero carousel with the first
@@ -110,7 +109,14 @@ final class ShelfPage extends ViewGroup {
     private final TextPaint chip = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final RectF rect = new RectF();
     private final Matrix matrix = new Matrix();
-    private final Map<Bitmap, BitmapShader> shaders = new WeakHashMap<>();
+    /** Card pictures' shaders, for the cards drawn lately (a shader holds its picture, so the cache is kept small). */
+    private static final int MAX_SHADERS = 48;
+    private final Map<Bitmap, BitmapShader> shaders = new LinkedHashMap<Bitmap, BitmapShader>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Bitmap, BitmapShader> eldest) {
+            return size() > MAX_SHADERS;
+        }
+    };
     private final Runnable invalidator = this::invalidateAll;
 
     // The parts, and what each was last drawn with, so that only parts that change are redrawn
@@ -178,13 +184,14 @@ final class ShelfPage extends ViewGroup {
         invalidateAll();
     }
 
-    /** Home's own background, which the page settles on once the hero has scrolled away. */
     /** Another app is in front: gives back the pictures that are made again when next drawn. */
     void trimMemory() {
         painter.release();
         teamColours.clear();
+        shaders.clear();
     }
 
+    /** Home's own background, which the page settles on once the hero has scrolled away. */
     void setHomeBackground(Bitmap b) {
         if (b == home) return;
         home = b;
@@ -627,11 +634,14 @@ final class ShelfPage extends ViewGroup {
 
     /**
      * The hero turns over every 8 s while it is not being looked at closely, and holds still under
-     * the shelves, where it is too dim to follow and a new picture would only slow the browsing.
+     * the shelves, where it is too dim to follow and a new picture would only slow the browsing. It
+     * holds still too while another app is in front: back, the page shows the hero it was left on,
+     * whose picture is kept, and not one whose picture was given back meanwhile.
      */
     private void schedule() {
         removeCallbacks(advance);
-        if (model != null && model.hero.size() > 1 && !intoShelves && !Ui.reducedMotion && isAttachedToWindow() && getVisibility() == VISIBLE) {
+        if (model != null && model.hero.size() > 1 && !intoShelves && !Ui.reducedMotion && isAttachedToWindow() && getVisibility() == VISIBLE
+                && getWindowVisibility() == VISIBLE) {
             postDelayed(advance, HERO_EVERY_MS);
         }
     }
@@ -639,6 +649,12 @@ final class ShelfPage extends ViewGroup {
     @Override
     protected void onVisibilityChanged(View changedView, int visibility) {
         super.onVisibilityChanged(changedView, visibility);
+        schedule();
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
         schedule();
     }
 

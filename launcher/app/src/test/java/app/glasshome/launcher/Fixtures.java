@@ -28,6 +28,7 @@ final class Fixtures {
         Clock.fixedMillis = RECORDED_AT;
         Clock.fixedZone = ZoneId.of("America/New_York");
         // Links into the streaming apps are not recorded: "Open …" falls back to the app itself
+        AppLinks.reset();
         AppLinks.poster = (url, json) -> {
             throw new IOException("not recorded: " + url);
         };

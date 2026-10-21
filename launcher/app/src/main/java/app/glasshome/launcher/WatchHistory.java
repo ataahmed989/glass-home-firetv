@@ -20,8 +20,9 @@ import java.util.regex.Pattern;
  * Continue Watching, built only from what has actually played on this TV. {@link MediaWatcher}
  * reads the streaming apps' media sessions (title, episode, position, length) and records them
  * here. Fire TV does not share the apps' own watch history with other launchers, so this starts
- * empty and fills as you watch; nothing is ever made up. It stays on the TV: only the title is
- * sent to TMDB, to find its artwork.
+ * empty and fills as you watch; nothing is ever made up. It stays on the TV: only a title's name
+ * leaves it, to TMDB for its artwork and, when its card is opened, to JustWatch for its page in
+ * the app (see {@link AppLinks}).
  */
 final class WatchHistory {
     private static final String FILE = "watch-history.json";
@@ -151,12 +152,24 @@ final class WatchHistory {
         opened = new Opened(pkg, t, SystemClock.elapsedRealtime());
     }
 
-    /** What Glass Home just opened in {@code pkg}, if it was recent enough; each opening is taken once. */
-    static synchronized Opened takeOpened(String pkg) {
+    /**
+     * What Glass Home just opened in {@code pkg}, if it was recent enough. It stays available (a title
+     * page's trailer may play first) until playback of it has been recorded: see {@link #record}.
+     */
+    static synchronized Opened openedIn(String pkg) {
         Opened o = opened;
         if (o == null || !o.pkg.equals(pkg) || SystemClock.elapsedRealtime() - o.at > OPENED_MS) return null;
-        opened = null;
         return o;
+    }
+
+    /** Tests start each case with nothing opened. */
+    static synchronized void forgetOpened() {
+        opened = null;
+    }
+
+    /** The opening has been recorded as watched: no other playback can be taken for it. */
+    static synchronized void used(Opened o) {
+        if (opened == o) opened = null;
     }
 
     /**
@@ -233,6 +246,7 @@ final class WatchHistory {
         if (s.durationMs > 0 && s.durationMs < MIN_DURATION_MS) return false;
         Entry e = s.opened != null ? fromOpened(s) : parse(s);
         if (e == null) return false;
+        if (s.opened != null) used(s.opened);
         List<Entry> all = load(context);
         for (Iterator<Entry> it = all.iterator(); it.hasNext(); ) {
             Entry old = it.next();

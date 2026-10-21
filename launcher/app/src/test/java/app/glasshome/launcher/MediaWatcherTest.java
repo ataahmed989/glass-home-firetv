@@ -38,8 +38,7 @@ public class MediaWatcherTest {
 
     @After
     public void forgetOpenings() {
-        WatchHistory.takeOpened(NETFLIX);
-        WatchHistory.takeOpened(MAX);
+        WatchHistory.forgetOpened();
     }
 
     @Test
@@ -56,6 +55,21 @@ public class MediaWatcherTest {
         assertEquals("/st.jpg", e.backdrop);
         assertTrue("known on TMDB already: no search", e.matched);
         assertEquals(1, WatchHistory.forPage(WatchHistory.load(app), true).size());
+    }
+
+    /** The title page's trailer plays first, then the episode: the episode is still the show opened. */
+    @Test
+    public void theTitleWatchedAfterItsTrailerIsRecorded() throws Exception {
+        Fixtures.install();
+        Application app = RuntimeEnvironment.getApplication();
+        WatchHistory.opened(NETFLIX, new Tmdb.Title(66732, true, "Stranger Things", "", "/st.jpg", "", "2016-07-15", new int[0]));
+        playing(app, NETFLIX, 2);    // the trailer
+        assertTrue(WatchHistory.load(app).isEmpty());
+        playing(app, NETFLIX, 25);   // the episode, resumed
+
+        WatchHistory.Entry e = recorded(app);
+        assertEquals("Stranger Things", e.name());
+        assertEquals(66732, e.tmdbId);
     }
 
     /** A film's length comes from TMDB when the app gives none, so it shows how far along it is. */

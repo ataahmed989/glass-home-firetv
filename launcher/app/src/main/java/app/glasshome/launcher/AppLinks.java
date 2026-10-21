@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
+import android.os.SystemClock;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -28,7 +29,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * rather than on the app's home. TMDB says where a title streams but not where it is inside each
  * app; JustWatch, which supplies TMDB's streaming data, has each service's own link. Its API is
  * public but unofficial, so when it fails or changes, the app simply opens as before. A link is
- * kept only for an app on this TV that says it can open it, and only the title's name is sent.
+ * kept only for an app on this TV that says it can open it, and only the title's name is sent:
+ * for the banner's titles and a title's details page as they are shown, and for a Continue
+ * Watching title when its card is opened.
  */
 final class AppLinks {
     interface Poster {
@@ -46,11 +49,32 @@ final class AppLinks {
 
     /** Per title and app ("movie:603|com.netflix.ninja"): the link, or "" when that app has none. */
     private static final Map<String, String> found = new ConcurrentHashMap<>();
+    /**
+     * A title whose look-up failed is not looked up again for a while, and after several failures
+     * in a row (JustWatch down or changed) none is: the banner turns every few seconds.
+     */
+    private static final long RETRY_MS = 10 * 60_000L, PAUSE_MS = 30 * 60_000L;
+    private static final int FAILURES_TO_PAUSE = 3;
+    private static final Map<String, Long> failedAt = new ConcurrentHashMap<>();
+    private static int failuresInARow;
+    private static long pausedUntil;
 
     private AppLinks() {}
 
+    private static String key(Tmdb.Title t) {
+        return (t.series ? "tv:" : "movie:") + t.id;
+    }
+
     private static String key(Tmdb.Title t, String app) {
-        return (t.series ? "tv:" : "movie:") + t.id + "|" + app;
+        return key(t) + "|" + app;
+    }
+
+    /** Tests start each case with nothing looked up and nothing failed. */
+    static synchronized void reset() {
+        found.clear();
+        failedAt.clear();
+        failuresInARow = 0;
+        pausedUntil = 0;
     }
 
     /** The apps the title streams on, rents or sells on: the ones "Open …" can take it to. */
@@ -82,11 +106,21 @@ final class AppLinks {
     static synchronized Map<String, String> lookUp(Context context, Tmdb.Title t) throws Exception {
         Set<String> apps = apps(t);
         if (!lookedUp(t)) {
-            JSONObject body = new JSONObject().put("query", QUERY).put("variables", new JSONObject().put("q", t.name));
-            JSONObject response = new JSONObject(new String(poster.post(API, body.toString()), StandardCharsets.UTF_8));
-            JSONArray edges = response.getJSONObject("data").getJSONObject("popularTitles").getJSONArray("edges");
-            Map<String, String> links = pick(context.getPackageManager(), t, apps, edges);
-            for (String app : apps) found.put(key(t, app), links.containsKey(app) ? links.get(app) : "");
+            long now = SystemClock.elapsedRealtime();
+            Long failed = failedAt.get(key(t));
+            if (now < pausedUntil || (failed != null && now - failed < RETRY_MS)) throw new IOException("not looked up for now");
+            try {
+                JSONObject body = new JSONObject().put("query", QUERY).put("variables", new JSONObject().put("q", t.name));
+                JSONObject response = new JSONObject(new String(poster.post(API, body.toString()), StandardCharsets.UTF_8));
+                JSONArray edges = response.getJSONObject("data").getJSONObject("popularTitles").getJSONArray("edges");
+                Map<String, String> links = pick(context.getPackageManager(), t, apps, edges);
+                for (String app : apps) found.put(key(t, app), links.containsKey(app) ? links.get(app) : "");
+                failuresInARow = 0;
+            } catch (Exception e) {
+                failedAt.put(key(t), now);
+                if (++failuresInARow >= FAILURES_TO_PAUSE) pausedUntil = now + PAUSE_MS;
+                throw e;
+            }
         }
         Map<String, String> links = new HashMap<>();
         for (String app : apps) {
