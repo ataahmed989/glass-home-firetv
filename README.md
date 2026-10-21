@@ -115,7 +115,7 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 | ☰ Menu | To the tab bar, closing anything open; again to go back down. |
 | Back | Closes what is open, then steps back toward Home. |
 | Play/Pause | On the Smart Stack, turns to the next widget (Rewind goes back). |
-| Home | Glass Home's Home page, closing anything open. Coming from another app, the screen is dark for a moment on the way. |
+| Home | Glass Home's Home page, closing anything open. Fire OS sends Home to Amazon's home first, so the screen is dark for about half a second on the way (0.5-0.9 s measured). |
 
 ## Debloat
 
@@ -132,6 +132,11 @@ refreshes wait. `firetv/restore.sh` undoes all of it.
 Fire OS's Dynamic Warming keeps the apps Amazon picks as "favorites" (Prime Video and YouTube
 here) started in the background so they open faster. It is switched by a system property that
 ADB may not change, so it stays on.
+
+Also switched off in Fire TV's own Settings (and switched back on there): Preferences > Privacy
+Settings > Device Usage Data, Collect App Usage Data and Interest-based Ads; Preferences >
+Featured Content > Allow Video Autoplay and Allow Audio Autoplay (Amazon's home is still opened
+by every Home press, for a moment, and no longer starts a preview video when it is).
 
 Fire OS 8.1.8.5 refuses to disable some packages as protected, among them
 `com.amazon.device.metrics`, `com.amazon.device.logmanager`, `com.amazon.device.crashmanager`
