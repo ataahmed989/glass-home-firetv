@@ -28,3 +28,11 @@ com.amazon.tmm.tutorial
 com.amazon.smarthomemapviewapp
 com.android.protips
 com.android.printservice.recommendation
+com.amazon.tv.matter
+com.amazon.tv.mattercohost
+com.amazon.ods.kindleconnect
+com.amazon.rtcsessioncontroller
+com.amazon.tv.ffsprovisioneeclient
+com.android.traceur
+com.amazon.cloud9
+com.amazon.tahoe

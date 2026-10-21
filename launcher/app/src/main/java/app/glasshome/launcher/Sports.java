@@ -425,20 +425,26 @@ final class Sports {
 
     // ---- Time text --------------------------------------------------------------------------
 
+    // Built once: a pattern is parsed each time a formatter is made from it
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.US);
+    private static final DateTimeFormatter WEEKDAY = DateTimeFormatter.ofPattern("EEE", Locale.US);
+    private static final DateTimeFormatter MONTH_DAY = DateTimeFormatter.ofPattern("MMM d", Locale.US);
+    private static final DateTimeFormatter FULL_START = DateTimeFormatter.ofPattern("EEEE, MMM d  ·  h:mm a", Locale.US);
+    private static final DateTimeFormatter WEEKDAY_DATE = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.US);
+
     /** "Today 7:30 PM", "Tomorrow 8:00 PM", "Sun 1:00 PM", "Oct 25". */
     static String startText(long millis) {
         ZonedDateTime t = Clock.at(millis);
         long days = ChronoUnit.DAYS.between(Clock.today(), t.toLocalDate());
-        String time = t.format(DateTimeFormatter.ofPattern("h:mm a", Locale.US));
+        String time = t.format(TIME);
         if (days == 0) return "Today " + time;
         if (days == 1) return "Tomorrow " + time;
-        if (days > 1 && days < 7) return t.format(DateTimeFormatter.ofPattern("EEE", Locale.US)) + " " + time;
-        return t.format(DateTimeFormatter.ofPattern("MMM d", Locale.US)) + "  ·  " + time;
+        if (days > 1 && days < 7) return t.format(WEEKDAY) + " " + time;
+        return t.format(MONTH_DAY) + "  ·  " + time;
     }
 
     static String fullStartText(long millis) {
-        ZonedDateTime t = Clock.at(millis);
-        return t.format(DateTimeFormatter.ofPattern("EEEE, MMM d  ·  h:mm a", Locale.US));
+        return Clock.at(millis).format(FULL_START);
     }
 
     static String dayText(long millis) {
@@ -446,6 +452,6 @@ final class Sports {
         long days = ChronoUnit.DAYS.between(t.toLocalDate(), Clock.today());
         if (days == 0) return "Final  ·  Today";
         if (days == 1) return "Final  ·  Yesterday";
-        return "Final  ·  " + t.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.US));
+        return "Final  ·  " + t.format(WEEKDAY_DATE);
     }
 }

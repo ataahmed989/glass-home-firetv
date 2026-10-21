@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.net.Uri;
 import android.provider.Settings;
 
 import java.util.ArrayList;
@@ -69,7 +70,12 @@ final class AppRepository {
         try {
             Intent launch;
             ApplicationInfo appInfo;
-            if (activity != null) {
+            Intent direct = direct(pkg);
+            ResolveInfo directly = direct == null ? null : pm.resolveActivity(direct, 0);
+            if (directly != null) {
+                launch = direct;
+                appInfo = directly.activityInfo.applicationInfo;
+            } else if (activity != null) {
                 launch = new Intent(Intent.ACTION_MAIN).addCategory(category).setClassName(activity.packageName, activity.name);
                 appInfo = activity.applicationInfo;
             } else {
@@ -84,6 +90,24 @@ final class AppRepository {
             return null;
         }
     }
+
+    /**
+     * Amazon apps whose launcher entry does not open them: the Appstore's hands over to its app
+     * library on Amazon's home screen, and Live TV has none at all. These open the Appstore's
+     * storefront and Live TV's channel guide directly, when the TV has them.
+     */
+    private static Intent direct(String pkg) {
+        switch (pkg) {
+            case HomeButtonService.APPSTORE:
+                return new Intent("com.amazon.venezia.ade.FEATURED_LAUNCH").setPackage(pkg);
+            case LIVE_TV:
+                return new Intent(Intent.ACTION_VIEW, Uri.parse("livetv://showEpg")).setPackage(pkg);
+            default:
+                return null;
+        }
+    }
+
+    private static final String LIVE_TV = "com.amazon.tv.livetv";
 
     /**
      * Fire TV's Settings. Android TV's settings intent opens Fire OS's settings screen directly, in

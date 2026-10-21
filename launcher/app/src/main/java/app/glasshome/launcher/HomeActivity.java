@@ -609,7 +609,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void launch(AppEntry app) {
-        // The Appstore and Settings pass through Amazon's launcher on their way up; that is not the Home button
+        // Some of Amazon's screens pass through its launcher on their way up; that is not the Home button
         HomeButtonService.opening(app.key);
         try {
             startActivity(app.launchIntent, openingAnimation());
@@ -985,8 +985,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         lastZone = Zone.GRID;
         homeZone = Zone.GRID;
         if (position < Ui.COLUMNS) lastDockColumn = position;
-        dock.setChevronVisible(position < Ui.COLUMNS);
-        grid.invalidate();
         // The hero follows only once focus has rested; moving on cancels the pending update
         main.removeCallbacks(presentPending);
         pendingApp = app;

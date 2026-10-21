@@ -29,6 +29,9 @@
         </intent>
         <!-- Fire TV's screen mirroring, for the Control Center shortcut -->
         <package android:name="com.amazon.cast.sink" />
+        <!-- The Appstore's storefront and Live TV's guide, which their tiles open directly -->
+        <package android:name="com.amazon.venezia" />
+        <package android:name="com.amazon.tv.livetv" />
     </queries>
 
     <application

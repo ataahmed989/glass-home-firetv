@@ -4,6 +4,7 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
+import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
 import android.graphics.Matrix;
@@ -145,6 +146,16 @@ final class ShelfPage extends View {
         model = m;
         message = "";
         loadedAt = Clock.now();
+        // What the score cards show, worked out once per game here rather than on every frame
+        scoreCards.clear();
+        for (PageModel.Shelf s : m.shelves) {
+            if (s.style != PageModel.Style.SCORE) continue;
+            for (PageModel.Card card : s.cards) {
+                if (card.game != null && !scoreCards.containsKey(card.game)) {
+                    scoreCards.put(card.game, new ScoreCard(card.game, Ui.px(CARD_W), Ui.px(CARD_H)));
+                }
+            }
+        }
         int n = m.shelves.size();
         int[] oldCols = cols;
         float[] oldX = rowX;
@@ -654,9 +665,12 @@ final class ShelfPage extends View {
         rect.set(0, 0, w, h);
         float r = Ui.px(RADIUS);
         if (focus > 0f) {
-            shadow.setShadowLayer(Ui.px(26), 0, Ui.px(14), Math.round(150 * focus) << 24);
+            // The shadow, blurred once per card size, then the card's black base
+            Bitmap shade = shadowFor(s.style == PageModel.Style.RANKED, w, h, r);
+            float pad = (shade.getWidth() - w) / 2f;
+            shadowPaint.setAlpha(Math.round(150 * focus));
+            c.drawBitmap(shade, -pad, Ui.px(SHADOW_DROP) - pad, shadowPaint);
             c.drawRoundRect(rect, r, r, shadow);
-            shadow.clearShadowLayer();
         }
         switch (s.style) {
             case SCORE:
@@ -686,6 +700,29 @@ final class ShelfPage extends View {
         if (!card.subtitle.isEmpty()) {
             c.drawText(TextUtils.ellipsize(card.subtitle, cardSub, w, TextUtils.TruncateAt.END).toString(), ix, capTop + Ui.px(62), cardSub);
         }
+    }
+
+    private static final int SHADOW_BLUR = 26, SHADOW_DROP = 14;
+    private static Bitmap cardShadow, posterShadow;   // shared by the pages; main thread only
+    private final Paint shadowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+
+    /**
+     * A focused card's shadow: its shape in black, blurred once in software and kept as an alpha
+     * mask with room for the blur to spread. Drawn as a bitmap, it costs the GPU a texture where a
+     * shadow layer would blur it again on every frame of the focus animation.
+     */
+    private static Bitmap shadowFor(boolean poster, float w, float h, float r) {
+        Bitmap b = poster ? posterShadow : cardShadow;
+        if (b != null) return b;
+        int pad = 2 * Ui.px(SHADOW_BLUR);
+        b = Bitmap.createBitmap(Math.round(w) + 2 * pad, Math.round(h) + 2 * pad, Bitmap.Config.ALPHA_8);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        // The same blur a shadow layer of this radius uses
+        p.setMaskFilter(new BlurMaskFilter(Ui.px(SHADOW_BLUR), BlurMaskFilter.Blur.NORMAL));
+        new Canvas(b).drawRoundRect(new RectF(pad, pad, pad + w, pad + h), r, r, p);
+        if (poster) posterShadow = b;
+        else cardShadow = b;
+        return b;
     }
 
     private interface ShaderMaker {
@@ -770,33 +807,74 @@ final class ShelfPage extends View {
         }
     }
 
+    /**
+     * What a score card shows that only changes with its game, worked out once when the game
+     * arrives (see {@link #setModel}) instead of on every frame: the status line and chips fitted
+     * to the card, the size the score fits at, the logos' addresses and the card's colours.
+     */
+    private final class ScoreCard {
+        final String status, leftChip, rightChip, awayLogo, homeLogo;
+        final float leftChipW, rightChipW, scoreSize;
+        final int leftChipColor;
+        final Shader teams;
+
+        ScoreCard(Sports.Game g, float w, float h) {
+            // Status along the bottom: the clock while live, "Final", or when it starts
+            bigScore.setTextSize(Ui.px(19));
+            status = TextUtils.ellipsize(g.live() || g.over() ? g.status : Sports.startText(g.start), bigScore,
+                    w - Ui.px(40), TextUtils.TruncateAt.END).toString();
+            // Scores shrink to fit between the logos (basketball reaches three digits)
+            float logo = Ui.px(SCORE_LOGO), ax = w * 0.17f, room = w / 2f - Ui.px(16) - (ax + logo / 2f + Ui.px(8));
+            bigScore.setTextSize(Ui.px(44));
+            float widest = Math.max(bigScore.measureText(g.away.score), bigScore.measureText(g.home.score));
+            scoreSize = widest > room ? Ui.px(44) * room / widest : Ui.px(44);
+            leftChip = chipText(g.live() ? "LIVE" : g.league.name.length() <= 4 ? g.league.name : "");
+            leftChipColor = g.live() ? 0xF2E5262B : 0x40000000;
+            rightChip = chipText(g.network().toUpperCase());
+            leftChipW = chip.measureText(leftChip) + Ui.px(18);
+            rightChipW = chip.measureText(rightChip) + Ui.px(18);
+            awayLogo = Sports.logo(g.away.logo, 160);
+            homeLogo = Sports.logo(g.home.logo, 160);
+            teams = new LinearGradient(0, 0, w, h,
+                    new int[] {FeaturePainter.shade(g.away.color, 0.55f), FeaturePainter.shade(g.away.color, 0.40f),
+                            FeaturePainter.shade(g.home.color, 0.40f), FeaturePainter.shade(g.home.color, 0.55f)},
+                    new float[] {0f, 0.48f, 0.52f, 1f}, Shader.TileMode.CLAMP);
+        }
+
+        private String chipText(String text) {
+            return TextUtils.ellipsize(text, chip, Ui.px(150), TextUtils.TruncateAt.END).toString();
+        }
+    }
+
+    private static final int SCORE_LOGO = 76;
+    private final Map<Sports.Game, ScoreCard> scoreCards = new java.util.HashMap<>();
+    private Shader scoreShade;
+    private final RectF chipBox = new RectF(), logoBox = new RectF();
+
     /** A game: the teams' colours split down the card, both logos, the score or the start time, the channel. */
     private void drawScoreCard(Canvas c, Sports.Game g, float w, float h, float radius) {
+        ScoreCard card = scoreCards.get(g);
+        if (card == null) {
+            card = new ScoreCard(g, w, h);   // not in the model's score shelves: worked out now, once
+            scoreCards.put(g, card);
+        }
+        if (scoreShade == null) scoreShade = new LinearGradient(0, 0, 0, h, 0x14FFFFFF, 0x59000000, Shader.TileMode.CLAMP);
         rect.set(0, 0, w, h);
-        fill.setShader(cached("teams" + g.away.color + "/" + g.home.color + "/" + w, () -> new LinearGradient(0, 0, w, h,
-                new int[] {FeaturePainter.shade(g.away.color, 0.55f), FeaturePainter.shade(g.away.color, 0.40f),
-                        FeaturePainter.shade(g.home.color, 0.40f), FeaturePainter.shade(g.home.color, 0.55f)},
-                new float[] {0f, 0.48f, 0.52f, 1f}, Shader.TileMode.CLAMP)));
+        fill.setShader(card.teams);
         c.drawRoundRect(rect, radius, radius, fill);
-        fill.setShader(cached("shade" + h, () -> new LinearGradient(0, 0, 0, h, 0x14FFFFFF, 0x59000000, Shader.TileMode.CLAMP)));
+        fill.setShader(scoreShade);
         c.drawRoundRect(rect, radius, radius, fill);
         fill.setShader(null);
         RectF r = rect;
-        float logo = Ui.px(76), ly = h * 0.42f;
+        float logo = Ui.px(SCORE_LOGO), ly = h * 0.42f;
         float ax = w * 0.17f, hx = w - w * 0.17f, mid = w / 2f;
-        drawLogo(c, g.away.logo, ax, ly, logo);
-        drawLogo(c, g.home.logo, hx, ly, logo);
+        drawLogo(c, card.awayLogo, ax, ly, logo);
+        drawLogo(c, card.homeLogo, hx, ly, logo);
         c.drawText(g.away.abbr, ax, ly + logo / 2f + Ui.px(30), abbr);
         c.drawText(g.home.abbr, hx, ly + logo / 2f + Ui.px(30), abbr);
-        if (g.live() || g.over()) {
-            // Scores shrink to fit between the logos (basketball reaches three digits)
-            float room = mid - Ui.px(16) - (ax + logo / 2f + Ui.px(8));
-            bigScore.setTextSize(Ui.px(44));
-            float widest = Math.max(bigScore.measureText(g.away.score), bigScore.measureText(g.home.score));
-            if (widest > room) bigScore.setTextSize(Ui.px(44) * room / widest);
-        }
-        Paint.FontMetrics fm = bigScore.getFontMetrics();
-        float base = ly - (fm.ascent + fm.descent) / 2f;
+        bigScore.setTextSize(g.live() || g.over() ? card.scoreSize : Ui.px(44));
+        bigScore.getFontMetrics(scoreMetrics);
+        float base = ly - (scoreMetrics.ascent + scoreMetrics.descent) / 2f;
         if (g.live() || g.over()) {
             bigScore.setTextAlign(Paint.Align.RIGHT);
             bigScore.setAlpha(g.over() && g.home.winner ? 150 : 255);
@@ -812,37 +890,34 @@ final class ShelfPage extends View {
             c.drawText("@", mid, base, bigScore);
             bigScore.setAlpha(255);
         }
-        // Status along the bottom: the clock while live, "Final", or when it starts
-        String status = g.live() ? g.status : g.over() ? g.status : Sports.startText(g.start);
         bigScore.setTextSize(Ui.px(19));
-        c.drawText(TextUtils.ellipsize(status, bigScore, r.width() - Ui.px(40), TextUtils.TruncateAt.END).toString(),
-                mid, r.bottom - Ui.px(18), bigScore);
+        c.drawText(card.status, mid, r.bottom - Ui.px(18), bigScore);
         bigScore.setTextSize(Ui.px(44));
         float chipY = r.top + Ui.px(14);
-        if (g.live()) drawChip(c, "LIVE", r.left + Ui.px(14), chipY, 0xF2E5262B, true);
-        else drawChip(c, g.league.name.length() <= 4 ? g.league.name : "", r.left + Ui.px(14), chipY, 0x40000000, true);
-        String network = g.network();
-        if (!network.isEmpty()) drawChip(c, network.toUpperCase(), r.right - Ui.px(14), chipY, 0x4D000000, false);
+        drawChip(c, card.leftChip, card.leftChipW, r.left + Ui.px(14), chipY, card.leftChipColor, true);
+        drawChip(c, card.rightChip, card.rightChipW, r.right - Ui.px(14), chipY, 0x4D000000, false);
     }
 
-    private void drawChip(Canvas c, String text, float x, float top, int color, boolean fromLeft) {
+    private final Paint.FontMetrics scoreMetrics = new Paint.FontMetrics(), chipMetrics = new Paint.FontMetrics();
+
+    /** A small label in a rounded box, {@code w} wide, from {@code x} rightwards or leftwards. */
+    private void drawChip(Canvas c, String text, float w, float x, float top, int color, boolean fromLeft) {
         if (text.isEmpty()) return;
-        String t = TextUtils.ellipsize(text, chip, Ui.px(150), TextUtils.TruncateAt.END).toString();
-        float w = chip.measureText(t) + Ui.px(18), h = Ui.px(26);
-        float left = fromLeft ? x : x - w;
-        RectF box = new RectF(left, top, left + w, top + h);
+        float h = Ui.px(26), left = fromLeft ? x : x - w;
+        chipBox.set(left, top, left + w, top + h);
         fill.setColor(color);
-        c.drawRoundRect(box, Ui.px(7), Ui.px(7), fill);
-        Paint.FontMetrics fm = chip.getFontMetrics();
-        c.drawText(t, left + Ui.px(9), top + h / 2f - (fm.ascent + fm.descent) / 2f, chip);
+        c.drawRoundRect(chipBox, Ui.px(7), Ui.px(7), fill);
+        chip.getFontMetrics(chipMetrics);
+        c.drawText(text, left + Ui.px(9), top + h / 2f - (chipMetrics.ascent + chipMetrics.descent) / 2f, chip);
     }
 
-    private void drawLogo(Canvas c, String url, float cx, float cy, float size) {
-        Bitmap b = images.get(Sports.logo(url, 160), Math.round(size), true, invalidator);
+    /** A team's logo, at the address worked out with its card. */
+    private void drawLogo(Canvas c, String logoUrl, float cx, float cy, float size) {
+        Bitmap b = images.get(logoUrl, Math.round(size), true, invalidator);
         if (b == null) return;
         float s = size / Math.max(b.getWidth(), b.getHeight());
-        RectF box = new RectF(cx - b.getWidth() * s / 2f, cy - b.getHeight() * s / 2f, cx + b.getWidth() * s / 2f, cy + b.getHeight() * s / 2f);
-        c.drawBitmap(b, null, box, art);
+        logoBox.set(cx - b.getWidth() * s / 2f, cy - b.getHeight() * s / 2f, cx + b.getWidth() * s / 2f, cy + b.getHeight() * s / 2f);
+        c.drawBitmap(b, null, logoBox, art);
     }
 
     /** An empty shelf (Continue Watching before anything has played) says what will appear there. */
@@ -857,21 +932,35 @@ final class ShelfPage extends View {
         float cx = rect.left + Ui.px(64), cy = rect.centerY(), ring = Ui.px(26);
         rim.setColor(0x99FFFFFF);
         c.drawCircle(cx, cy, ring, rim);
-        android.graphics.Path p = new android.graphics.Path();
-        p.moveTo(cx - Ui.px(7), cy - Ui.px(11));
-        p.lineTo(cx + Ui.px(12), cy);
-        p.lineTo(cx - Ui.px(7), cy + Ui.px(11));
-        p.close();
+        if (emptyPlay.isEmpty()) {
+            emptyPlay.moveTo(-Ui.px(7), -Ui.px(11));
+            emptyPlay.lineTo(Ui.px(12), 0);
+            emptyPlay.lineTo(-Ui.px(7), Ui.px(11));
+            emptyPlay.close();
+        }
         fill.setColor(0xB3FFFFFF);
-        c.drawPath(p, fill);
-        android.text.StaticLayout layout = android.text.StaticLayout.Builder
-                .obtain(s.empty, 0, s.empty.length(), emptyPaint, Math.round(w - Ui.px(140)))
-                .setMaxLines(3).setLineSpacing(0f, 1.15f).build();
         c.save();
-        c.translate(rect.left + Ui.px(112), cy - layout.getHeight() / 2f);
-        layout.draw(c);
+        c.translate(cx, cy);
+        c.drawPath(emptyPlay, fill);
+        c.restore();
+        // Laid out once, and again only if the text or its width changes
+        int textW = Math.round(w - Ui.px(140));
+        if (emptyLayout == null || !s.empty.equals(emptyText) || textW != emptyWidth) {
+            emptyText = s.empty;
+            emptyWidth = textW;
+            emptyLayout = android.text.StaticLayout.Builder.obtain(s.empty, 0, s.empty.length(), emptyPaint, textW)
+                    .setMaxLines(3).setLineSpacing(0f, 1.15f).build();
+        }
+        c.save();
+        c.translate(rect.left + Ui.px(112), cy - emptyLayout.getHeight() / 2f);
+        emptyLayout.draw(c);
         c.restore();
     }
+
+    private final android.graphics.Path emptyPlay = new android.graphics.Path();
+    private android.text.StaticLayout emptyLayout;
+    private String emptyText;
+    private int emptyWidth;
 
     /** Before content arrives: quiet placeholders where the first shelf will be. */
     private void drawSkeleton(Canvas c) {
