@@ -2,8 +2,10 @@ package app.glasshome.launcher;
 
 import android.accessibilityservice.AccessibilityService;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -26,6 +28,8 @@ import android.view.accessibility.AccessibilityEvent;
  *
  * So that the trip through Amazon's home never shows, Glass Home's last frame ({@link HomeSnapshot})
  * covers the screen from the first sign of it until Glass Home is drawn again; then the cover fades.
+ * The first sign is Fire OS's own announcement of the Home button (the system-dialogs broadcast
+ * with the reason "homekey"), which comes as the button is pressed, before Amazon's home starts.
  * The cover lifts at once for anything else that comes up instead (Fire TV's quick menu on a long
  * press, the screensaver, an app opened by voice), on any key, and after two seconds regardless.
  *
@@ -34,8 +38,8 @@ import android.view.accessibility.AccessibilityEvent;
  * directly, so only where those cannot be). When Glass Home opens one of those, Amazon's
  * launcher is left alone until that screen is up, and while the remote moves around the library.
  *
- * What it is told: which app's window comes to the front, that Amazon's launcher redrew, and when
- * a remote key is pressed (never consumed; Home never arrives). It reads no screen content and
+ * What it is told: which app's window comes to the front, that Amazon's launcher redrew, when a
+ * remote key is pressed (never consumed; Home never arrives) and Fire OS's announcement of Home. It reads no screen content and
  * keeps nothing. Turned on once over ADB; Home Screen settings can switch the redirect off.
  */
 public final class HomeButtonService extends AccessibilityService {
@@ -69,6 +73,18 @@ public final class HomeButtonService extends AccessibilityService {
     private long keyAt = -KEY_MS;
     private long redirectedAt = -REDIRECT_GAP_MS;
     private CoverView cover;
+
+    /** Fire OS announces the Home button to every app as it is pressed (a long press too). */
+    private final BroadcastReceiver homeKey = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!"homekey".equals(intent.getStringExtra("reason"))) return;
+            // Whatever Glass Home was opening has been left: Amazon's home that follows is the Home button's
+            openingAt = -OPENING_MS;
+            appstore = false;
+            if (!HomeActivity.inFront) cover();   // on Glass Home, leaving it covers the screen (leftUnexpectedly)
+        }
+    };
 
     /** Glass Home is opening {@code pkg}, which may pass through Amazon's launcher on its way up. */
     static void opening(String pkg) {
@@ -105,11 +121,17 @@ public final class HomeButtonService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         connected = this;
+        registerReceiver(homeKey, new IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
     }
 
     @Override
     public boolean onUnbind(Intent intent) {
         lift(false);
+        try {
+            unregisterReceiver(homeKey);
+        } catch (IllegalArgumentException ignored) {
+            // never connected
+        }
         if (connected == this) connected = null;
         return super.onUnbind(intent);
     }
