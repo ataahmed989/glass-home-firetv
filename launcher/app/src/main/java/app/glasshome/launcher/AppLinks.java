@@ -18,6 +18,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,7 +42,7 @@ final class AppLinks {
     private static final String NETFLIX = "com.netflix.ninja";
     private static final String QUERY = "query($q:String!){popularTitles(country:US,first:10,filter:{searchQuery:$q})"
             + "{edges{node{objectType content(country:US,language:\"en\"){externalIds{tmdbId}}"
-            + "offers(country:US,platform:ANDROID_TV){monetizationType standardWebURL}}}}}";
+            + "offers(country:US,platform:ANDROID_TV){monetizationType standardWebURL deeplinkURL(platform:ANDROID_TV)}}}}}";
 
     /** Per title and app ("movie:603|com.netflix.ninja"): the link, or "" when that app has none. */
     private static final Map<String, String> found = new ConcurrentHashMap<>();
@@ -108,7 +109,7 @@ final class AppLinks {
             JSONArray offers = node.optJSONArray("offers");
             for (int k = 0; offers != null && k < offers.length(); k++) {
                 JSONObject o = offers.optJSONObject(k);
-                String link = o == null ? "" : clean(o.optString("standardWebURL"));
+                String link = o == null ? "" : page(t, clean(o.optString("standardWebURL")), o.optString("deeplinkURL"));
                 if (link.isEmpty()) continue;
                 int rank = rank(o.optString("monetizationType"));
                 for (String app : apps) {
@@ -133,6 +134,27 @@ final class AppLinks {
             default:
                 return 0;   // FLATRATE, FREE, ADS…: included with the service
         }
+    }
+
+    /**
+     * The title's page in the app, never playback: "Open …" should land where its own Play or
+     * Resume is. Links that start playing (HBO Max has only those) are not used, and Apple TV's
+     * link to a series' first episode becomes the series' page, from the show id in its app link.
+     */
+    static String page(Tmdb.Title t, String link, String appLink) {
+        if (link.isEmpty()) return "";
+        Uri u = Uri.parse(link);
+        String path = u.getPath() == null ? "" : u.getPath();
+        if (path.contains("/watch") || path.contains("/play/")) return "";
+        if ("tv.apple.com".equals(u.getHost()) && path.contains("/episode/")) {
+            int at = appLink == null ? -1 : appLink.indexOf("showId=");
+            if (at < 0) return link;
+            String id = appLink.substring(at + "showId=".length()).split("[&#]")[0];
+            String country = path.split("/").length > 1 ? path.split("/")[1] : "us";
+            String slug = t.name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
+            return id.isEmpty() ? link : "https://tv.apple.com/" + country + "/show/" + (slug.isEmpty() ? "show" : slug) + "/" + id;
+        }
+        return link;
     }
 
     /** Without the tracking and affiliate parameters JustWatch adds; everything else is kept. */

@@ -74,6 +74,23 @@ public class AppLinksTest {
         assertFalse("Netflix cannot open the Netflix link here, so it opens as an app", links.containsKey(NETFLIX));
     }
 
+    /** Only a title's page, never playback; Apple TV's first-episode link becomes the series' page (as checked on the TV). */
+    @Test
+    public void linksGoToTheTitlesPageNotPlayback() {
+        Tmdb.Title severance = new Tmdb.Title(95396, true, "Severance", "", "", "", "2022-02-18", new int[0]);
+        assertEquals("https://tv.apple.com/us/show/severance/umc.cmc.1srk2goyh2q2zdxcx605w8vtx",
+                AppLinks.page(severance, "https://tv.apple.com/us/episode/good-news-about-hell/umc.cmc.s80mx1ic96pu6ewupz8pfasf",
+                        "intent://tv.apple.com/us/episode/good-news-about-hell/umc.cmc.s80mx1ic96pu6ewupz8pfasf?showId=umc.cmc.1srk2goyh2q2zdxcx605w8vtx&playableId=tvs.sbd.4000#Intent;scheme=https;end"));
+        assertEquals("without a show id the episode's page is kept", "https://tv.apple.com/us/episode/x/umc.cmc.1",
+                AppLinks.page(severance, "https://tv.apple.com/us/episode/x/umc.cmc.1", ""));
+        assertEquals("", AppLinks.page(severance, "https://play.hbomax.com/video/watch/dae9e532-3714-4f2e-b758-fb9a13def902", ""));
+        assertEquals("", AppLinks.page(severance, "https://www.disneyplus.com/play/91310366-d44b-44a4-bdc4-71f999472826", ""));
+        String andor = "https://www.disneyplus.com/browse/entity-faba988a-a9f5-45f2-a074-0775a7d6f67a";
+        assertEquals(andor, AppLinks.page(severance, andor, ""));
+        assertEquals(RENT_LINK, AppLinks.page(severance, RENT_LINK, ""));
+        assertEquals("https://www.netflix.com/title/70143836", AppLinks.page(severance, "https://www.netflix.com/title/70143836", ""));
+    }
+
     /** The app starts afresh at the link (a running Netflix ignores one otherwise), and Netflix is told where it came from. */
     @Test
     public void theAppStartsAfreshAtTheLink() {
