@@ -631,16 +631,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     /**
-     * An app opens by growing out of what was selected while Home holds still behind it, rather
-     * than with a cut to black while the app starts: a tile zooms up into the app, as on tvOS;
-     * anything else (a widget) grows from its place.
+     * A short compositor fade hands off to the app without allocating a tile snapshot.
      */
     private Bundle openingAnimation() {
-        View from = getCurrentFocus();
-        if (Ui.reducedMotion || from == null || from.getWidth() == 0 || from.getWidth() >= screenW) return null;
-        Bitmap tile = from instanceof TileView ? ((TileView) from).snapshot() : null;
-        if (tile != null) return ActivityOptions.makeThumbnailScaleUpAnimation(from, tile, 0, 0).toBundle();
-        return ActivityOptions.makeScaleUpAnimation(from, 0, 0, from.getWidth(), from.getHeight()).toBundle();
+        if (Ui.reducedMotion) return ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle();
+        // No synchronous tile bitmap capture or full-screen scale at app launch.
+        return ActivityOptions.makeCustomAnimation(this, R.anim.app_enter, R.anim.app_exit).toBundle();
     }
 
     /** Opens an app by its key, if it is installed. */
@@ -702,9 +698,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             fadeIn(pages[p], fade);
         }
         if (old == HOME) {
-            for (View v : home) fadeOut(v, fade);
+            for (View v : home) fadeOut(v, 0);
         } else {
-            fadeOut(pages[old], fade);
+            fadeOut(pages[old], 0);
         }
         setBarHidden(false, atOnce);
         main.removeCallbacks(sportsTick);
@@ -1684,11 +1680,19 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return info != null && info.activityInfo != null && getPackageName().equals(info.activityInfo.packageName);
     }
 
+    private final Runnable resumeRefresh = () -> {
+        if (!resumed || isFinishing() || isDestroyed()) return;
+        if (page != HOME && pages[page].hasModel()) loadPage(page);
+        refreshMyTeams();
+        refreshWatching();
+    };
+
     // ---- Lifecycle --------------------------------------------------------------------------
 
     @Override
     protected void onResume() {
         super.onResume();
+        HomeServiceRecovery.restore(this);
         resumed = true;
         inFront = true;
         HomeButtonService.glassHomeResumed();
@@ -1697,11 +1701,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         scheduleSlides();
         main.removeCallbacks(weatherTick);
         long age = System.currentTimeMillis() - weather.lastUpdated();
-        main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? 0 : WEATHER_EVERY_MS - age);
-        // Back from an app: Continue Watching and scores may have moved on
-        if (page != HOME && pages[page].hasModel()) loadPage(page);
-        refreshMyTeams();
-        refreshWatching();
+        main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? 600 : WEATHER_EVERY_MS - age);
+        // Let the first visible frames settle before refreshing content.
+        main.removeCallbacks(resumeRefresh);
+        main.postDelayed(resumeRefresh, 600);
         main.removeCallbacks(shownFallback);
         main.postDelayed(shownFallback, SHOWN_FALLBACK_MS);
         main.removeCallbacks(takeSnapshot);
@@ -1755,6 +1758,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     protected void onPause() {
+        main.removeCallbacks(resumeRefresh);
         resumed = false;
         inFront = false;
         cancelLinkWait();
@@ -1762,7 +1766,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(takeSnapshot);
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
         HomeButtonService.leftUnexpectedly();
-        if (showingHomeAsTheHomeButtonLeavesIt()) HomeSnapshot.capture(this);
+        // Reuse the settled snapshot; do not issue GPU readback during app handoff.
         lastZone = zone();
         selectArmed = false;
         // Nothing animates or polls while another app is in front
@@ -1817,6 +1821,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onDestroy() {
         main.removeCallbacks(collect);
+        main.removeCallbacks(resumeRefresh);
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         worker.shutdownNow();
