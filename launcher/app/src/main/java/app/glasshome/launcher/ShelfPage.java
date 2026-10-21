@@ -1,0 +1,892 @@
+package app.glasshome.launcher;
+
+import android.animation.ValueAnimator;
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapShader;
+import android.graphics.Canvas;
+import android.graphics.LinearGradient;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.graphics.Shader;
+import android.text.TextPaint;
+import android.text.TextUtils;
+import android.view.View;
+
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
+
+/**
+ * One tvOS-style browse page (Movies, TV Shows, Sports): a full-screen hero carousel with the first
+ * shelf peeking below it, then shelves of cards. Moving down scrolls the hero away and settles the
+ * focused shelf near the top; moving along a shelf slides it. The whole page is one focus target
+ * that keeps its own position (a hero button, or a shelf and card), moved by HomeActivity's remote
+ * handling, and it is drawn in one pass rather than as a view per card.
+ */
+final class ShelfPage extends View {
+    interface Listener {
+        void onAction(ShelfPage page, PageModel.Feature feature, PageModel.Action action);
+
+        void onCard(ShelfPage page, PageModel.Shelf shelf, PageModel.Card card);
+
+        /** The hero's artwork changed, so the glass above it needs a new backdrop. */
+        void onHeroShown(ShelfPage page);
+
+        /** Focus moved into the shelves (the top bar steps aside) or back to the hero. */
+        void onScrolled(ShelfPage page, boolean intoShelves);
+    }
+
+    // Geometry in design px (1920 wide)
+    private static final int LEFT = 106, RIGHT = 1814;
+    private static final int HERO_BOTTOM = 800;         // bottom of the hero's button row
+    private static final int FIRST_ROW_TOP = 880;       // the first shelf peeks below the hero
+    private static final int FOCUS_ROW_TOP = 170;       // a focused shelf settles here
+    private static final int TITLE_H = 56, CAPTION_H = 78, ROW_GAP = 30;
+    private static final int CARD_W = 372, CARD_H = 209, CARD_GAP = 32;
+    private static final int POSTER_W = 222, POSTER_H = 333, RANK_W = 124, POSTER_GAP = 22;
+    private static final int EMPTY_H = 150;
+    private static final int RADIUS = 14;
+    private static final float CARD_SCALE = 1.08f;
+    private static final long HERO_EVERY_MS = 8000, HERO_FADE_MS = 650;
+
+    final String name;
+    private final FeaturePainter painter;
+    private final ImageCache images;
+    private Listener listener;
+    private PageModel model;
+    private String message = "";
+    private long loadedAt;
+    private Map<String, Bitmap> appArt = Collections.emptyMap();
+
+    // Focus: row -1 is the hero (button = its focused button); otherwise a shelf and its column
+    private int row = -1, button;
+    private int[] cols = new int[0];
+    private float[] rowX = new float[0];
+    private float[] rowTop = new float[0];   // screen px, before scrolling
+    private float scrollY;
+    private ValueAnimator scrollAnim, rowAnim, focusAnim, heroAnim;
+    private int focusRow = Integer.MIN_VALUE, focusCol, prevRow = Integer.MIN_VALUE, prevCol;
+    private float focusT, prevT;
+    private int hero, heroFrom = -1;
+    private float heroFade = 1f;
+    private boolean intoShelves;
+
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint art = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint dim = new Paint();
+    private final Paint sheen = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint shelfTitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint cardTitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint cardSub = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint rank = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint messagePaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint emptyPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint credit = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint abbr = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint bigScore = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint chip = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF rect = new RectF();
+    private final Matrix matrix = new Matrix();
+    private final Map<Bitmap, BitmapShader> shaders = new WeakHashMap<>();
+    private final Runnable invalidator = this::invalidate;
+    private final Runnable advance = new Runnable() {
+        @Override
+        public void run() {
+            if (model != null && model.hero.size() > 1 && !(isFocused() && row == -1)) showHero((hero + 1) % model.hero.size());
+            schedule();
+        }
+    };
+
+    ShelfPage(Context context, String name) {
+        super(context);
+        this.name = name;
+        painter = new FeaturePainter(context);
+        images = ImageCache.get(context);
+        setFocusable(true);
+        setDefaultFocusHighlightEnabled(false);
+        setContentDescription(name);
+        FeaturePainter.style(shelfTitle, context, 600, 28, 0xF2FFFFFF);
+        FeaturePainter.style(cardTitle, context, 500, 22, 0xF2FFFFFF);
+        FeaturePainter.style(cardSub, context, 400, 19, 0x99FFFFFF);
+        FeaturePainter.style(rank, context, 800, 250, 0xFFFFFFFF);
+        rank.setTextAlign(Paint.Align.RIGHT);
+        rank.setLetterSpacing(-0.06f);
+        FeaturePainter.style(messagePaint, context, 500, 30, 0xB3FFFFFF);
+        FeaturePainter.style(emptyPaint, context, 500, 23, 0xB3FFFFFF);
+        FeaturePainter.style(credit, context, 400, 17, 0x73FFFFFF);
+        FeaturePainter.style(abbr, context, 700, 22, 0xFFFFFFFF);
+        abbr.setTextAlign(Paint.Align.CENTER);
+        FeaturePainter.style(bigScore, context, 700, 44, 0xFFFFFFFF);
+        bigScore.setTextAlign(Paint.Align.CENTER);
+        FeaturePainter.style(chip, context, 700, 15, 0xFFFFFFFF);
+        chip.setLetterSpacing(0.06f);
+        shadow.setColor(0xFF000000);
+        rim.setStyle(Paint.Style.STROKE);
+        rim.setStrokeWidth(Math.max(1.5f, Ui.px(2f)));
+        dim.setColor(0xFF000000);
+    }
+
+    void setListener(Listener l) {
+        listener = l;
+    }
+
+    void setAppArt(Map<String, Bitmap> art) {
+        appArt = art;
+        invalidate();
+    }
+
+    // ---- Content ----------------------------------------------------------------------------
+
+    /** New content; on a refresh the focused shelf and card stay where they were. */
+    void setModel(PageModel m) {
+        boolean first = model == null;
+        model = m;
+        message = "";
+        loadedAt = Clock.now();
+        int n = m.shelves.size();
+        int[] oldCols = cols;
+        float[] oldX = rowX;
+        cols = new int[n];
+        rowX = new float[n];
+        for (int i = 0; i < n; i++) {
+            if (i < oldCols.length) {
+                cols[i] = Math.min(oldCols[i], Math.max(0, m.shelves.get(i).cards.size() - 1));
+                rowX[i] = Math.min(oldX[i], maxRowX(i));
+            }
+        }
+        layoutRows();
+        if (hero >= m.hero.size()) hero = 0;
+        heroFrom = -1;
+        heroFade = 1f;
+        if (row >= n || (row >= 0 && !focusable(row))) row = -1;
+        if (row == -1 && m.hero.isEmpty()) row = next(-1, 1);
+        if (row == -1) button = Math.min(button, Math.max(0, heroActions() - 1));
+        scrollY = targetScroll();
+        if (first) focusT = 1f;
+        markFocus(false);
+        schedule();
+        invalidate();
+        if (listener != null) listener.onHeroShown(this);
+    }
+
+    void setMessage(String text) {
+        message = text;
+        if (model == null) invalidate();
+    }
+
+    boolean hasModel() {
+        return model != null;
+    }
+
+    long age() {
+        return model == null ? Long.MAX_VALUE : Clock.now() - loadedAt;
+    }
+
+    PageModel model() {
+        return model;
+    }
+
+    PageModel.Feature currentHero() {
+        return model == null || model.hero.isEmpty() ? null : model.hero.get(hero);
+    }
+
+    int focusedRow() {
+        return row;
+    }
+
+    int focusedColumn() {
+        return row < 0 ? button : cols[row];
+    }
+
+    boolean scrolledIntoShelves() {
+        return intoShelves;
+    }
+
+    private void layoutRows() {
+        int n = model.shelves.size();
+        rowTop = new float[n];
+        float y = Ui.px(FIRST_ROW_TOP);
+        for (int i = 0; i < n; i++) {
+            rowTop[i] = y;
+            y += rowHeight(model.shelves.get(i));
+        }
+    }
+
+    private float rowHeight(PageModel.Shelf s) {
+        if (s.cards.isEmpty()) return Ui.px(TITLE_H + EMPTY_H + ROW_GAP + 20);
+        int body = s.style == PageModel.Style.RANKED ? POSTER_H : CARD_H;
+        return Ui.px(TITLE_H + body + CAPTION_H + ROW_GAP);
+    }
+
+    private float pitch(PageModel.Shelf s) {
+        return s.style == PageModel.Style.RANKED ? Ui.px(RANK_W + POSTER_W + POSTER_GAP) : Ui.px(CARD_W + CARD_GAP);
+    }
+
+    private float itemWidth(PageModel.Shelf s) {
+        return s.style == PageModel.Style.RANKED ? Ui.px(RANK_W + POSTER_W) : Ui.px(CARD_W);
+    }
+
+    private float maxRowX(int r) {
+        PageModel.Shelf s = model.shelves.get(r);
+        float content = (s.cards.size() - 1) * pitch(s) + itemWidth(s);
+        return Math.max(0f, content - (Ui.px(RIGHT) - Ui.px(LEFT)));
+    }
+
+    private boolean focusable(int r) {
+        return r >= 0 && r < model.shelves.size() && !model.shelves.get(r).cards.isEmpty();
+    }
+
+    /** The next shelf with cards in {@code dir}, or -1 for the hero when going up past the first. */
+    private int next(int from, int dir) {
+        for (int r = from + dir; r >= 0 && r < model.shelves.size(); r += dir) if (focusable(r)) return r;
+        return dir < 0 ? -1 : from;
+    }
+
+    private int heroActions() {
+        PageModel.Feature f = currentHero();
+        return f == null ? 0 : f.actions.size();
+    }
+
+    // ---- Navigation (called by HomeActivity) -------------------------------------------------
+
+    /** False when already at the top, so the caller moves focus on to the tab bar. */
+    boolean up() {
+        if (model == null || row == -1) return false;
+        int target = next(row, -1);
+        if (target == -1 && model.hero.isEmpty()) return false;
+        setRow(target);
+        return true;
+    }
+
+    void down() {
+        if (model == null) return;
+        int target = next(row, 1);
+        if (target != row) setRow(target);
+    }
+
+    void left() {
+        if (model == null) return;
+        if (row == -1) {
+            if (button > 0) {
+                button--;
+                invalidate();
+            } else if (hero > 0) {
+                showHero(hero - 1);
+            }
+            return;
+        }
+        if (cols[row] > 0) setCol(cols[row] - 1);
+    }
+
+    void right() {
+        if (model == null) return;
+        if (row == -1) {
+            if (button < heroActions() - 1) {
+                button++;
+                invalidate();
+            } else if (hero < model.hero.size() - 1) {
+                showHero(hero + 1);
+            }
+            return;
+        }
+        if (cols[row] < model.shelves.get(row).cards.size() - 1) setCol(cols[row] + 1);
+    }
+
+    void select() {
+        if (model == null || listener == null) return;
+        if (row == -1) {
+            PageModel.Feature f = currentHero();
+            if (f != null && button < f.actions.size()) listener.onAction(this, f, f.actions.get(button));
+        } else {
+            PageModel.Shelf s = model.shelves.get(row);
+            listener.onCard(this, s, s.cards.get(cols[row]));
+        }
+    }
+
+    /** Back from the shelves returns to the hero first; false when there is nothing left to unwind. */
+    boolean back() {
+        if (model == null || row == -1 || model.hero.isEmpty()) return false;
+        setRow(-1);
+        return true;
+    }
+
+    /** Back to the hero's first button, scrolled to the top (when the tab is chosen again). */
+    void reset() {
+        if (model == null) return;
+        if (!model.hero.isEmpty()) {
+            button = 0;
+            setRow(-1);
+        }
+    }
+
+    private void setRow(int r) {
+        row = r;
+        if (r == -1) button = 0;
+        markFocus(true);
+        animateScroll();
+        boolean into = r >= 0;
+        if (into != intoShelves) {
+            intoShelves = into;
+            if (listener != null) listener.onScrolled(this, into);
+        }
+        schedule();
+    }
+
+    private void setCol(int c) {
+        cols[row] = c;
+        markFocus(true);
+        // Keep the focused card fully on screen, sliding the shelf as little as possible
+        PageModel.Shelf s = model.shelves.get(row);
+        float x = c * pitch(s), w = itemWidth(s), span = Ui.px(RIGHT) - Ui.px(LEFT);
+        float target = rowX[row];
+        if (x - target < 0) target = x;
+        else if (x + w - target > span) target = x + w - span;
+        target = Math.max(0, Math.min(target, maxRowX(row)));
+        animateRow(row, target);
+    }
+
+    private float targetScroll() {
+        if (row < 0 || model == null) return 0f;
+        return rowTop[row] - Ui.px(FOCUS_ROW_TOP);
+    }
+
+    private void animateScroll() {
+        float target = targetScroll();
+        if (scrollAnim != null) scrollAnim.cancel();
+        if (Ui.reducedMotion) {
+            scrollY = target;
+            invalidate();
+            return;
+        }
+        scrollAnim = ValueAnimator.ofFloat(scrollY, target);
+        scrollAnim.setDuration(Ui.SCROLL_MS);
+        scrollAnim.setInterpolator(Ui.EASE);
+        scrollAnim.addUpdateListener(a -> {
+            scrollY = (float) a.getAnimatedValue();
+            invalidate();
+        });
+        scrollAnim.start();
+    }
+
+    private void animateRow(int r, float target) {
+        if (rowAnim != null) rowAnim.end();
+        if (Ui.reducedMotion || rowX[r] == target) {
+            rowX[r] = target;
+            invalidate();
+            return;
+        }
+        rowAnim = ValueAnimator.ofFloat(rowX[r], target);
+        rowAnim.setDuration(Ui.SCROLL_MS);
+        rowAnim.setInterpolator(Ui.EASE);
+        rowAnim.addUpdateListener(a -> {
+            rowX[r] = (float) a.getAnimatedValue();
+            invalidate();
+        });
+        rowAnim.start();
+    }
+
+    /** The focused card grows in while the previous one settles back. */
+    private void markFocus(boolean animate) {
+        int newRow = isFocused() ? row : Integer.MIN_VALUE;
+        int newCol = newRow >= 0 ? cols[newRow] : 0;
+        if (newRow == focusRow && newCol == focusCol) return;
+        prevRow = focusRow;
+        prevCol = focusCol;
+        prevT = focusT;
+        focusRow = newRow;
+        focusCol = newCol;
+        if (focusAnim != null) focusAnim.cancel();
+        if (!animate || Ui.reducedMotion) {
+            focusT = 1f;
+            prevT = 0f;
+            invalidate();
+            return;
+        }
+        focusT = 0f;
+        final float prevStart = prevT;
+        focusAnim = ValueAnimator.ofFloat(0f, 1f);
+        focusAnim.setDuration(Ui.FOCUS_MS);
+        focusAnim.setInterpolator(Ui.EASE);
+        focusAnim.addUpdateListener(a -> {
+            float t = (float) a.getAnimatedValue();
+            focusT = t;
+            prevT = prevStart * (1f - t);
+            invalidate();
+        });
+        focusAnim.start();
+    }
+
+    @Override
+    protected void onFocusChanged(boolean gainFocus, int direction, android.graphics.Rect previouslyFocusedRect) {
+        super.onFocusChanged(gainFocus, direction, previouslyFocusedRect);
+        markFocus(true);
+        schedule();
+        invalidate();
+    }
+
+    // ---- Hero carousel ----------------------------------------------------------------------
+
+    private void showHero(int index) {
+        if (model == null || index == hero || index < 0 || index >= model.hero.size()) return;
+        heroFrom = hero;
+        hero = index;
+        button = 0;
+        if (heroAnim != null) heroAnim.cancel();
+        if (Ui.reducedMotion) {
+            heroFade = 1f;
+            heroFrom = -1;
+        } else {
+            heroFade = 0f;
+            heroAnim = ValueAnimator.ofFloat(0f, 1f);
+            heroAnim.setDuration(HERO_FADE_MS);
+            heroAnim.setInterpolator(Ui.EASE);
+            heroAnim.addUpdateListener(a -> {
+                heroFade = (float) a.getAnimatedValue();
+                if (heroFade >= 1f) heroFrom = -1;
+                invalidate();
+            });
+            heroAnim.start();
+        }
+        invalidate();
+        if (listener != null) listener.onHeroShown(this);
+    }
+
+    /** The hero turns over every 8 s while it is not being looked at closely. */
+    private void schedule() {
+        removeCallbacks(advance);
+        if (model != null && model.hero.size() > 1 && !Ui.reducedMotion && isAttachedToWindow() && getVisibility() == VISIBLE) {
+            postDelayed(advance, HERO_EVERY_MS);
+        }
+    }
+
+    @Override
+    protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        schedule();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        removeCallbacks(advance);
+        super.onDetachedFromWindow();
+    }
+
+    /** A small blurred copy of the hero's background, for the glass of the bars above it. */
+    Bitmap backdrop() {
+        Bitmap small = Bitmap.createBitmap(Backdrop.W, Backdrop.H, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(small);
+        PageModel.Feature f = currentHero();
+        Bitmap a = f == null ? null : images.peek(f.imageUrl, getWidth());
+        painter.drawBackground(c, Backdrop.W, Backdrop.H, f, a);
+        Backdrop.blur(small, 5);
+        return small;
+    }
+
+    // ---- Drawing ----------------------------------------------------------------------------
+
+    @Override
+    protected void onDraw(Canvas c) {
+        int w = getWidth(), h = getHeight();
+        if (model == null) {
+            painter.drawBackground(c, w, h, null, null);
+            if (!message.isEmpty()) c.drawText(message, Ui.px(LEFT), Ui.px(HERO_BOTTOM) - Ui.px(20), messagePaint);
+            drawSkeleton(c);
+            return;
+        }
+        drawHeroBackground(c, w, h);
+        float scrolled = Math.min(1f, scrollY / Ui.px(700));
+        if (scrolled > 0f) {
+            dim.setAlpha(Math.round(255 * 0.86f * scrolled));
+            c.drawRect(0, 0, w, h, dim);
+        }
+        float textAlpha = 1f - Math.min(1f, scrollY / Ui.px(420));
+        if (textAlpha > 0f) drawHeroText(c, textAlpha);
+        drawShelves(c, w, h);
+        if (scrolled > 0f) {
+            // The shelf above the focused one fades into the top edge instead of being cut off
+            float fadeH = Ui.px(FOCUS_ROW_TOP - 10);
+            topFade.setShader(cached("topfade" + fadeH, () -> new LinearGradient(0, 0, 0, fadeH,
+                    new int[] {0xFF000000, 0xF2000000, 0x00000000}, new float[] {0f, 0.6f, 1f}, Shader.TileMode.CLAMP)));
+            topFade.setAlpha(Math.round(255 * scrolled));
+            c.drawRect(0, 0, w, fadeH, topFade);
+        }
+    }
+
+    private final Paint topFade = new Paint();
+
+    private void drawHeroBackground(Canvas c, int w, int h) {
+        PageModel.Feature cur = currentHero();
+        if (heroFrom >= 0 && heroFrom < model.hero.size() && heroFade < 1f) {
+            PageModel.Feature from = model.hero.get(heroFrom);
+            painter.drawBackground(c, w, h, from, heroArt(from, w));
+            int layer = c.saveLayerAlpha(0, 0, w, h, Math.round(255 * heroFade));
+            painter.drawBackground(c, w, h, cur, heroArt(cur, w));
+            c.restoreToCount(layer);
+        } else {
+            painter.drawBackground(c, w, h, cur, heroArt(cur, w));
+        }
+    }
+
+    private Bitmap heroArt(PageModel.Feature f, int w) {
+        return f == null || f.imageUrl == null ? null : images.get(f.imageUrl, w, false, invalidator);
+    }
+
+    private void drawHeroText(Canvas c, float alpha) {
+        if (model.hero.isEmpty()) return;
+        float shift = -scrollY;
+        int focusedButton = isFocused() && row == -1 ? button : -1;
+        if (heroFrom >= 0 && heroFade < 1f) {
+            drawHeroBlock(c, model.hero.get(heroFrom), shift, alpha * (1f - heroFade), -1);
+            drawHeroBlock(c, currentHero(), shift, alpha * heroFade, focusedButton);
+        } else {
+            drawHeroBlock(c, currentHero(), shift, alpha, focusedButton);
+        }
+        if (model.hero.size() > 1) drawDots(c, shift, alpha);
+    }
+
+    private void drawHeroBlock(Canvas c, PageModel.Feature f, float shift, float alpha, int focusedButton) {
+        if (f == null || alpha <= 0.01f) return;
+        int layer = alpha < 0.99f ? c.saveLayerAlpha(0, 0, getWidth(), getHeight(), Math.round(255 * alpha)) : -1;
+        c.save();
+        c.translate(0, shift);
+        if (f.game != null) {
+            Bitmap away = images.get(Sports.logo(f.game.away.logo, 300), Ui.px(220), true, invalidator);
+            Bitmap home = images.get(Sports.logo(f.game.home.logo, 300), Ui.px(220), true, invalidator);
+            painter.drawGame(c, f.game, away, home, Ui.px(400));
+        }
+        Bitmap logo = f.logoUrl == null ? null : images.get(f.logoUrl, Ui.px(600), true, invalidator);
+        painter.drawText(c, Ui.px(LEFT), Ui.px(HERO_BOTTOM), f, logo, focusedButton, 2, Ui.px(f.game != null ? 820 : 880));
+        c.restore();
+        if (layer >= 0) c.restoreToCount(layer);
+    }
+
+    private void drawDots(Canvas c, float shift, float alpha) {
+        int n = model.hero.size();
+        float d = Ui.px(10), gap = Ui.px(12), current = Ui.px(28);
+        float total = (n - 1) * (d + gap) + current;
+        float x = Ui.px(RIGHT) - total, cy = Ui.px(HERO_BOTTOM) - Ui.px(32) + shift;
+        for (int i = 0; i < n; i++) {
+            float w = i == hero ? current : d;
+            fill.setColor(i == hero ? 0xF2FFFFFF : 0x66FFFFFF);
+            fill.setAlpha(Math.round(fill.getAlpha() * alpha));
+            rect.set(x, cy - d / 2f, x + w, cy + d / 2f);
+            c.drawRoundRect(rect, d / 2f, d / 2f, fill);
+            x += w + gap;
+        }
+    }
+
+    private void drawShelves(Canvas c, int w, int h) {
+        float focusedX = 0, focusedY = 0;
+        PageModel.Shelf focusedShelf = null;
+        for (int r = 0; r < model.shelves.size(); r++) {
+            PageModel.Shelf s = model.shelves.get(r);
+            float top = rowTop[r] - scrollY;
+            if (top > h || top + rowHeight(s) < 0) continue;
+            c.drawText(s.title, Ui.px(LEFT), top + Ui.px(36), shelfTitle);
+            float cardTop = top + Ui.px(TITLE_H);
+            if (s.cards.isEmpty()) {
+                drawEmpty(c, s, cardTop);
+                continue;
+            }
+            float pitch = pitch(s);
+            int first = Math.max(0, (int) Math.floor((rowX[r] - Ui.px(LEFT)) / pitch) - 1);
+            for (int i = first; i < s.cards.size(); i++) {
+                float x = Ui.px(LEFT) + i * pitch - rowX[r];
+                if (x > w) break;
+                float t = focusAmount(r, i);
+                if (r == focusRow && i == focusCol && t > 0f) {
+                    focusedShelf = s;
+                    focusedX = x;
+                    focusedY = cardTop;
+                    continue;   // drawn last, above its neighbours
+                }
+                drawCard(c, s, s.cards.get(i), x, cardTop, t);
+            }
+            // Ask for the next card's artwork before it scrolls in
+            int ahead = (int) ((rowX[r] + w) / pitch) + 1;
+            if (ahead < s.cards.size()) prefetch(s, s.cards.get(ahead));
+        }
+        if (focusedShelf != null) drawCard(c, focusedShelf, focusedShelf.cards.get(focusCol), focusedX, focusedY, focusT);
+        if (!model.credit.isEmpty() && rowTop.length > 0) {
+            float end = rowTop[rowTop.length - 1] + rowHeight(model.shelves.get(rowTop.length - 1)) - scrollY;
+            if (end < h) c.drawText(model.credit, Ui.px(LEFT), end + Ui.px(10), credit);
+        }
+    }
+
+    private float focusAmount(int r, int i) {
+        if (r == focusRow && i == focusCol) return focusT;
+        if (r == prevRow && i == prevCol) return prevT;
+        return 0f;
+    }
+
+    private void prefetch(PageModel.Shelf s, PageModel.Card card) {
+        if (card.imageUrl != null) images.get(card.imageUrl, cardImageWidth(s), false, null);
+    }
+
+    private int cardImageWidth(PageModel.Shelf s) {
+        return Math.round((s.style == PageModel.Style.RANKED ? Ui.px(POSTER_W) : Ui.px(CARD_W)) * CARD_SCALE);
+    }
+
+    private void drawCard(Canvas c, PageModel.Shelf s, PageModel.Card card, float x, float top, float focus) {
+        float w, h;
+        float ix = x;
+        if (s.style == PageModel.Style.RANKED) {
+            w = Ui.px(POSTER_W);
+            h = Ui.px(POSTER_H);
+            ix = x + Ui.px(RANK_W);
+            // The rank stands just left of the poster, tucked a little behind it; "10" is narrowed to fit
+            String n = String.valueOf(card.rank);
+            float tuck = Ui.px(10), room = Ui.px(RANK_W + 6) + tuck;
+            rank.setTextSize(Ui.px(230));
+            float tw = rank.measureText(n);
+            if (tw > room) rank.setTextSize(Ui.px(230) * room / tw);
+            c.drawText(n, ix + tuck, top + h - Ui.px(2), rank);
+        } else {
+            w = Ui.px(CARD_W);
+            h = Ui.px(CARD_H);
+        }
+        float scale = 1f + (CARD_SCALE - 1f) * focus;
+        float cx = ix + w / 2f, cy = top + h / 2f;
+        c.save();
+        c.scale(scale, scale, cx, cy);
+        // Cards draw in their own coordinates, so their gradients can be built once and reused
+        c.translate(ix, top);
+        rect.set(0, 0, w, h);
+        float r = Ui.px(RADIUS);
+        if (focus > 0f) {
+            shadow.setShadowLayer(Ui.px(26), 0, Ui.px(14), Math.round(150 * focus) << 24);
+            c.drawRoundRect(rect, r, r, shadow);
+            shadow.clearShadowLayer();
+        }
+        switch (s.style) {
+            case SCORE:
+                drawScoreCard(c, card.game, w, h, r);
+                break;
+            case PROGRESS:
+                drawProgressCard(c, card, w, h, r, cardImageWidth(s));
+                break;
+            default:
+                drawImage(c, card.imageUrl, rect, r, cardImageWidth(s));
+                break;
+        }
+        rect.set(0, 0, w, h);
+        if (focus > 0f) {
+            sheen.setShader(cached("sheen" + h, () -> new LinearGradient(0, 0, 0, h * 0.55f, 0x2EFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)));
+            sheen.setAlpha(Math.round(255 * focus));
+            c.drawRoundRect(rect, r, r, sheen);
+        }
+        rim.setColor(focus > 0f ? Math.round(0xD9 * focus) << 24 | 0xFFFFFF : 0x1FFFFFFF);
+        float in = rim.getStrokeWidth() / 2f;
+        rect.inset(in, in);
+        c.drawRoundRect(rect, r - in, r - in, rim);
+        c.restore();
+        // Captions move down with the grown card instead of being covered by it
+        float capTop = top + h + (scale - 1f) * h / 2f;
+        c.drawText(TextUtils.ellipsize(card.title, cardTitle, w, TextUtils.TruncateAt.END).toString(), ix, capTop + Ui.px(34), cardTitle);
+        if (!card.subtitle.isEmpty()) {
+            c.drawText(TextUtils.ellipsize(card.subtitle, cardSub, w, TextUtils.TruncateAt.END).toString(), ix, capTop + Ui.px(62), cardSub);
+        }
+    }
+
+    private interface ShaderMaker {
+        Shader make();
+    }
+
+    private final Map<String, Shader> gradientCache = new java.util.HashMap<>();
+
+    private Shader cached(String key, ShaderMaker maker) {
+        Shader s = gradientCache.get(key);
+        if (s == null) {
+            if (gradientCache.size() > 300) gradientCache.clear();
+            s = maker.make();
+            gradientCache.put(key, s);
+        }
+        return s;
+    }
+
+    private void drawImage(Canvas c, String url, RectF r, float radius, int decodeWidth) {
+        Bitmap b = url == null ? null : images.get(url, decodeWidth, false, invalidator);
+        if (b == null) {
+            fill.setColor(0x1AFFFFFF);
+            c.drawRoundRect(r, radius, radius, fill);
+            return;
+        }
+        drawBitmap(c, b, r, radius);
+    }
+
+    /** Centre-crops {@code b} into the rounded rect. */
+    private void drawBitmap(Canvas c, Bitmap b, RectF r, float radius) {
+        BitmapShader shader = shaders.get(b);
+        if (shader == null) {
+            shader = new BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            shaders.put(b, shader);
+        }
+        float s = Math.max(r.width() / b.getWidth(), r.height() / b.getHeight());
+        matrix.setScale(s, s);
+        matrix.postTranslate(r.left + (r.width() - b.getWidth() * s) / 2f, r.top + (r.height() - b.getHeight() * s) / 2f);
+        shader.setLocalMatrix(matrix);
+        art.setShader(shader);
+        c.drawRoundRect(r, radius, radius, art);
+        art.setShader(null);
+    }
+
+    /** Continue Watching: the artwork (or the app's own colours), the app's tile in the corner and a progress bar. */
+    private void drawProgressCard(Canvas c, PageModel.Card card, float w, float h, float radius, int decodeWidth) {
+        Bitmap b = card.imageUrl == null ? null : images.get(card.imageUrl, decodeWidth, false, invalidator);
+        Bitmap tile = card.appKey == null ? null : appArt.get(card.appKey);
+        rect.set(0, 0, w, h);
+        if (b != null) {
+            drawBitmap(c, b, rect, radius);
+        } else {
+            Brand brand = Brand.of(card.appKey == null ? "" : card.appKey, "");
+            fill.setShader(cached("brand" + brand.start + "/" + brand.end + "/" + w,
+                    () -> new LinearGradient(0, 0, w, h, brand.start, brand.end, Shader.TileMode.CLAMP)));
+            c.drawRoundRect(rect, radius, radius, fill);
+            fill.setShader(null);
+            if (tile != null) {
+                float tw = w * 0.46f, th = tw * 0.6f;
+                rect.set(w / 2f - tw / 2f, h / 2f - th / 2f - Ui.px(8), w / 2f + tw / 2f, h / 2f + th / 2f - Ui.px(8));
+                drawBitmap(c, tile, rect, Ui.px(10));
+            }
+        }
+        // A dark fade at the bottom keeps the bar visible on bright artwork
+        rect.set(0, 0, w, h);
+        fill.setShader(cached("fade" + h, () -> new LinearGradient(0, h * 0.55f, 0, h, 0x00000000, 0x99000000, Shader.TileMode.CLAMP)));
+        c.drawRoundRect(rect, radius, radius, fill);
+        fill.setShader(null);
+        if (b != null && tile != null) {
+            float tw = Ui.px(72), th = tw * 0.6f;
+            rect.set(Ui.px(12), Ui.px(12), Ui.px(12) + tw, Ui.px(12) + th);
+            drawBitmap(c, tile, rect, Ui.px(7));
+        }
+        if (card.progress >= 0f) {
+            float pad = Ui.px(16), bh = Ui.px(6), y = h - Ui.px(16) - bh;
+            rect.set(pad, y, w - pad, y + bh);
+            fill.setColor(0x59FFFFFF);
+            c.drawRoundRect(rect, bh / 2f, bh / 2f, fill);
+            rect.right = rect.left + Math.max(bh, (w - 2 * pad) * card.progress);
+            fill.setColor(0xFFFFFFFF);
+            c.drawRoundRect(rect, bh / 2f, bh / 2f, fill);
+        }
+    }
+
+    /** A game: the teams' colours split down the card, both logos, the score or the start time, the channel. */
+    private void drawScoreCard(Canvas c, Sports.Game g, float w, float h, float radius) {
+        rect.set(0, 0, w, h);
+        fill.setShader(cached("teams" + g.away.color + "/" + g.home.color + "/" + w, () -> new LinearGradient(0, 0, w, h,
+                new int[] {FeaturePainter.shade(g.away.color, 0.55f), FeaturePainter.shade(g.away.color, 0.40f),
+                        FeaturePainter.shade(g.home.color, 0.40f), FeaturePainter.shade(g.home.color, 0.55f)},
+                new float[] {0f, 0.48f, 0.52f, 1f}, Shader.TileMode.CLAMP)));
+        c.drawRoundRect(rect, radius, radius, fill);
+        fill.setShader(cached("shade" + h, () -> new LinearGradient(0, 0, 0, h, 0x14FFFFFF, 0x59000000, Shader.TileMode.CLAMP)));
+        c.drawRoundRect(rect, radius, radius, fill);
+        fill.setShader(null);
+        RectF r = rect;
+        float logo = Ui.px(76), ly = h * 0.42f;
+        float ax = w * 0.17f, hx = w - w * 0.17f, mid = w / 2f;
+        drawLogo(c, g.away.logo, ax, ly, logo);
+        drawLogo(c, g.home.logo, hx, ly, logo);
+        c.drawText(g.away.abbr, ax, ly + logo / 2f + Ui.px(30), abbr);
+        c.drawText(g.home.abbr, hx, ly + logo / 2f + Ui.px(30), abbr);
+        if (g.live() || g.over()) {
+            // Scores shrink to fit between the logos (basketball reaches three digits)
+            float room = mid - Ui.px(16) - (ax + logo / 2f + Ui.px(8));
+            bigScore.setTextSize(Ui.px(44));
+            float widest = Math.max(bigScore.measureText(g.away.score), bigScore.measureText(g.home.score));
+            if (widest > room) bigScore.setTextSize(Ui.px(44) * room / widest);
+        }
+        Paint.FontMetrics fm = bigScore.getFontMetrics();
+        float base = ly - (fm.ascent + fm.descent) / 2f;
+        if (g.live() || g.over()) {
+            bigScore.setTextAlign(Paint.Align.RIGHT);
+            bigScore.setAlpha(g.over() && g.home.winner ? 150 : 255);
+            c.drawText(g.away.score, mid - Ui.px(16), base, bigScore);
+            bigScore.setTextAlign(Paint.Align.LEFT);
+            bigScore.setAlpha(g.over() && g.away.winner ? 150 : 255);
+            c.drawText(g.home.score, mid + Ui.px(16), base, bigScore);
+            bigScore.setAlpha(255);
+            bigScore.setTextAlign(Paint.Align.CENTER);
+        } else {
+            bigScore.setTextSize(Ui.px(26));
+            bigScore.setAlpha(200);
+            c.drawText("@", mid, base, bigScore);
+            bigScore.setAlpha(255);
+        }
+        // Status along the bottom: the clock while live, "Final", or when it starts
+        String status = g.live() ? g.status : g.over() ? g.status : Sports.startText(g.start);
+        bigScore.setTextSize(Ui.px(19));
+        c.drawText(TextUtils.ellipsize(status, bigScore, r.width() - Ui.px(40), TextUtils.TruncateAt.END).toString(),
+                mid, r.bottom - Ui.px(18), bigScore);
+        bigScore.setTextSize(Ui.px(44));
+        float chipY = r.top + Ui.px(14);
+        if (g.live()) drawChip(c, "LIVE", r.left + Ui.px(14), chipY, 0xF2E5262B, true);
+        else drawChip(c, g.league.name.length() <= 4 ? g.league.name : "", r.left + Ui.px(14), chipY, 0x40000000, true);
+        String network = g.network();
+        if (!network.isEmpty()) drawChip(c, network.toUpperCase(), r.right - Ui.px(14), chipY, 0x4D000000, false);
+    }
+
+    private void drawChip(Canvas c, String text, float x, float top, int color, boolean fromLeft) {
+        if (text.isEmpty()) return;
+        String t = TextUtils.ellipsize(text, chip, Ui.px(150), TextUtils.TruncateAt.END).toString();
+        float w = chip.measureText(t) + Ui.px(18), h = Ui.px(26);
+        float left = fromLeft ? x : x - w;
+        RectF box = new RectF(left, top, left + w, top + h);
+        fill.setColor(color);
+        c.drawRoundRect(box, Ui.px(7), Ui.px(7), fill);
+        Paint.FontMetrics fm = chip.getFontMetrics();
+        c.drawText(t, left + Ui.px(9), top + h / 2f - (fm.ascent + fm.descent) / 2f, chip);
+    }
+
+    private void drawLogo(Canvas c, String url, float cx, float cy, float size) {
+        Bitmap b = images.get(Sports.logo(url, 160), Math.round(size), true, invalidator);
+        if (b == null) return;
+        float s = size / Math.max(b.getWidth(), b.getHeight());
+        RectF box = new RectF(cx - b.getWidth() * s / 2f, cy - b.getHeight() * s / 2f, cx + b.getWidth() * s / 2f, cy + b.getHeight() * s / 2f);
+        c.drawBitmap(b, null, box, art);
+    }
+
+    /** An empty shelf (Continue Watching before anything has played) says what will appear there. */
+    private void drawEmpty(Canvas c, PageModel.Shelf s, float top) {
+        float w = Ui.px(CARD_W * 2 + CARD_GAP), h = Ui.px(EMPTY_H);
+        rect.set(Ui.px(LEFT), top, Ui.px(LEFT) + w, top + h);
+        fill.setColor(0x1FFFFFFF);
+        c.drawRoundRect(rect, Ui.px(RADIUS), Ui.px(RADIUS), fill);
+        rim.setColor(0x26FFFFFF);
+        c.drawRoundRect(rect, Ui.px(RADIUS), Ui.px(RADIUS), rim);
+        // A play symbol in a ring, then the text
+        float cx = rect.left + Ui.px(64), cy = rect.centerY(), ring = Ui.px(26);
+        rim.setColor(0x99FFFFFF);
+        c.drawCircle(cx, cy, ring, rim);
+        android.graphics.Path p = new android.graphics.Path();
+        p.moveTo(cx - Ui.px(7), cy - Ui.px(11));
+        p.lineTo(cx + Ui.px(12), cy);
+        p.lineTo(cx - Ui.px(7), cy + Ui.px(11));
+        p.close();
+        fill.setColor(0xB3FFFFFF);
+        c.drawPath(p, fill);
+        android.text.StaticLayout layout = android.text.StaticLayout.Builder
+                .obtain(s.empty, 0, s.empty.length(), emptyPaint, Math.round(w - Ui.px(140)))
+                .setMaxLines(3).setLineSpacing(0f, 1.15f).build();
+        c.save();
+        c.translate(rect.left + Ui.px(112), cy - layout.getHeight() / 2f);
+        layout.draw(c);
+        c.restore();
+    }
+
+    /** Before content arrives: quiet placeholders where the first shelf will be. */
+    private void drawSkeleton(Canvas c) {
+        float top = Ui.px(FIRST_ROW_TOP + TITLE_H);
+        fill.setColor(0x14FFFFFF);
+        rect.set(Ui.px(LEFT), Ui.px(FIRST_ROW_TOP + 14), Ui.px(LEFT + 260), Ui.px(FIRST_ROW_TOP + 40));
+        c.drawRoundRect(rect, Ui.px(8), Ui.px(8), fill);
+        for (int i = 0; i < 5; i++) {
+            float x = Ui.px(LEFT) + i * Ui.px(CARD_W + CARD_GAP);
+            rect.set(x, top, x + Ui.px(CARD_W), top + Ui.px(CARD_H));
+            c.drawRoundRect(rect, Ui.px(RADIUS), Ui.px(RADIUS), fill);
+        }
+    }
+}

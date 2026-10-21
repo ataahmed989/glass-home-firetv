@@ -1,0 +1,306 @@
+package app.glasshome.launcher;
+
+import static android.view.KeyEvent.KEYCODE_DPAD_CENTER;
+import static android.view.KeyEvent.KEYCODE_DPAD_DOWN;
+import static android.view.KeyEvent.KEYCODE_DPAD_LEFT;
+import static android.view.KeyEvent.KEYCODE_DPAD_RIGHT;
+import static android.view.KeyEvent.KEYCODE_DPAD_UP;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.robolectric.Shadows.shadowOf;
+
+import android.app.Application;
+import android.content.Intent;
+
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
+import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
+import org.robolectric.annotation.LooperMode;
+import org.robolectric.shadows.ShadowActivity;
+
+import app.glasshome.launcher.HomeActivity.Zone;
+
+/**
+ * The tab bar and the Movies, TV Shows and Sports pages, driven with the remote. Page content
+ * comes from TMDB and ESPN responses recorded on 20 October 2026 (see {@link Fixtures}).
+ */
+@RunWith(RobolectricTestRunner.class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@LooperMode(LooperMode.Mode.PAUSED)
+@Config(sdk = 30, qualifiers = "w960dp-h540dp-land-xhdpi")
+public class PagesTest {
+    private static final int HOME = HomeActivity.HOME, MOVIES = HomeActivity.MOVIES, TV = HomeActivity.TV, SPORTS = HomeActivity.SPORTS;
+
+    @Test
+    public void menuButtonGoesToTheTabsAndBack() throws Exception {
+        TestHome h = new TestHome();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.menu();
+        assertEquals(Zone.TABS, h.zone());
+        assertEquals("Home is the selected tab", 0, h.tabs.selected());
+        h.capture("home-tabs-focused.png");
+        h.menu();
+        assertEquals("pressed again, back down", Zone.GRID, h.zone());
+        assertEquals(2, h.focused());
+
+        // From an open overlay, ☰ closes it on the way to the tabs
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals(Zone.OVERLAY, h.zone());
+        h.menu();
+        assertEquals(Zone.TABS, h.zone());
+        assertFalse(h.detail.isOpen());
+    }
+
+    @Test
+    public void pressingUpEndsOnTheTabs() throws Exception {
+        TestHome h = new TestHome();
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(Zone.WEATHER, h.zone());
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(Zone.CAPSULE, h.zone());
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(Zone.TABS, h.zone());
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals("nothing above the tabs", Zone.TABS, h.zone());
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("back down to where it was on Home", Zone.WEATHER, h.zone());
+
+        // With an "Open …" action, the hero sits between the apps and the tabs
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_RIGHT);
+        TestHome.advance(Ui.HERO_DWELL_MS + 50);
+        h.injectFeaturedSlide("com.netflix.ninja", "Netflix");
+        TestHome.settle();
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(Zone.HERO, h.zone());
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(Zone.TABS, h.zone());
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(Zone.HERO, h.zone());
+    }
+
+    @Test
+    public void tabsChangePagesOnlyOnceTheSelectionRests() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.tap(KEYCODE_DPAD_RIGHT);
+        h.tap(KEYCODE_DPAD_RIGHT);
+        assertEquals("TV Shows selected", 2, h.tabs.selected());
+        assertEquals("the page waits for the selection to rest", HOME, h.activity.page());
+        TestHome.advance(Ui.TAB_DWELL_MS + 20);
+        assertEquals(TV, h.activity.page());
+        assertFalse("Movies was passed over and never loaded", h.page(MOVIES).hasModel());
+        h.waitForPage(TV);
+
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals(SPORTS, h.activity.page());
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("past the last tab: the capsule", Zone.CAPSULE, h.zone());
+        h.press(KEYCODE_DPAD_LEFT);
+        assertEquals(Zone.TABS, h.zone());
+        assertEquals(3, h.tabs.selected());
+
+        // Back unwinds: page → tabs → Home's tab → Home's apps
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(Zone.PAGE, h.zone());
+        h.back();
+        assertEquals(Zone.TABS, h.zone());
+        h.back();
+        assertEquals(HOME, h.activity.page());
+        assertEquals(Zone.TABS, h.zone());
+        h.back();
+        assertEquals(Zone.GRID, h.zone());
+        assertEquals(0, h.focused());
+    }
+
+    @Test
+    public void moviesHeroShelvesAndDetails() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.waitForPage(MOVIES);
+        ShelfPage movies = h.page(MOVIES);
+        PageModel m = movies.model();
+        assertTrue("a hero carousel", m.hero.size() >= 2);
+        assertEquals("Continue Watching", m.shelves.get(0).title);
+        assertTrue("nothing has played in this test, so nothing is made up", m.shelves.get(0).cards.isEmpty());
+        assertEquals("Top 10 Movies This Week", m.shelves.get(1).title);
+        assertEquals(10, m.shelves.get(1).cards.size());
+
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(Zone.PAGE, h.zone());
+        assertEquals("the hero first", -1, movies.focusedRow());
+        TestHome.settleImages();
+        h.capture("movies-1-hero.png");
+
+        // Along the hero's buttons, then on to the next slide
+        PageModel.Feature first = movies.currentHero();
+        int buttons = first.actions.size();
+        for (int i = 1; i < buttons; i++) h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals(buttons - 1, movies.focusedColumn());
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertTrue("next hero slide", movies.currentHero() != first);
+        assertEquals(0, movies.focusedColumn());
+        h.press(KEYCODE_DPAD_LEFT);
+        assertTrue("and back", movies.currentHero() == first);
+
+        // Down skips the empty Continue Watching row to the Top 10, and the top bar steps aside
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(1, movies.focusedRow());
+        assertTrue(h.tabs.getAlpha() < 0.5f);
+        h.capture("movies-2a-top10.png");
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals(2, movies.focusedColumn());
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(2, movies.focusedRow());
+        TestHome.settleImages();
+        h.capture("movies-2-shelves.png");
+
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals(Zone.PAGE_DETAIL, h.zone());
+        TestHome.settleImages();
+        assertNotNull(h.titleDetail.feature());
+        h.capture("movies-3-detail.png");
+
+        h.back();
+        assertEquals(Zone.PAGE, h.zone());
+        assertEquals(2, movies.focusedRow());
+        h.back();
+        assertEquals("Back returns to the hero", -1, movies.focusedRow());
+        assertEquals(1f, h.tabs.getAlpha(), 0.01f);
+        h.back();
+        assertEquals(Zone.TABS, h.zone());
+    }
+
+    @Test
+    public void heroOpenButtonLaunchesTheApp() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);   // TV Shows
+        h.waitForPage(TV);
+        h.press(KEYCODE_DPAD_DOWN);
+        PageModel.Feature hero = h.page(TV).currentHero();
+        PageModel.Action action = hero.actions.get(0);
+        h.press(KEYCODE_DPAD_CENTER);
+        ShadowActivity sa = shadowOf(h.activity);
+        Intent started = sa.getNextStartedActivity();
+        if (action.appKey != null) {
+            assertNotNull(started);
+            assertEquals(action.appKey, started.getComponent().getPackageName());
+        } else {
+            assertNull(started);
+            assertEquals(Zone.PAGE_DETAIL, h.zone());
+        }
+    }
+
+    /** Test data only: two shows and a film as the media-session watcher would have recorded them. */
+    private static void recordSampleHistory() {
+        Fixtures.install();
+        Application app = RuntimeEnvironment.getApplication();
+        long t = Fixtures.RECORDED_AT - 3 * 3600_000L;
+        assertTrue(WatchHistory.record(app, snapshot("com.netflix.ninja", "Stranger Things",
+                "S4:E7 Chapter Seven: The Massacre at Hawkins Lab", 98, 41, t)));
+        assertTrue(WatchHistory.record(app, snapshot("com.disney.disneyplus", "Inside Out 2", "", 96, 52, t + 600_000)));
+        assertTrue(WatchHistory.record(app, snapshot("com.hbo.hbonow", "The Last of Us", "Season 2, Episode 3", 55, 12, t + 1_200_000)));
+    }
+
+    static WatchHistory.Snapshot snapshot(String pkg, String title, String subtitle, int minutes, int atMinute, long when) {
+        WatchHistory.Snapshot s = new WatchHistory.Snapshot();
+        s.pkg = pkg;
+        s.title = title;
+        s.subtitle = subtitle;
+        s.durationMs = minutes * 60_000L;
+        s.positionMs = atMinute * 60_000L;
+        s.at = when;
+        return s;
+    }
+
+    @Test
+    public void continueWatchingShowsWhatPlayedHere() throws Exception {
+        recordSampleHistory();
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);   // TV Shows
+        h.waitForPage(TV);
+        PageModel.Shelf row = h.page(TV).model().shelves.get(0);
+        assertEquals("Continue Watching", row.title);
+        assertEquals("the two shows, not the film", 2, row.cards.size());
+        assertEquals("newest first", "The Last of Us", row.cards.get(0).title);
+        assertEquals("S2, E3  ·  43 min left", row.cards.get(0).subtitle);
+        assertEquals("Stranger Things", row.cards.get(1).title);
+        assertEquals(41f / 98f, row.cards.get(1).progress, 0.001f);
+
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(0, h.page(TV).focusedRow());
+        TestHome.settleImages();
+        h.capture("tv-2-continue-watching.png");
+        h.press(KEYCODE_DPAD_CENTER);
+        Intent started = shadowOf(h.activity).getNextStartedActivity();
+        assertNotNull("resumes in the app it played in", started);
+        assertEquals("com.hbo.hbonow", started.getComponent().getPackageName());
+
+        // Movies gets the film
+        h.menu();
+        h.press(KEYCODE_DPAD_LEFT);
+        h.waitForPage(MOVIES);
+        PageModel.Shelf films = h.page(MOVIES).model().shelves.get(0);
+        assertEquals(1, films.cards.size());
+        assertEquals("Inside Out 2", films.cards.get(0).title);
+    }
+
+    @Test
+    public void sportsShowsYourTeamsAndWhereToWatch() throws Exception {
+        TestHome h = new TestHome();
+        h.menu();
+        h.tap(KEYCODE_DPAD_RIGHT);
+        h.tap(KEYCODE_DPAD_RIGHT);
+        h.tap(KEYCODE_DPAD_RIGHT);
+        TestHome.advance(Ui.TAB_DWELL_MS + 20);
+        assertEquals(SPORTS, h.activity.page());
+        h.waitForPage(SPORTS);
+        PageModel m = h.page(SPORTS).model();
+        assertFalse(m.hero.isEmpty());
+        assertTrue("your teams lead the hero", m.hero.get(0).game.favourite);
+        boolean mine = false;
+        for (PageModel.Shelf s : m.shelves) mine |= s.title.equals("My Teams");
+        assertTrue(mine);
+
+        h.press(KEYCODE_DPAD_DOWN);
+        TestHome.settleImages();
+        h.capture("sports-1-hero.png");
+        h.press(KEYCODE_DPAD_DOWN);
+        TestHome.settleImages();
+        h.capture("sports-2-shelves.png");
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals(Zone.PAGE_DETAIL, h.zone());
+        TestHome.settleImages();
+        h.capture("sports-3-detail.png");
+        h.back();
+        assertEquals(Zone.PAGE, h.zone());
+    }
+
+    @Test
+    public void tvShowsHero() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.waitForPage(TV);
+        h.press(KEYCODE_DPAD_DOWN);
+        TestHome.settleImages();
+        h.capture("tv-1-hero.png");
+        assertEquals("Top 10 Shows This Week", h.page(TV).model().shelves.get(1).title);
+    }
+}

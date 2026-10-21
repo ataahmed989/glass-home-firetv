@@ -1,0 +1,33 @@
+{
+  "_comment": "Order of the home screen. The first 6 form the glass dock. Apps that are not installed are skipped. Other installed apps are added at the end. Copy this file to /sdcard/Android/data/app.glasshome.launcher/files/apps.json to override it. Add a free TMDB API key (themoviedb.org) as tmdb_api_key to show 'Featured on \u2026' titles for Netflix, HBO Max, Disney+, Prime Video and Apple TV.",
+  "glass": "blur",
+  "reduce_motion": false,
+  "profile_initial": "A",
+  "tmdb_api_key": "",
+  "order": [
+    "app.fireplayer",
+    "com.netflix.ninja",
+    "com.amazon.firetv.youtube",
+    "com.apple.atve.amazon.appletv",
+    "com.disney.disneyplus",
+    "com.hbo.hbonow",
+    "ar.tvplayer.tv",
+    "com.amazon.firebat",
+    "com.spotify.tv.android",
+    "com.apple.android.music",
+    "gamepass.fire.tv",
+    "com.amazon.tv.livetv",
+    "com.amazon.venezia",
+    "com.esaba.downloader",
+    "com.tailscale.ipn",
+    "settings"
+  ],
+  "hidden": [
+    "app.glasshome.launcher",
+    "com.amazon.spiderpork",
+    "com.amazon.tv.earlyaccess",
+    "com.amazon.smarthomemapviewapp",
+    "com.amazon.whasettings",
+    "com.amazon.firetv.troubleshooting"
+  ]
+}

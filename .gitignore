@@ -1,0 +1,13 @@
+# Build output
+launcher/build/
+launcher/app/build/
+launcher/.gradle/
+launcher/local.properties
+*.apk
+
+# Rendered by the tests (see docs/screenshots for the ones worth keeping)
+launcher/screenshots/
+
+# Credentials never belong here: the TMDB token lives only on the TV, in apps.json
+secrets/
+*.token
