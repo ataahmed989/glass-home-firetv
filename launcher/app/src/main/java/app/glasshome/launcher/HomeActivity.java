@@ -97,6 +97,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private GlassDock dock;
     private Glass dockGlass, capsuleGlass, weatherGlass, tabGlass;
     private ClockCapsule capsule;
+    private NavSounds navSounds;
     private TabBar tabs;
     private final ShelfPage[] pages = new ShelfPage[4];   // index by tab; [HOME] stays null
     private final int[] pageGeneration = new int[4];
@@ -210,6 +211,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         lastDockColumn = lastFocused % Ui.COLUMNS;
 
         setContentView(buildViews());
+        navSounds = new NavSounds(this);
         // Anything drawn (a key, the clock turning, the weather…) leaves Home's snapshot behind
         getWindow().getDecorView().getViewTreeObserver().addOnDrawListener(() -> snapshotDue = true);
         loadProfile();
@@ -1435,7 +1437,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         int code = event.getKeyCode();
         int direction = direction(code);
         if (direction != 0) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && acceptStep(event)) move(direction);
+            if (event.getAction() == KeyEvent.ACTION_DOWN && acceptStep(event)) {
+                String before = focusSignature();
+                move(direction);
+                // Fire TV's faint tick when focus moved on the Home page (not the browse pages)
+                if (page == HOME && tabs.selected() == HOME && !before.equals(focusSignature())) navSounds.play(direction);
+            }
             return true;
         }
         if (isSelect(code)) {
@@ -1476,6 +1483,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             default:
                 return 0;
         }
+    }
+
+    /** Navigation ticks asked for so far (tests). */
+    int navTicks() {
+        return navSounds.requests;
+    }
+
+    /** Where focus is, as far as the arrows can move it: unchanged after a move, nothing moved. */
+    private String focusSignature() {
+        return zone() + "/" + focusedPosition() + "/" + capsule.item() + "/" + tabs.selected() + "/" + weather.focusedKind()
+                + "/" + panel.focusedIndex() + "/" + control.focusedItem();
     }
 
     private static int direction(int code) {
@@ -1806,7 +1824,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(shownFallback);
         main.removeCallbacks(takeSnapshot);
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
-        HomeButtonService.leftUnexpectedly();
+        HomeButtonService.leftUnexpectedly(showingHomeAsTheHomeButtonLeavesIt());
         // The snapshot shows Home as it is now: copied again only if Home has been drawn since (focus
         // moved on to the app just opened, the clock turned…), as its stand-in on the way back must match it
         if (snapshotDue && showingHomeAsTheHomeButtonLeavesIt()) {
@@ -1875,6 +1893,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         network.shutdownNow();
         pagesNet.shutdownNow();
         linksNet.shutdownNow();
+        navSounds.release();
         super.onDestroy();
     }
 }

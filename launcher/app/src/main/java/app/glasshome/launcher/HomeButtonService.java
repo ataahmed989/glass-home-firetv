@@ -78,9 +78,13 @@ public final class HomeButtonService extends AccessibilityService {
     static final long REDIRECT_GAP_MS = 1000;
     /** How long after a trip Glass Home should be back; if it is not, the trip is made again. */
     static final long CHECK_MS = 1500;
+    /** How often a trip under way is looked at, for Home pressed again or the trip not landing. */
+    static final long WATCH_MS = 300;
     /** How long after Glass Home goes to the back unexpectedly the service asks what is in front. */
     static final long LEFT_CHECK_MS = 500;
     static final int MAX_RETRIES = 2;
+    /** How often, at most, Amazon's redraws during a trip are checked for a further press of Home. */
+    static final long PRESS_CHECK_MS = 150;
     /** The service starting this soon after Fire OS has is the TV starting, on Amazon's home. */
     static final long BOOT_MS = 2 * 60_000;
     /** The cover never stays longer than this, whatever happens. */
@@ -111,6 +115,14 @@ public final class HomeButtonService extends AccessibilityService {
     private boolean amazonHome;
     private long keyAt = -KEY_MS;
     private static long redirectedAt = -REDIRECT_GAP_MS;
+    /** When Glass Home was last started from here, by the wall clock (as Fire OS's usage record is). */
+    private static long startedAt;
+    /**
+     * Something not Amazon's came up over Amazon's home, which stays resumed beneath it: Fire TV's quick
+     * menu on a long press of Home, say. Back closes it, onto Amazon's home again.
+     */
+    private boolean overAmazonHome;
+    private long pressCheckedAt = -PRESS_CHECK_MS;
     private int retries;
     private final Runnable check = this::check;
     /** The cover's window: made ready (hidden) while another app is in front, shown for a trip back. */
@@ -142,12 +154,14 @@ public final class HomeButtonService extends AccessibilityService {
      * Glass Home went to the back without opening anything: Home pressed on Glass Home itself, as
      * a rule. Its last frame covers the screen right away, before Amazon's home can show.
      */
-    static void leftUnexpectedly() {
+    static void leftUnexpectedly(boolean asSnapshot) {
         if (opening()) return;
         leftAt = SystemClock.uptimeMillis();
         HomeButtonService s = connected;
         if (s == null) return;
-        s.cover(false);   // over Glass Home itself, still on screen: at once
+        // Over Glass Home itself, still on screen: at once when it already looks like the snapshot,
+        // otherwise (a browse page, say) Home crossfades in over it
+        s.cover(asSnapshot ? Fade.AT_ONCE : Fade.ACROSS);
         // Amazon's home may come up without saying so (back over Glass Home before it had quite left)
         s.handler.removeCallbacks(s.check);
         s.handler.postDelayed(s.check, LEFT_CHECK_MS);
@@ -165,6 +179,7 @@ public final class HomeButtonService extends AccessibilityService {
         HomeButtonService s = connected;
         if (s == null) return;
         s.retries = 0;
+        s.overAmazonHome = false;
         s.handler.removeCallbacks(s.check);
         s.handler.removeCallbacks(s.readyCover);
         if (!s.covering) s.dropCover();   // back some other way (Back from an app): the ready cover is not needed
@@ -209,6 +224,14 @@ public final class HomeButtonService extends AccessibilityService {
     protected boolean onKeyEvent(KeyEvent event) {
         keyAt = SystemClock.uptimeMillis();
         lift();   // someone is using the remote: nothing may stand in front of it
+        if (overAmazonHome && event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+            // Back closes what was over Amazon's home (Fire TV's quick menu); a moment later, if Amazon's
+            // home is what is left, Glass Home comes back
+            overAmazonHome = false;
+            amazonHome = true;
+            handler.removeCallbacks(check);
+            handler.postDelayed(check, LEFT_CHECK_MS);
+        }
         // Left on Amazon's home after all: the next key brings Glass Home back
         if (event.getAction() == KeyEvent.ACTION_DOWN && strandedOnAmazonHome()) redirect();
         return false;   // never consumed
@@ -241,6 +264,28 @@ public final class HomeButtonService extends AccessibilityService {
      * up; null when that cannot be told (no usage access, or nothing recorded lately).
      */
     private Boolean amazonHomeInFront() {
+        Resumed r = lastResumed(10 * 60_000L);
+        return r == null ? null : r.amazonHome();
+    }
+
+    /** The activity Fire OS last recorded resuming, and when (wall clock). */
+    private static final class Resumed {
+        final String pkg, cls;
+        final long at;
+
+        Resumed(String pkg, String cls, long at) {
+            this.pkg = pkg;
+            this.cls = cls;
+            this.at = at;
+        }
+
+        boolean amazonHome() {
+            return AMAZON_LAUNCHER.equals(pkg) && cls != null && cls.endsWith(".HomeActivity_vNext");
+        }
+    }
+
+    /** From Fire OS's usage record; null when that cannot be told (no usage access, or nothing recorded lately). */
+    private Resumed lastResumed(long withinMs) {
         AppOpsManager ops = getSystemService(AppOpsManager.class);
         if (ops == null || ops.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), getPackageName())
                 != AppOpsManager.MODE_ALLOWED) return null;
@@ -248,21 +293,37 @@ public final class HomeButtonService extends AccessibilityService {
         long now = System.currentTimeMillis();
         UsageEvents events;
         try {
-            events = usage == null ? null : usage.queryEvents(now - 10 * 60_000L, now + 1000);
+            events = usage == null ? null : usage.queryEvents(now - withinMs, now + 1000);
         } catch (RuntimeException e) {
             return null;
         }
         if (events == null) return null;
         UsageEvents.Event e = new UsageEvents.Event();
         String pkg = null, cls = null;
+        long at = 0;
         while (events.hasNextEvent()) {
             events.getNextEvent(e);
             if (e.getEventType() != UsageEvents.Event.ACTIVITY_RESUMED) continue;
             pkg = e.getPackageName();
             cls = e.getClassName();
+            at = e.getTimeStamp();
         }
-        if (pkg == null) return null;
-        return AMAZON_LAUNCHER.equals(pkg) && cls != null && cls.endsWith(".HomeActivity_vNext");
+        return pkg == null ? null : new Resumed(pkg, cls, at);
+    }
+
+    /**
+     * Amazon's home came up again after Glass Home was last started: Home pressed again (quickly,
+     * several times), not more of the same press. That trip is made too, with retries afresh.
+     */
+    private boolean pressedAgain() {
+        // Asked on Amazon's redraws, which come thick and fast: at most every PRESS_CHECK_MS, of the last seconds only
+        long now = SystemClock.uptimeMillis();
+        if (now - pressCheckedAt < PRESS_CHECK_MS) return false;
+        pressCheckedAt = now;
+        Resumed r = lastResumed(5000);
+        if (r == null || !r.amazonHome() || r.at <= startedAt) return false;
+        retries = 0;
+        return true;
     }
 
     private void onWindow(String pkg, AccessibilityEvent event) {
@@ -270,6 +331,8 @@ public final class HomeButtonService extends AccessibilityService {
         front = pkg;
         CharSequence window = event.getClassName();
         boolean home = pkg.equals(AMAZON_LAUNCHER) && window != null && window.toString().endsWith(".HomeActivity_vNext");
+        if (!isAmazonUi(pkg) && !pkg.equals(getPackageName())) overAmazonHome = amazonHome && !HomeActivity.inFront;
+        else overAmazonHome = false;
         if (!pkg.equals(getPackageName())) amazonHome = home;
         if (!home && !pkg.equals(getPackageName())) handler.removeCallbacks(check);   // something else came up: no second trip
         if (!isAmazonUi(pkg)) {
@@ -313,12 +376,16 @@ public final class HomeButtonService extends AccessibilityService {
     /** {@code fadeIn}: Amazon's home has only just come up, still black, and Home fades in over it. */
     private void redirect(boolean fadeIn) {
         long now = SystemClock.uptimeMillis();
-        if (HomeActivity.inFront || now - redirectedAt < REDIRECT_GAP_MS) return;
+        if (HomeActivity.inFront) return;
+        // Within one press's events only one trip, unless Amazon's home has since come up again (Home pressed again,
+        // quickly: that comes back with no window event, only redraws)
+        if (now - redirectedAt < REDIRECT_GAP_MS && !pressedAgain()) return;
         if (!new HomeSettings(this).homeButtonOpensGlassHome()) return;
         redirectedAt = now;
+        startedAt = System.currentTimeMillis();
         handler.removeCallbacks(check);
-        handler.postDelayed(check, CHECK_MS);
-        cover(fadeIn);
+        handler.postDelayed(check, WATCH_MS);
+        cover(fadeIn ? Fade.FROM_BLACK : Fade.AT_ONCE);
         Intent home = new Intent(this, HomeActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 .putExtra(EXTRA_HOME_BUTTON, true);
@@ -333,31 +400,53 @@ public final class HomeButtonService extends AccessibilityService {
 
     /**
      * A moment after a trip, or after Glass Home went to the back unexpectedly: if Amazon's home is
-     * in front, the trip is made (again). The usage record decides; without it only a trip already
-     * made is checked, by the last window to come up (an app opened by voice may still be on its way).
+     * in front, the trip is made (again). The usage record decides: Amazon's home come up since
+     * Glass Home was last started is Home pressed again (quickly, often with no event), and is
+     * followed at once; otherwise the trip is watched every WATCH_MS until it should have landed,
+     * then made again. Without the record only a trip already made is checked, by the last window
+     * to come up (an app opened by voice may still be on its way).
      */
     private void check() {
-        if (HomeActivity.inFront || retries >= MAX_RETRIES || opening() || library) return;
+        if (HomeActivity.inFront || opening() || library) return;
         PowerManager power = getSystemService(PowerManager.class);
         if (power != null && !power.isInteractive()) return;   // the TV went to sleep
-        Boolean amazon = amazonHomeInFront();
-        boolean afterTrip = SystemClock.uptimeMillis() - redirectedAt < CHECK_MS + REDIRECT_GAP_MS;
-        if (amazon != null ? !amazon : !(afterTrip && amazonHome)) return;
-        retries++;
+        Resumed last = lastResumed(10 * 60_000L);
+        if (last != null) {
+            if (!last.amazonHome()) return;   // something else is in front
+            if (last.at > startedAt) {
+                retries = 0;   // pressed again: a trip of its own
+            } else if (SystemClock.uptimeMillis() - redirectedAt < CHECK_MS) {
+                handler.postDelayed(check, WATCH_MS);   // this trip is still on its way
+                return;
+            } else if (retries++ >= MAX_RETRIES) {
+                return;
+            }
+        } else {
+            long since = SystemClock.uptimeMillis() - redirectedAt;
+            if (since < CHECK_MS) {
+                handler.postDelayed(check, CHECK_MS - since);   // nothing to tell a press from the trip: wait for it to land
+                return;
+            }
+            if (retries >= MAX_RETRIES || !(since < CHECK_MS + REDIRECT_GAP_MS && amazonHome)) return;
+            retries++;
+        }
         redirectedAt = -REDIRECT_GAP_MS;
         redirect();
     }
 
     // ---- The cover ----------------------------------------------------------------------------
 
-    /** Puts Home's snapshot over everything; {@code fadeIn} over the black on the way back from another app. */
-    private void cover(boolean fadeIn) {
+    /** How the cover comes up (see the Cover styles). */
+    enum Fade { AT_ONCE, ACROSS, FROM_BLACK }
+
+    /** Puts Home's snapshot over everything; a cover made ready comes up as it was made (from black). */
+    private void cover(Fade fade) {
         Bitmap shot = HomeSnapshot.latest();
         if (shot == null || !new HomeSettings(this).homeButtonOpensGlassHome()) return;
         handler.removeCallbacks(readyCover);
         handler.removeCallbacks(lift);
         handler.postDelayed(lift, COVER_MAX_MS);
-        if (cover == null && !addCover(fadeIn, View.VISIBLE)) return;   // no overlay possible right now; the redirect still happens
+        if (cover == null && !addCover(fade, View.VISIBLE)) return;   // no overlay possible right now; the redirect still happens
         covering = true;
         cover.show(shot);
         if (blackout != null) blackout.setVisibility(View.VISIBLE);
@@ -368,17 +457,16 @@ public final class HomeButtonService extends AccessibilityService {
     private void readyCover() {
         if (cover != null || HomeActivity.inFront || HomeSnapshot.latest() == null
                 || !new HomeSettings(this).homeButtonOpensGlassHome()) return;
-        addCover(true, View.GONE);
+        addCover(Fade.FROM_BLACK, View.GONE);
     }
 
     /**
      * Adds the cover's window. Fire OS fades it (see the Cover styles), on its own animation thread,
-     * which Glass Home coming in cannot hold up: out when it is taken away and, {@code fadeIn}, in.
-     * Fading in, it does so over black: a black window beneath it, up at once, hides whatever
-     * Amazon's home has drawn by then.
+     * which Glass Home coming in cannot hold up: out when it is taken away and, as {@code fade} says,
+     * in. From black, a black window beneath it, up at once, hides whatever Amazon's home has drawn by then.
      */
-    private boolean addCover(boolean fadeIn, int visibility) {
-        fadeIn &= !Ui.reducedMotion;
+    private boolean addCover(Fade fade, int visibility) {
+        boolean fadeIn = fade == Fade.FROM_BLACK && !Ui.reducedMotion;
         WindowManager wm = getSystemService(WindowManager.class);
         View black = null;
         if (fadeIn) {
@@ -394,7 +482,10 @@ public final class HomeButtonService extends AccessibilityService {
         CoverView v = new CoverView(this);
         v.setVisibility(visibility);
         WindowManager.LayoutParams lp = overlay(PixelFormat.TRANSLUCENT);   // so that its fade shows Glass Home beneath
-        if (!Ui.reducedMotion) lp.windowAnimations = fadeIn ? R.style.CoverFadeIn : R.style.CoverAtOnce;
+        if (!Ui.reducedMotion) {
+            lp.windowAnimations = fade == Fade.FROM_BLACK ? R.style.CoverFadeIn
+                    : fade == Fade.ACROSS ? R.style.CoverAcross : R.style.CoverAtOnce;
+        }
         try {
             wm.addView(v, lp);   // after the black, so above it
         } catch (RuntimeException e) {

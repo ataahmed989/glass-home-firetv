@@ -155,6 +155,27 @@ public class PagesTest {
         assertEquals(1f, h.stage.getAlpha(), 0.001f);
     }
 
+    /** Fire TV's navigation tick on Home when focus moves, never at an edge, and not on the browse pages. */
+    @Test
+    public void ticksOnlyForMovesOnHome() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("a move on Home", 1, h.activity.navTicks());
+        h.press(KEYCODE_DPAD_LEFT);
+        h.press(KEYCODE_DPAD_LEFT);
+        assertEquals("the second Left is at the edge: nothing moved", 2, h.activity.navTicks());
+
+        h.menu();
+        int onTabs = h.activity.navTicks();
+        h.press(KEYCODE_DPAD_RIGHT);   // to Movies: leaving Home
+        assertEquals(MOVIES, h.activity.page());
+        h.waitForPage(MOVIES);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("nothing on the browse pages", onTabs, h.activity.navTicks());
+    }
+
     /** Runs the main thread's tasks one at a time until page {@code p} is the one shown, and no further. */
     private static void untilPage(TestHome h, int p) {
         for (int i = 0; i < 1000 && h.activity.page() != p; i++) shadowOf(Looper.getMainLooper()).runOneTask();

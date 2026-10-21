@@ -14,7 +14,14 @@
         <item name="android:windowExitAnimation">@anim/cover_out</item>
     </style>
 
-    <!-- Over Glass Home itself, still on screen: up at once, faded out -->
+    <!-- Over Glass Home showing something other than Home (a browse page, say), still on screen for
+         some 140 ms or more: Home crossfades in over it, quicker than that -->
+    <style name="CoverAcross">
+        <item name="android:windowEnterAnimation">@anim/cover_across</item>
+        <item name="android:windowExitAnimation">@anim/cover_out</item>
+    </style>
+
+    <!-- Over Glass Home itself, still on screen as the snapshot shows it: up at once, faded out -->
     <style name="CoverAtOnce">
         <item name="android:windowEnterAnimation">@null</item>
         <item name="android:windowExitAnimation">@anim/cover_out</item>

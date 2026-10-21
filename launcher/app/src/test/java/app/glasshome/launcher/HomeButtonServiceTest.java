@@ -90,7 +90,7 @@ public class HomeButtonServiceTest {
         HomeActivity.inFront = true;
         HomeButtonService.glassHomeResumed();
         HomeActivity.inFront = false;   // the second press
-        HomeButtonService.leftUnexpectedly();   // as Glass Home's onPause says
+        HomeButtonService.leftUnexpectedly(true);   // as Glass Home's onPause says
         redraw("com.amazon.tv.launcher");
         assertGlassHomeStarted();
     }
@@ -160,7 +160,7 @@ public class HomeButtonServiceTest {
 
         HomeActivity.inFront = false;
         resumed("com.amazon.tv.launcher", AMAZON_HOME);
-        HomeButtonService.leftUnexpectedly();
+        HomeButtonService.leftUnexpectedly(true);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.LEFT_CHECK_MS));
         assertGlassHomeStarted();
     }
@@ -177,7 +177,7 @@ public class HomeButtonServiceTest {
 
         HomeActivity.inFront = false;
         resumed("com.netflix.ninja", "com.netflix.ninja.MainActivity");
-        HomeButtonService.leftUnexpectedly();
+        HomeButtonService.leftUnexpectedly(true);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.CHECK_MS));
         assertNull(shadowOf(app).getNextStartedActivity());
     }
@@ -215,11 +215,51 @@ public class HomeButtonServiceTest {
         assertNull(shadowOf(app).getNextStartedActivity());
     }
 
+    /**
+     * Home pressed again while Glass Home is still on its way back (Home pressed several times, quickly):
+     * Amazon's home comes up again with no event at all. Fire OS's usage record shows it, and the trip
+     * is made again within a moment, rather than once the first should have landed.
+     */
+    @Test
+    public void homePressedAgainDuringATripIsFollowedAtOnce() {
+        usageAccess();
+        connectedAfterStartUp();
+        resumed("com.amazon.tv.launcher", AMAZON_HOME);
+        window("com.amazon.tv.launcher", AMAZON_HOME);
+        assertGlassHomeStarted();
+
+        ShadowSystemClock.advanceBy(Duration.ofMillis(100));
+        resumed("com.amazon.tv.launcher", AMAZON_HOME);   // the second press
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.WATCH_MS));
+        assertGlassHomeStarted();
+    }
+
+    /**
+     * Fire TV's quick menu (a long press of Home) came up over Amazon's home during a trip; it is left
+     * alone, and when Back closes it, Glass Home comes back.
+     */
+    @Test
+    public void closingTheQuickMenuOverAmazonsHomeBringsGlassHomeBack() {
+        usageAccess();
+        connectedAfterStartUp();
+        resumed("com.amazon.tv.launcher", AMAZON_HOME);
+        window("com.amazon.tv.launcher", AMAZON_HOME);
+        assertGlassHomeStarted();
+        window("com.amazon.tv.quicksettings.ui", "android.widget.FrameLayout");
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.CHECK_MS * 2));
+        assertNull("the quick menu is left alone", shadowOf(app).getNextStartedActivity());
+
+        service.onKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK));
+        service.onKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK));
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.LEFT_CHECK_MS));
+        assertGlassHomeStarted();
+    }
+
     /** Without usage access, Glass Home leaving unexpectedly is not taken for Amazon's home: nothing is guessed. */
     @Test
     public void withoutUsageAccessNothingIsGuessed() {
         connectedAfterStartUp();
-        HomeButtonService.leftUnexpectedly();
+        HomeButtonService.leftUnexpectedly(true);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.CHECK_MS));
         assertNull(shadowOf(app).getNextStartedActivity());
     }
