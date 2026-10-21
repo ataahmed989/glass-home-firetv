@@ -67,6 +67,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private static final long SHOWN_FALLBACK_MS = 1500;
     /** Once the screen has been still this long (focus and the tile's sway settled), its frame is kept for the Home button. */
     private static final long SNAPSHOT_IDLE_MS = 2800;
+    /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
+    private static final long RESUME_REFRESH_MS = 600;
 
     enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL }
 
@@ -142,8 +144,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     };
 
     private final Runnable takeSnapshot = () -> {
-        if (resumed && showingHomeAsTheHomeButtonLeavesIt()) HomeSnapshot.capture(this);
+        if (!resumed || !showingHomeAsTheHomeButtonLeavesIt()) return;
+        HomeSnapshot.capture(this);
+        snapshotDue = false;
     };
+    /** Home has changed since its snapshot was last copied (see {@link #snapshotLater}). */
+    private boolean snapshotDue;
 
     /** In case the window's "shown" report does not come: the cover goes regardless, a while after Glass Home resumed. */
     private final Runnable shownFallback = HomeButtonService::glassHomeShown;
@@ -450,8 +456,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         stage.show(slide, Ui.reducedMotion ? 0 : fadeMs);
         refreshHomeBackdrop();
         // Home's snapshot follows the slideshow once the new slide has settled
+        snapshotLater(fadeMs + SNAPSHOT_IDLE_MS);
+    }
+
+    /**
+     * Home's snapshot is copied again once Home has rested for {@code ms}, or as Glass Home goes to
+     * the back before then; one copied while nothing has changed since is used as it is.
+     */
+    private void snapshotLater(long ms) {
+        snapshotDue = true;
         main.removeCallbacks(takeSnapshot);
-        main.postDelayed(takeSnapshot, fadeMs + SNAPSHOT_IDLE_MS);
+        main.postDelayed(takeSnapshot, ms);
     }
 
     private void refreshHomeBackdrop() {
@@ -631,11 +646,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     /**
-     * A short compositor fade hands off to the app without allocating a tile snapshot.
+     * An app opens with a short fade over Home, which holds still beneath it: no copy of the tile
+     * is drawn first, and nothing is scaled while the app starts (it stuttered on the TV).
      */
     private Bundle openingAnimation() {
         if (Ui.reducedMotion) return ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle();
-        // No synchronous tile bitmap capture or full-screen scale at app launch.
         return ActivityOptions.makeCustomAnimation(this, R.anim.app_enter, R.anim.app_exit).toBundle();
     }
 
@@ -691,17 +706,19 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         int old = page;
         page = p;
         long fade = Ui.reducedMotion || atOnce ? 0 : Ui.PAGE_FADE_MS;
-        View[] home = {stage, weather, grid};
-        if (p == HOME) {
-            for (View v : home) fadeIn(v, fade);
-        } else {
-            fadeIn(pages[p], fade);
+        // Each page covers the whole screen, the browse pages over Home in tab order. Only what lies
+        // over the other fades (the new page in over the old, or the old out over the new) while the
+        // one beneath stays as it is, so the screen never dims towards black on the way and only one
+        // page at a time is blended.
+        for (int q = HOME; q <= SPORTS; q++) {
+            if (q == p) continue;
+            for (View v : pageViews(q)) {
+                if (v.getVisibility() != View.VISIBLE) continue;
+                if (q > p) fadeOut(v, fade);
+                else hideAfter(v, fade);
+            }
         }
-        if (old == HOME) {
-            for (View v : home) fadeOut(v, 0);
-        } else {
-            fadeOut(pages[old], 0);
-        }
+        for (View v : pageViews(p)) fadeIn(v, p > old ? fade : 0);
         setBarHidden(false, atOnce);
         main.removeCallbacks(sportsTick);
         if (p == HOME) {
@@ -738,6 +755,24 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             return;
         }
         v.animate().alpha(0f).setDuration(ms).setInterpolator(Ui.EASE).withLayer().withEndAction(() -> v.setVisibility(View.GONE)).start();
+    }
+
+    /**
+     * Leaves a page as it is, beneath the one fading in over it, and takes it away once that one
+     * covers it: an animation of nothing and without a layer, for its end (a cancelled one has none).
+     */
+    private static void hideAfter(View v, long ms) {
+        v.animate().cancel();
+        if (ms <= 0) {
+            v.setVisibility(View.GONE);
+            return;
+        }
+        v.animate().alpha(v.getAlpha()).setDuration(ms).withEndAction(() -> v.setVisibility(View.GONE)).start();
+    }
+
+    /** What page {@code p} is on screen: Home's hero, widgets and apps, or a browse page. */
+    private View[] pageViews(int p) {
+        return p == HOME ? new View[] {stage, weather, grid} : new View[] {pages[p]};
     }
 
     /** Loads (or refreshes) a browse page off the main thread; a page keeps its old content if this fails. */
@@ -1393,8 +1428,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        main.removeCallbacks(takeSnapshot);
-        main.postDelayed(takeSnapshot, SNAPSHOT_IDLE_MS);
+        snapshotLater(SNAPSHOT_IDLE_MS);
         int code = event.getKeyCode();
         int direction = direction(code);
         if (direction != 0) {
@@ -1680,11 +1714,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return info != null && info.activityInfo != null && getPackageName().equals(info.activityInfo.packageName);
     }
 
+    /**
+     * Back from an app, what comes over the network (scores, a browse page) is fetched again once
+     * the first frames are drawn, so that its answer does not land while Home comes in.
+     */
     private final Runnable resumeRefresh = () -> {
         if (!resumed || isFinishing() || isDestroyed()) return;
         if (page != HOME && pages[page].hasModel()) loadPage(page);
         refreshMyTeams();
-        refreshWatching();
+        HomeServiceRecovery.restore(this);
     };
 
     // ---- Lifecycle --------------------------------------------------------------------------
@@ -1692,7 +1730,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onResume() {
         super.onResume();
-        HomeServiceRecovery.restore(this);
         resumed = true;
         inFront = true;
         HomeButtonService.glassHomeResumed();
@@ -1701,14 +1738,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         scheduleSlides();
         main.removeCallbacks(weatherTick);
         long age = System.currentTimeMillis() - weather.lastUpdated();
-        main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? 600 : WEATHER_EVERY_MS - age);
-        // Let the first visible frames settle before refreshing content.
+        main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? RESUME_REFRESH_MS : WEATHER_EVERY_MS - age);
         main.removeCallbacks(resumeRefresh);
-        main.postDelayed(resumeRefresh, 600);
+        main.postDelayed(resumeRefresh, RESUME_REFRESH_MS);
+        // Continue Watching is read from the TV itself, quickly: it is up to date before Home shows
+        // (under the cover, after the Home button), rather than changing just after
+        refreshWatching();
         main.removeCallbacks(shownFallback);
         main.postDelayed(shownFallback, SHOWN_FALLBACK_MS);
-        main.removeCallbacks(takeSnapshot);
-        main.postDelayed(takeSnapshot, SNAPSHOT_IDLE_MS);
+        snapshotLater(SNAPSHOT_IDLE_MS);
     }
 
     /**
@@ -1766,7 +1804,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(takeSnapshot);
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
         HomeButtonService.leftUnexpectedly();
-        // Reuse the settled snapshot; do not issue GPU readback during app handoff.
+        // The snapshot shows Home as it is now: copied again only if Home changed since (focus moved
+        // on to the app just opened, say), as its stand-in on the way back must match it
+        if (snapshotDue && showingHomeAsTheHomeButtonLeavesIt()) {
+            HomeSnapshot.capture(this);
+            snapshotDue = false;
+        }
         lastZone = zone();
         selectArmed = false;
         // Nothing animates or polls while another app is in front

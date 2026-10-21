@@ -14,6 +14,8 @@ import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
 import android.content.Intent;
+import android.os.Looper;
+import android.view.View;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -119,6 +121,41 @@ public class PagesTest {
         h.back();
         assertEquals(Zone.GRID, h.zone());
         assertEquals(0, h.focused());
+    }
+
+    /**
+     * A page change never dims towards black: the page on top fades (the new one in over the old,
+     * or the old one out over the new) while the one beneath stays whole until it is covered. Seen
+     * as the change starts (Robolectric runs a fade to its end on its first frame).
+     */
+    @Test
+    public void aPageChangeKeepsAWholePageBeneath() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.tap(KEYCODE_DPAD_RIGHT);
+        untilPage(h, MOVIES);
+        assertEquals(View.VISIBLE, h.page(MOVIES).getVisibility());
+        assertTrue("Movies fades in over Home", h.page(MOVIES).getAlpha() < 1f);
+        assertEquals(View.VISIBLE, h.stage.getVisibility());
+        assertEquals("Home stays whole beneath it", 1f, h.stage.getAlpha(), 0.001f);
+        TestHome.advance(Ui.PAGE_FADE_MS + 50);
+        assertEquals(1f, h.page(MOVIES).getAlpha(), 0.001f);
+        assertEquals("Home goes once covered", View.GONE, h.stage.getVisibility());
+
+        h.tap(KEYCODE_DPAD_LEFT);
+        untilPage(h, HOME);
+        assertEquals(View.VISIBLE, h.stage.getVisibility());
+        assertEquals("Home is whole at once, beneath Movies", 1f, h.stage.getAlpha(), 0.001f);
+        assertEquals(View.VISIBLE, h.page(MOVIES).getVisibility());
+        assertEquals("Movies fades out over it", 1f, h.page(MOVIES).getAlpha(), 0.001f);
+        TestHome.advance(Ui.PAGE_FADE_MS + 50);
+        assertEquals(View.GONE, h.page(MOVIES).getVisibility());
+    }
+
+    /** Runs the main thread's tasks one at a time until page {@code p} is the one shown, and no further. */
+    private static void untilPage(TestHome h, int p) {
+        for (int i = 0; i < 1000 && h.activity.page() != p; i++) shadowOf(Looper.getMainLooper()).runOneTask();
+        assertEquals(p, h.activity.page());
     }
 
     @Test

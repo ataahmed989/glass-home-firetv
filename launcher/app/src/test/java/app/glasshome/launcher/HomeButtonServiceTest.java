@@ -51,6 +51,7 @@ public class HomeButtonServiceTest {
     public void stop() {
         HomeActivity.inFront = false;
         HomeButtonService.glassHomeResumed();
+        HomeButtonService.forgetOpening();
         service.onUnbind(new Intent());
     }
 
@@ -170,6 +171,39 @@ public class HomeButtonServiceTest {
         resumed("com.netflix.ninja", "com.netflix.ninja.MainActivity");
         HomeButtonService.leftUnexpectedly();
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.CHECK_MS));
+        assertNull(shadowOf(app).getNextStartedActivity());
+    }
+
+    /**
+     * Home pressed while an app opened from Glass Home (the Appstore, slow to start) is still on its
+     * way: Amazon's home comes up instead, and once the app's opening time is over, Glass Home returns.
+     */
+    @Test
+    public void homePressedWhileAnAppStartsIsFollowedOnceItsOpeningTimeIsOver() {
+        usageAccess();
+        connectedAfterStartUp();
+        HomeButtonService.opening(HomeButtonService.APPSTORE);
+        resumed("com.amazon.tv.launcher", AMAZON_HOME);
+        window("com.amazon.tv.launcher", AMAZON_HOME);
+        assertNull("not while the Appstore may still be on its way", shadowOf(app).getNextStartedActivity());
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.OPENING_MS));
+        assertGlassHomeStarted();
+    }
+
+    /** The Appstore's library, reached through its launcher entry, is Amazon's home window itself: it is left alone. */
+    @Test
+    public void theAppstoresLibraryIsLeftAlone() {
+        usageAccess();
+        connectedAfterStartUp();
+        HomeButtonService.opening(HomeButtonService.APPSTORE);
+        window(HomeButtonService.APPSTORE, "com.amazon.venezia.grid.AppsGridLauncherActivity");
+        resumed("com.amazon.tv.launcher", AMAZON_HOME);
+        window("com.amazon.tv.launcher", AMAZON_HOME);
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.OPENING_MS + HomeButtonService.CHECK_MS));
+
+        service.onKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
+        redraw("com.amazon.tv.launcher");
         assertNull(shadowOf(app).getNextStartedActivity());
     }
 

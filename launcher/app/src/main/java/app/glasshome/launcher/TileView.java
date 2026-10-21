@@ -114,17 +114,6 @@ final class TileView extends View {
         invalidate();
     }
 
-    /** The tile as it looks now, at its size on screen (focus scale included), for the zoom into the app it opens. */
-    Bitmap snapshot() {
-        int w = Math.round(getWidth() * getScaleX()), h = Math.round(getHeight() * getScaleY());
-        if (w <= 0 || h <= 0) return null;
-        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(b);
-        c.scale(getScaleX(), getScaleY());
-        draw(c);
-        return b;
-    }
-
     /** Puts a recycled tile back to its resting state without animating. */
     void resetFocusState() {
         animate().cancel();

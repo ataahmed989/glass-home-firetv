@@ -46,7 +46,9 @@ import android.view.accessibility.AccessibilityEvent;
  * Amazon's launcher also hosts screens that are opened on purpose: Settings and the Appstore's
  * app library can pass through it (Glass Home opens Settings and the Appstore's storefront
  * directly, so only where those cannot be). When Glass Home opens one of those, Amazon's
- * launcher is left alone until that screen is up, and while the remote moves around the library.
+ * launcher is left alone until that screen is up, and while the remote moves around the library;
+ * Home pressed while something opened from Glass Home is still starting is followed once its
+ * opening time is over, if Amazon's home is in front by then.
  *
  * What it is told: which app's window comes to the front, that Amazon's launcher redrew, and when
  * a remote key is pressed (never consumed; Home never arrives); what it asks, at those moments
@@ -82,7 +84,8 @@ public final class HomeButtonService extends AccessibilityService {
     // Main thread only
     private static HomeButtonService connected;
     private static long openingAt = -OPENING_MS;
-    private static boolean appstore;   // in the Appstore, opened from Glass Home
+    /** In the Appstore's app library, opened from Glass Home: that is Amazon's home window itself. */
+    private static boolean library;
     private static long leftAt = -LEFT_MS;   // when Glass Home last went to the back without opening anything
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable lift = () -> lift(false);
@@ -98,11 +101,17 @@ public final class HomeButtonService extends AccessibilityService {
     /** Glass Home is opening {@code pkg}, which may pass through Amazon's launcher on its way up. */
     static void opening(String pkg) {
         openingAt = SystemClock.uptimeMillis();
-        appstore = APPSTORE.equals(pkg);
+        library = false;
     }
 
     static boolean opening() {
         return SystemClock.uptimeMillis() - openingAt < OPENING_MS;
+    }
+
+    /** Tests start each case with nothing being opened. */
+    static void forgetOpening() {
+        openingAt = -OPENING_MS;
+        library = false;
     }
 
     /**
@@ -182,7 +191,7 @@ public final class HomeButtonService extends AccessibilityService {
      * (Glass Home's aside, which can report in as it goes to the back) was Amazon's home itself.
      */
     private boolean strandedOnAmazonHome() {
-        if (!amazonHome || HomeActivity.inFront || opening() || appstore) return false;
+        if (!amazonHome || HomeActivity.inFront || opening() || library) return false;
         Boolean amazon = amazonHomeInFront();
         return amazon == null || amazon;
     }
@@ -226,7 +235,7 @@ public final class HomeButtonService extends AccessibilityService {
         if (!isAmazonUi(pkg)) {
             // Another app, or Glass Home, came up: whatever was opened has been left
             openingAt = -OPENING_MS;
-            appstore = false;
+            library = false;
             if (!pkg.equals(getPackageName())) lift(false);   // something else came up instead: show it
             return;
         }
@@ -235,9 +244,16 @@ public final class HomeButtonService extends AccessibilityService {
             // opening is over. The Appstore's launcher entry (the fallback when the storefront cannot
             // be opened) hands over to its library instead, which is Amazon's home window itself and
             // reports in more than once as it comes up, so that is left alone for the whole opening time.
-            if (!home && !(window != null && window.toString().endsWith(APPSTORE_ENTRY))) {
+            boolean entry = window != null && window.toString().endsWith(APPSTORE_ENTRY);
+            if (entry) library = true;
+            if (!home && !entry) {
                 openingAt = -OPENING_MS;
-                appstore = false;
+                library = false;
+            } else if (home && !library) {
+                // Amazon's home, and not on the way to the library: Home was pressed while the app
+                // was still starting. Once the opening time is over, the usage record says where things are.
+                handler.removeCallbacks(check);
+                handler.postDelayed(check, Math.max(0, openingAt + OPENING_MS - SystemClock.uptimeMillis()));
             }
             return;
         }
@@ -246,7 +262,7 @@ public final class HomeButtonService extends AccessibilityService {
             return;
         }
         // Back to the Appstore's library from one of its pages
-        if (appstore && isAmazonUi(previous) && SystemClock.uptimeMillis() - keyAt < KEY_MS) return;
+        if (library && isAmazonUi(previous) && SystemClock.uptimeMillis() - keyAt < KEY_MS) return;
         redirect();
     }
 
@@ -273,7 +289,7 @@ public final class HomeButtonService extends AccessibilityService {
      * made is checked, by the last window to come up (an app opened by voice may still be on its way).
      */
     private void check() {
-        if (HomeActivity.inFront || retries >= MAX_RETRIES || opening() || appstore) return;
+        if (HomeActivity.inFront || retries >= MAX_RETRIES || opening() || library) return;
         PowerManager power = getSystemService(PowerManager.class);
         if (power != null && !power.isInteractive()) return;   // the TV went to sleep
         Boolean amazon = amazonHomeInFront();
