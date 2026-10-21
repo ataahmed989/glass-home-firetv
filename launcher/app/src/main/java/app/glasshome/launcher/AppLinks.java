@@ -38,6 +38,7 @@ final class AppLinks {
     static volatile Poster poster = AppLinks::http;
 
     private static final String API = "https://apis.justwatch.com/graphql";
+    private static final String NETFLIX = "com.netflix.ninja";
     private static final String QUERY = "query($q:String!){popularTitles(country:US,first:10,filter:{searchQuery:$q})"
             + "{edges{node{objectType content(country:US,language:\"en\"){externalIds{tmdbId}}"
             + "offers(country:US,platform:ANDROID_TV){monetizationType standardWebURL}}}}}";
@@ -147,13 +148,20 @@ final class AppLinks {
         return b.build().toString();
     }
 
-    /** An explicit intent opening {@code link} in {@code app}, or null when the app cannot open it. */
+    /**
+     * An explicit intent opening {@code link} in {@code app}, or null when the app cannot open it.
+     * The app starts afresh at the link: one already running (Netflix, checked on the TV) shows
+     * whatever it was on and ignores a link handed to it then.
+     */
     static Intent intent(Context context, String app, String link) {
         Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(app);
         ResolveInfo r = context.getPackageManager().resolveActivity(i, 0);
         if (r == null) return null;
-        return i.setComponent(new ComponentName(r.activityInfo.packageName, r.activityInfo.name))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        i.setComponent(new ComponentName(r.activityInfo.packageName, r.activityInfo.name))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        // Netflix follows a link from another app only with a "source" (30, as other TV launchers send; checked on the TV)
+        if (NETFLIX.equals(app)) i.putExtra("source", "30");
+        return i;
     }
 
     static byte[] http(String url, String json) throws IOException {

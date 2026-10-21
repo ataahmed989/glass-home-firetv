@@ -74,6 +74,27 @@ public class AppLinksTest {
         assertFalse("Netflix cannot open the Netflix link here, so it opens as an app", links.containsKey(NETFLIX));
     }
 
+    /** The app starts afresh at the link (a running Netflix ignores one otherwise), and Netflix is told where it came from. */
+    @Test
+    public void theAppStartsAfreshAtTheLink() {
+        Application app = RuntimeEnvironment.getApplication();
+        String netflixLink = "https://www.netflix.com/title/70143836";
+        opens(shadowOf(app.getPackageManager()), NETFLIX, netflixLink);
+        opens(shadowOf(app.getPackageManager()), MAX, MAX_LINK);
+
+        Intent netflix = AppLinks.intent(app, NETFLIX, netflixLink);
+        assertEquals(Uri.parse(netflixLink), netflix.getData());
+        assertEquals(NETFLIX + ".MainActivity", netflix.getComponent().getClassName());
+        int fresh = Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK;
+        assertEquals(fresh, netflix.getFlags() & fresh);
+        assertEquals("30", netflix.getStringExtra("source"));
+
+        Intent max = AppLinks.intent(app, MAX, MAX_LINK);
+        assertEquals(fresh, max.getFlags() & fresh);
+        assertNull(max.getStringExtra("source"));
+        assertNull("an app that cannot open the link", AppLinks.intent(app, PRIME, MAX_LINK));
+    }
+
     /** One look-up per title, sending only its name; "Open …" then finds the link without waiting. */
     @Test
     public void aTitleIsLookedUpOnce() throws Exception {
