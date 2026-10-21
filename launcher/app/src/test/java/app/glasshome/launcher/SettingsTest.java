@@ -11,10 +11,14 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.robolectric.Shadows.shadowOf;
 
+import android.Manifest;
 import android.app.Application;
+import android.content.ComponentName;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.provider.Settings;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -144,5 +148,32 @@ public class SettingsTest {
         assertFalse(h.panel.option(0).checked);
         assertFalse(h.activity.getSharedPreferences("home", 0).getBoolean("featured", true));
         assertTrue("choosing the switch leaves the background choice alone", h.panel.option(1).checked);
+    }
+
+    /**
+     * Home Button switched off, then the TV restarted and Fire OS turned the Home service off: with
+     * the ADB grant that lets Glass Home turn it back on, the switch still works, and does so.
+     */
+    @Test
+    public void theHomeButtonCanBeTurnedBackOnAfterARestart() throws Exception {
+        Application app = RuntimeEnvironment.getApplication();
+        shadowOf(app).grantPermissions(Manifest.permission.WRITE_SECURE_SETTINGS);
+        new HomeSettings(app).setHomeButtonOpensGlassHome(false);
+        Settings.Secure.putString(app.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, null);
+        TestHome h = new TestHome();
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals("Opens Glass Home", h.panel.option(9).title);
+        assertTrue(h.panel.option(9).enabled);
+        assertFalse(h.panel.option(9).checked);
+        for (int i = 0; i < 12; i++) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(9, h.panel.focusedIndex());
+        h.press(KEYCODE_DPAD_CENTER);
+
+        assertTrue(new HomeSettings(app).homeButtonOpensGlassHome());
+        assertEquals(new ComponentName(app, HomeButtonService.class).flattenToString(),
+                Settings.Secure.getString(app.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
     }
 }

@@ -148,7 +148,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         HomeSnapshot.capture(this);
         snapshotDue = false;
     };
-    /** Home has changed since its snapshot was last copied (see {@link #snapshotLater}). */
+    /** Home has been drawn since its snapshot was last copied (see {@link #snapshotLater}). */
     private boolean snapshotDue;
 
     /** In case the window's "shown" report does not come: the cover goes regardless, a while after Glass Home resumed. */
@@ -210,6 +210,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         lastDockColumn = lastFocused % Ui.COLUMNS;
 
         setContentView(buildViews());
+        // Anything drawn (a key, the clock turning, the weather…) leaves Home's snapshot behind
+        getWindow().getDecorView().getViewTreeObserver().addOnDrawListener(() -> snapshotDue = true);
         loadProfile();
         loadApps();
 
@@ -461,10 +463,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /**
      * Home's snapshot is copied again once Home has rested for {@code ms}, or as Glass Home goes to
-     * the back before then; one copied while nothing has changed since is used as it is.
+     * the back before then; one copied while nothing has been drawn since is used as it is.
      */
     private void snapshotLater(long ms) {
-        snapshotDue = true;
         main.removeCallbacks(takeSnapshot);
         main.postDelayed(takeSnapshot, ms);
     }
@@ -1245,7 +1246,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         boolean sleep = SystemControls.canSleep(this);
         options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
                 sleep ? "Lets Control Center put the TV to sleep" : "Turned on during setup over ADB", sleep, sleep));
-        boolean redirect = homeButtonServiceOn();
+        // Glass Home can turn its service back on itself when allowed to (see HomeServiceRecovery)
+        boolean redirect = homeButtonServiceOn() || HomeServiceRecovery.allowed(this);
         options.add(SettingsPanel.Option.toggle("HOME BUTTON", "Opens Glass Home",
                 redirect ? "Off: the Home button shows Amazon's home" : "Turned on during setup over ADB",
                 redirect, redirect && settings.homeButtonOpensGlassHome()));
@@ -1360,6 +1362,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void onSettingChosen(SettingsPanel.Option option) {
         if (option.toggle && option.section.equals("HOME BUTTON")) {
             settings.setHomeButtonOpensGlassHome(option.checked);
+            if (option.checked) HomeServiceRecovery.restore(this);   // Fire OS may have turned the service off meanwhile
             return;
         }
         if (option.toggle && option.section.equals("CONTROL CENTER")) {
@@ -1804,8 +1807,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(takeSnapshot);
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
         HomeButtonService.leftUnexpectedly();
-        // The snapshot shows Home as it is now: copied again only if Home changed since (focus moved
-        // on to the app just opened, say), as its stand-in on the way back must match it
+        // The snapshot shows Home as it is now: copied again only if Home has been drawn since (focus
+        // moved on to the app just opened, the clock turned…), as its stand-in on the way back must match it
         if (snapshotDue && showingHomeAsTheHomeButtonLeavesIt()) {
             HomeSnapshot.capture(this);
             snapshotDue = false;

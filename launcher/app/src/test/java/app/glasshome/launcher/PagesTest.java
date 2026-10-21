@@ -126,7 +126,7 @@ public class PagesTest {
     /**
      * A page change never dims towards black: the page on top fades (the new one in over the old,
      * or the old one out over the new) while the one beneath stays whole until it is covered. Seen
-     * as the change starts (Robolectric runs a fade to its end on its first frame).
+     * as the change starts and once it is over (Robolectric runs a fade to its end on its first frame).
      */
     @Test
     public void aPageChangeKeepsAWholePageBeneath() throws Exception {
@@ -141,6 +141,7 @@ public class PagesTest {
         TestHome.advance(Ui.PAGE_FADE_MS + 50);
         assertEquals(1f, h.page(MOVIES).getAlpha(), 0.001f);
         assertEquals("Home goes once covered", View.GONE, h.stage.getVisibility());
+        assertEquals("without having faded", 1f, h.stage.getAlpha(), 0.001f);
 
         h.tap(KEYCODE_DPAD_LEFT);
         untilPage(h, HOME);
@@ -150,6 +151,8 @@ public class PagesTest {
         assertEquals("Movies fades out over it", 1f, h.page(MOVIES).getAlpha(), 0.001f);
         TestHome.advance(Ui.PAGE_FADE_MS + 50);
         assertEquals(View.GONE, h.page(MOVIES).getVisibility());
+        assertEquals("having faded out", 0f, h.page(MOVIES).getAlpha(), 0.001f);
+        assertEquals(1f, h.stage.getAlpha(), 0.001f);
     }
 
     /** Runs the main thread's tasks one at a time until page {@code p} is the one shown, and no further. */

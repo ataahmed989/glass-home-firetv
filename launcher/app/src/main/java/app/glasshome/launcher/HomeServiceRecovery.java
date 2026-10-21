@@ -40,10 +40,13 @@ public final class HomeServiceRecovery extends BroadcastReceiver {
         return String.join(":", services);
     }
 
+    /** Whether the ADB grant that lets Glass Home turn its Home service back on is in place. */
+    static boolean allowed(Context context) {
+        return context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED;
+    }
+
     static void restore(Context context) {
-        if (!new HomeSettings(context).homeButtonOpensGlassHome()
-                || context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS)
-                != PackageManager.PERMISSION_GRANTED) return;
+        if (!new HomeSettings(context).homeButtonOpensGlassHome() || !allowed(context)) return;
         try {
             String old = Settings.Secure.getString(context.getContentResolver(),
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
