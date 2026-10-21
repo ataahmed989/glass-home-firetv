@@ -4,20 +4,26 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
-import android.graphics.Shader;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.view.View;
 
 /**
- * tvOS-style Control Center, hanging under the status capsule: Sleep (tall), Wi-Fi, Bluetooth,
- * the Sleep Timer, and round shortcuts to Fire TV's mirroring, accessibility, display settings
- * and this launcher's Home Screen settings. One focus target with its own focus position; the
- * arrows move between tiles by where they sit, Select acts, Back (or Up from the top) closes it.
+ * Control Center, after the iOS 26 Control Center kit: separate Liquid Glass modules on the kit's
+ * grid (a 68 px unit, 15 px gutters, four columns), scaled for the TV and hung under the status
+ * capsule. Wi-Fi and Bluetooth are 2×1 pills, Sleep and the Sleep Timer 2×2 tiles, and the four
+ * shortcuts (Fire TV's screen mirroring, accessibility and display settings, and this launcher's
+ * Home Screen settings) 1×1 circles. Each module is its own glass; the focused one lights up, the
+ * kit's On look (near-white glass, dark content). Symbol wells follow the kit too: blue while
+ * connected, white while a timer runs.
+ *
+ * One focus target with its own focus position; the arrows move between modules by where they
+ * sit, Select acts, Back (or Up from the top) closes it.
  */
 final class ControlCenter extends View {
     enum Item { SLEEP, WIFI, BLUETOOTH, TIMER, MIRRORING, ACCESSIBILITY, DISPLAY, HOME_SCREEN }
@@ -26,30 +32,36 @@ final class ControlCenter extends View {
         void onControl(Item item);
     }
 
-    // Design px, relative to the panel; the panel's right edge lines up with the capsule's
-    private static final int PANEL_W = 490, PAD = 18, COL = 220, GAP = 14, TILE_H = 96, ROUND = 84;
-    private static final int PANEL_TOP = 138, PANEL_RIGHT = 57;
+    /** Design px per kit px. */
+    private static final float K = 1.5f;
+    // In kit px: the grid's right edge lines up with the capsule's, under it
+    private static final float GRID_W = 318, TOP = 152 / K, RIGHT = 57 / K;
+    private static final float WELL = 40, TILE_R = 30;
     private static final String[] ROUND_NAMES = {"Screen Mirroring", "Accessibility", "Display & Sounds", "Home Screen"};
+    private static final int ACCENT_BLUE = 0xFF0088FF;
 
     private final Glass glass;
-    private final RectF[] rects = new RectF[Item.values().length];
+    private final RectF[] rects = new RectF[Item.values().length];   // kit px, relative to the grid
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint glyph = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint glyphFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint tint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint scrim = new Paint();
+    // Erases a figure out of a solid glyph, so the glass shows through it
+    private final Paint cutout = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint cutoutFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint title = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final TextPaint subtitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint detail = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint caption = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final RectF panel = new RectF(), r = new RectF();
+    private final RectF r = new RectF(), well = new RectF();
     private final Path path = new Path();
+    private float gridLeft, gridTop;
     private Listener listener;
     private Item focused = Item.SLEEP;
     private float focusT = 1f;
     private ValueAnimator focusAnim;
 
-    // Status shown on the tiles
+    // Status shown on the modules
     private boolean canSleep;
     private String network = "", bluetooth = "";
     private int wifiBars = -1, timerMinutes;
@@ -61,26 +73,27 @@ final class ControlCenter extends View {
         setDefaultFocusHighlightEnabled(false);
         setContentDescription("Control Center");
         setVisibility(GONE);
-        FeaturePainter.style(title, context, 600, 21, 0xFFFFFFFF);
-        FeaturePainter.style(subtitle, context, 400, 17, 0xA6FFFFFF);
-        FeaturePainter.style(caption, context, 500, 16, 0xB3FFFFFF);
+        // The kit's tile title (Semibold 14) and detail (Medium 14), at the TV's scale
+        FeaturePainter.style(title, context, 600, 14 * K, 0xFFFFFFFF);
+        FeaturePainter.style(detail, context, 500, 14 * K, 0x8CFFFFFF);
+        FeaturePainter.style(caption, context, 500, 15 * K, 0xCCFFFFFF);
         caption.setTextAlign(Paint.Align.CENTER);
         glyph.setStyle(Paint.Style.STROKE);
         glyph.setStrokeCap(Paint.Cap.ROUND);
         glyph.setStrokeJoin(Paint.Join.ROUND);
         shadow.setColor(0xFF000000);
         scrim.setColor(0x33000000);
-        float x0 = PAD, x1 = PAD + COL + GAP;
-        rects[Item.SLEEP.ordinal()] = new RectF(x0, PAD, x0 + COL, PAD + TILE_H * 2 + GAP);
-        rects[Item.WIFI.ordinal()] = new RectF(x1, PAD, x1 + COL, PAD + TILE_H);
-        rects[Item.BLUETOOTH.ordinal()] = new RectF(x1, PAD + TILE_H + GAP, x1 + COL, PAD + TILE_H * 2 + GAP);
-        float timerTop = PAD + TILE_H * 2 + GAP * 2;
-        rects[Item.TIMER.ordinal()] = new RectF(x0, timerTop, x1 + COL, timerTop + TILE_H);
-        float roundTop = timerTop + TILE_H + PAD, step = (COL * 2 + GAP - ROUND) / 3f;
-        for (int i = 0; i < 4; i++) {
-            float x = x0 + i * step;
-            rects[Item.MIRRORING.ordinal() + i] = new RectF(x, roundTop, x + ROUND, roundTop + ROUND);
-        }
+        cutout.setStyle(Paint.Style.STROKE);
+        cutout.setStrokeCap(Paint.Cap.ROUND);
+        cutout.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));
+        cutoutFill.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));
+        // The kit's grid: columns at 0, 83, 167 and 250, rows at 0, 83 and 249
+        rects[Item.WIFI.ordinal()] = new RectF(0, 0, 151, 68);
+        rects[Item.BLUETOOTH.ordinal()] = new RectF(167, 0, 318, 68);
+        rects[Item.SLEEP.ordinal()] = new RectF(0, 83, 151, 234);
+        rects[Item.TIMER.ordinal()] = new RectF(167, 83, 318, 234);
+        float[] cols = {0, 83, 167, 250};
+        for (int i = 0; i < 4; i++) rects[Item.MIRRORING.ordinal() + i] = new RectF(cols[i], 249, cols[i] + 68, 317);
     }
 
     void setListener(Listener l) {
@@ -120,19 +133,15 @@ final class ControlCenter extends View {
         focusT = 1f;
     }
 
-    private float panelHeight() {
-        RectF last = rects[Item.HOME_SCREEN.ordinal()];
-        return last.bottom + 12 + 22 + PAD;
+    private void layoutGrid() {
+        gridLeft = getWidth() - Ui.px(RIGHT * K) - Ui.px(GRID_W * K);
+        gridTop = Ui.px(TOP * K);
     }
 
-    private void layoutPanel() {
-        float right = getWidth() - Ui.px(PANEL_RIGHT);
-        panel.set(right - Ui.px(PANEL_W), Ui.px(PANEL_TOP), right, Ui.px(PANEL_TOP) + Ui.px(panelHeight()));
-    }
-
+    /** A module's place on screen. */
     private RectF screenRect(Item item) {
         RectF d = rects[item.ordinal()];
-        r.set(panel.left + Ui.px(d.left), panel.top + Ui.px(d.top), panel.left + Ui.px(d.right), panel.top + Ui.px(d.bottom));
+        r.set(gridLeft + Ui.px(d.left * K), gridTop + Ui.px(d.top * K), gridLeft + Ui.px(d.right * K), gridTop + Ui.px(d.bottom * K));
         return r;
     }
 
@@ -215,69 +224,85 @@ final class ControlCenter extends View {
     @Override
     protected void onDraw(Canvas c) {
         c.drawRect(0, 0, getWidth(), getHeight(), scrim);
-        layoutPanel();
-        tint.setShader(new LinearGradient(0, panel.top, 0, panel.bottom, 0x9E3A3F4A, 0xB8262A33, Shader.TileMode.CLAMP));
-        shadow.setShadowLayer(Ui.px(40), 0, Ui.px(16), 0x73000000);
-        c.drawRoundRect(panel, Ui.px(40), Ui.px(40), shadow);
-        shadow.clearShadowLayer();
-        glass.draw(c, panel, Ui.px(40), getLeft(), getTop(), 0f, tint);
+        layoutGrid();
         for (Item item : Item.values()) {
             if (item != focused) drawItem(c, item, 0f);
         }
         drawItem(c, focused, isFocused() ? focusT : 0f);
-        // The focused round button's name, under the row
+        // The focused shortcut's name, under the row of circles
         int i = focused.ordinal() - Item.MIRRORING.ordinal();
         if (i >= 0 && isFocused()) {
             RectF row = screenRect(Item.MIRRORING);
-            c.drawText(ROUND_NAMES[i], panel.centerX(), row.bottom + Ui.px(30), caption);
+            float centre = gridLeft + Ui.px(GRID_W * K) / 2f;
+            c.drawText(ROUND_NAMES[i], centre, row.bottom + Ui.px(22 * K), caption);
         }
     }
 
     private void drawItem(Canvas c, Item item, float focus) {
         RectF box = new RectF(screenRect(item));
         boolean round = item.ordinal() >= Item.MIRRORING.ordinal();
-        float radius = round ? box.width() / 2f : Ui.px(26);
+        boolean pill = item == Item.WIFI || item == Item.BLUETOOTH;
+        float radius = round || pill ? box.height() / 2f : Ui.px(TILE_R * K);
         c.save();
-        float s = 1f + 0.05f * focus;
+        float s = 1f + 0.06f * focus;
         c.scale(s, s, box.centerX(), box.centerY());
         if (focus > 0f) {
-            shadow.setShadowLayer(Ui.px(20), 0, Ui.px(8), Math.round(120 * focus) << 24);
+            // The kit's "Clear" shadow (black 20 %, blur 40), under the lifted module only
+            shadow.setShadowLayer(Ui.px(40), 0, Ui.px(10), Math.round(0x40 * focus) << 24);
             c.drawRoundRect(box, radius, radius, shadow);
             shadow.clearShadowLayer();
         }
-        // Dark translucent at rest, white when focused
-        int rest = 0x47000000, lit = 0xF7FFFFFF;
-        fill.setColor(blend(rest, lit, focus));
-        c.drawRoundRect(box, radius, radius, fill);
-        int ink = blend(0xFFFFFFFF, 0xFF16181D, focus);
-        int muted = blend(0xA6FFFFFF, 0xA616181D, focus);
+        glass.drawLit(c, box, radius, getLeft(), getTop(), focus);
+        int ink = blend(0xFFFFFFFF, 0xFF111215, focus);
+        int muted = blend(0x8CFFFFFF, 0x99111215, focus);
         if (round) {
-            drawGlyph(c, item, box.centerX(), box.centerY(), Ui.px(34), ink);
-        } else if (item == Item.SLEEP) {
-            drawGlyph(c, item, box.centerX(), box.top + box.height() * 0.40f, Ui.px(64), ink);
-            title.setColor(ink);
-            title.setTextAlign(Paint.Align.CENTER);
-            c.drawText("Sleep", box.centerX(), box.top + box.height() * 0.74f, title);
-            if (!canSleep) {
-                subtitle.setColor(muted);
-                subtitle.setTextAlign(Paint.Align.CENTER);
-                c.drawText("Not set up", box.centerX(), box.top + box.height() * 0.74f + Ui.px(26), subtitle);
-            }
-            title.setTextAlign(Paint.Align.LEFT);
-            subtitle.setTextAlign(Paint.Align.LEFT);
-        } else {
-            float d = Ui.px(48), cx = box.left + Ui.px(18) + d / 2f, cy = box.centerY();
-            fill.setColor(blend(0x26FFFFFF, 0x1416181D, focus));
-            c.drawCircle(cx, cy, d / 2f, fill);
-            drawGlyph(c, item, cx, cy, Ui.px(26), ink);
-            float tx = cx + d / 2f + Ui.px(14), maxW = box.right - Ui.px(16) - tx;
+            drawGlyph(c, item, box.centerX(), box.centerY(), Ui.px(26 * K), ink);
+        } else if (pill) {
+            float pad = Ui.px(14 * K), d = Ui.px(WELL * K);
+            well.set(box.left + pad, box.centerY() - d / 2f, box.left + pad + d, box.centerY() + d / 2f);
+            drawWell(c, item, focus);
+            float tx = well.right + Ui.px(10 * K), maxW = box.right - Ui.px(12 * K) - tx;
             String[] text = tileText(item);
             title.setColor(ink);
-            subtitle.setColor(muted);
-            c.drawText(TextUtils.ellipsize(text[0], title, maxW, TextUtils.TruncateAt.END).toString(), tx, cy - Ui.px(3), title);
-            c.drawText(TextUtils.ellipsize(text[1], subtitle, maxW, TextUtils.TruncateAt.END).toString(), tx, cy + Ui.px(22), subtitle);
+            detail.setColor(muted);
+            c.drawText(TextUtils.ellipsize(text[0], title, maxW, TextUtils.TruncateAt.END).toString(), tx, box.top + Ui.px(30.5f * K), title);
+            c.drawText(TextUtils.ellipsize(text[1], detail, maxW, TextUtils.TruncateAt.END).toString(), tx, box.top + Ui.px(47.5f * K), detail);
+        } else {
+            // 2×2 tile: the well at the top, the title and detail at the bottom (the kit's space-between)
+            float pad = Ui.px(16 * K), d = Ui.px(WELL * K);
+            well.set(box.left + pad, box.top + pad, box.left + pad + d, box.top + pad + d);
+            drawWell(c, item, focus);
+            float maxW = box.width() - 2 * pad;
+            String[] text = tileText(item);
+            title.setColor(ink);
+            detail.setColor(muted);
+            c.drawText(TextUtils.ellipsize(text[0], title, maxW, TextUtils.TruncateAt.END).toString(), box.left + pad, box.top + Ui.px(114.5f * K), title);
+            c.drawText(TextUtils.ellipsize(text[1], detail, maxW, TextUtils.TruncateAt.END).toString(), box.left + pad, box.top + Ui.px(131.5f * K), detail);
         }
         c.restore();
+    }
+
+    /**
+     * The symbol well, as in the kit: white 6 % at rest (dark on lit glass); blue with a white
+     * symbol while Wi-Fi or Bluetooth is on; white (dark on lit glass) while the timer runs.
+     */
+    private void drawWell(Canvas c, Item item, float focus) {
+        boolean connected = item == Item.WIFI ? !network.startsWith("Not") : item == Item.BLUETOOTH && !bluetooth.equals("Off") && !bluetooth.isEmpty() && !bluetooth.equals("Not available");
+        boolean on = item == Item.TIMER && timerMinutes > 0;
+        int wellColour, symbol;
+        if (connected) {
+            wellColour = ACCENT_BLUE;
+            symbol = 0xFFFFFFFF;
+        } else if (on) {
+            wellColour = blend(0xFFFFFFFF, 0xFF111215, focus);
+            symbol = blend(0xFF111215, 0xFFFFFFFF, focus);
+        } else {
+            wellColour = blend(0x0FFFFFFF, 0x14000000, focus);
+            symbol = blend(0xFFFFFFFF, 0xFF111215, focus);
+        }
+        fill.setColor(wellColour);
+        c.drawOval(well, fill);
+        drawGlyph(c, item, well.centerX(), well.centerY(), well.width() * 0.5f, symbol);
     }
 
     private String[] tileText(Item item) {
@@ -286,6 +311,8 @@ final class ControlCenter extends View {
                 return new String[] {network.equals("Ethernet") ? "Network" : "Wi-Fi", network};
             case BLUETOOTH:
                 return new String[] {"Bluetooth", bluetooth};
+            case SLEEP:
+                return new String[] {"Sleep", canSleep ? "Turn the TV off" : "Not set up"};
             default:
                 String status = !canSleep ? "Not set up" : timerMinutes > 0 ? sleepLeft(timerMinutes) : "Off";
                 return new String[] {"Sleep Timer", status};
@@ -307,7 +334,7 @@ final class ControlCenter extends View {
     /** Line icons drawn here (no symbol fonts): each fits a square of {@code s} around (cx, cy). */
     private void drawGlyph(Canvas c, Item item, float cx, float cy, float s, int color) {
         glyph.setColor(color);
-        glyph.setStrokeWidth(Math.max(1.5f, s * 0.085f));
+        glyph.setStrokeWidth(Math.max(1.5f, s * 0.105f));
         glyphFill.setColor(color);
         float h = s / 2f;
         path.reset();
@@ -351,23 +378,32 @@ final class ControlCenter extends View {
                 break;
             }
             case MIRRORING: {
-                // A screen with a triangle rising into it from below
-                RectF screen = new RectF(cx - h * 0.92f, cy - h * 0.78f, cx + h * 0.92f, cy + h * 0.38f);
-                c.drawRoundRect(screen, h * 0.12f, h * 0.12f, glyph);
-                path.moveTo(cx, cy + h * 0.02f);
-                path.lineTo(cx + h * 0.48f, cy + h * 0.86f);
-                path.lineTo(cx - h * 0.48f, cy + h * 0.86f);
-                path.close();
-                c.drawPath(path, glyphFill);
+                // Screen mirroring, as in the kit (rectangle.on.rectangle): one screen in front of another.
+                // Kit geometry: two 24.54 × 19.59 rects, the front one 6.16 right and 5.79 down, in a 30.7 × 25.38 group
+                float k = s / 30.7f, ox = cx - 15.35f * k, oy = cy - 12.69f * k;
+                float rw = 24.54f * k, rh = 19.59f * k, rr = 4.4f * k;
+                RectF front = new RectF(ox + 6.16f * k, oy + 5.79f * k, ox + 6.16f * k + rw, oy + 5.79f * k + rh);
+                RectF back = new RectF(ox, oy, ox + rw, oy + rh);
+                float gap = glyph.getStrokeWidth() * 1.4f;
+                c.save();
+                c.clipOutRect(front.left - gap, front.top - gap, front.right + gap, front.bottom + gap);
+                c.drawRoundRect(back, rr, rr, glyph);
+                c.restore();
+                c.drawRoundRect(front, rr, rr, glyph);
                 break;
             }
             case ACCESSIBILITY: {
-                c.drawCircle(cx, cy, h * 0.92f, glyph);
-                c.drawCircle(cx, cy - h * 0.48f, s * 0.07f, glyphFill);
-                c.drawLine(cx - h * 0.50f, cy - h * 0.20f, cx + h * 0.50f, cy - h * 0.20f, glyph);
-                c.drawLine(cx, cy - h * 0.20f, cx, cy + h * 0.18f, glyph);
-                c.drawLine(cx, cy + h * 0.18f, cx - h * 0.30f, cy + h * 0.62f, glyph);
-                c.drawLine(cx, cy + h * 0.18f, cx + h * 0.30f, cy + h * 0.62f, glyph);
+                // The accessibility figure cut out of a solid disc: head, arms open and level, body, legs apart
+                float u = h * 0.98f;
+                int layer = c.saveLayer(cx - u - 2, cy - u - 2, cx + u + 2, cy + u + 2, null);
+                c.drawCircle(cx, cy, u, glyphFill);
+                cutout.setStrokeWidth(u * 0.17f);
+                c.drawCircle(cx, cy - u * 0.50f, u * 0.15f, cutoutFill);
+                c.drawLine(cx - u * 0.50f, cy - u * 0.20f, cx + u * 0.50f, cy - u * 0.20f, cutout);
+                c.drawLine(cx, cy - u * 0.20f, cx, cy + u * 0.16f, cutout);
+                c.drawLine(cx, cy + u * 0.14f, cx - u * 0.26f, cy + u * 0.58f, cutout);
+                c.drawLine(cx, cy + u * 0.14f, cx + u * 0.26f, cy + u * 0.58f, cutout);
+                c.restoreToCount(layer);
                 break;
             }
             case DISPLAY: {
@@ -379,7 +415,7 @@ final class ControlCenter extends View {
             }
             default: {
                 // Home Screen: four rounded squares, like a grid of apps
-                float q = h * 0.78f, g = h * 0.16f;
+                float q = h * 0.70f, g = h * 0.30f;
                 for (int i = 0; i < 4; i++) {
                     float x = cx + (i % 2 == 0 ? -q - g / 2f : g / 2f), y = cy + (i < 2 ? -q - g / 2f : g / 2f);
                     c.drawRoundRect(new RectF(x, y, x + q, y + q), q * 0.28f, q * 0.28f, glyph);

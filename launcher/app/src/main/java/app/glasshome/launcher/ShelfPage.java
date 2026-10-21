@@ -77,7 +77,6 @@ final class ShelfPage extends View {
     private final Paint art = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint dim = new Paint();
     private final Paint sheen = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint shelfTitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint cardTitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
@@ -127,7 +126,6 @@ final class ShelfPage extends View {
         shadow.setColor(0xFF000000);
         rim.setStyle(Paint.Style.STROKE);
         rim.setStrokeWidth(Math.max(1.5f, Ui.px(2f)));
-        dim.setColor(0xFF000000);
     }
 
     void setListener(Listener l) {
@@ -455,10 +453,13 @@ final class ShelfPage extends View {
         if (listener != null) listener.onHeroShown(this);
     }
 
-    /** The hero turns over every 8 s while it is not being looked at closely. */
+    /**
+     * The hero turns over every 8 s while it is not being looked at closely, and holds still under
+     * the shelves, where it is too dim to follow and a new picture would only slow the browsing.
+     */
     private void schedule() {
         removeCallbacks(advance);
-        if (model != null && model.hero.size() > 1 && !Ui.reducedMotion && isAttachedToWindow() && getVisibility() == VISIBLE) {
+        if (model != null && model.hero.size() > 1 && !intoShelves && !Ui.reducedMotion && isAttachedToWindow() && getVisibility() == VISIBLE) {
             postDelayed(advance, HERO_EVERY_MS);
         }
     }
@@ -482,7 +483,7 @@ final class ShelfPage extends View {
         PageModel.Feature f = currentHero();
         Bitmap a = f == null ? null : images.peek(f.imageUrl, getWidth());
         painter.drawBackground(c, Backdrop.W, Backdrop.H, f, a);
-        Backdrop.blur(small, 5);
+        Backdrop.blur(small, Backdrop.RADIUS);
         return small;
     }
 
@@ -497,12 +498,8 @@ final class ShelfPage extends View {
             drawSkeleton(c);
             return;
         }
-        drawHeroBackground(c, w, h);
         float scrolled = Math.min(1f, scrollY / Ui.px(700));
-        if (scrolled > 0f) {
-            dim.setAlpha(Math.round(255 * 0.86f * scrolled));
-            c.drawRect(0, 0, w, h, dim);
-        }
+        drawHeroBackground(c, w, h, 0.86f * scrolled);
         float textAlpha = 1f - Math.min(1f, scrollY / Ui.px(420));
         if (textAlpha > 0f) drawHeroText(c, textAlpha);
         drawShelves(c, w, h);
@@ -518,16 +515,15 @@ final class ShelfPage extends View {
 
     private final Paint topFade = new Paint();
 
-    private void drawHeroBackground(Canvas c, int w, int h) {
+    /** The hero's background, darkened by {@code dim} as the shelves scroll over it; a new one fades in over the old. */
+    private void drawHeroBackground(Canvas c, int w, int h, float dim) {
         PageModel.Feature cur = currentHero();
         if (heroFrom >= 0 && heroFrom < model.hero.size() && heroFade < 1f) {
             PageModel.Feature from = model.hero.get(heroFrom);
-            painter.drawBackground(c, w, h, from, heroArt(from, w));
-            int layer = c.saveLayerAlpha(0, 0, w, h, Math.round(255 * heroFade));
-            painter.drawBackground(c, w, h, cur, heroArt(cur, w));
-            c.restoreToCount(layer);
+            painter.drawBackground(c, w, h, from, heroArt(from, w), dim, 1f);
+            painter.drawBackground(c, w, h, cur, heroArt(cur, w), dim, heroFade);
         } else {
-            painter.drawBackground(c, w, h, cur, heroArt(cur, w));
+            painter.drawBackground(c, w, h, cur, heroArt(cur, w), dim, 1f);
         }
     }
 
@@ -550,7 +546,7 @@ final class ShelfPage extends View {
 
     private void drawHeroBlock(Canvas c, PageModel.Feature f, float shift, float alpha, int focusedButton) {
         if (f == null || alpha <= 0.01f) return;
-        int layer = alpha < 0.99f ? c.saveLayerAlpha(0, 0, getWidth(), getHeight(), Math.round(255 * alpha)) : -1;
+        painter.setFade(alpha < 0.99f ? alpha : 1f);
         c.save();
         c.translate(0, shift);
         if (f.game != null) {
@@ -561,7 +557,7 @@ final class ShelfPage extends View {
         Bitmap logo = f.logoUrl == null ? null : images.get(f.logoUrl, Ui.px(600), true, invalidator);
         painter.drawText(c, Ui.px(LEFT), Ui.px(HERO_BOTTOM), f, logo, focusedButton, 2, Ui.px(f.game != null ? 820 : 880));
         c.restore();
-        if (layer >= 0) c.restoreToCount(layer);
+        painter.setFade(1f);
     }
 
     private void drawDots(Canvas c, float shift, float alpha) {

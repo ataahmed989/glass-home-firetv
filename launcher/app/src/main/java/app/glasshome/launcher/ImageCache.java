@@ -34,7 +34,8 @@ final class ImageCache {
     private final Map<String, Long> failedAt = new HashMap<>();
 
     private ImageCache(Context context) {
-        int budget = (int) Math.min(96L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 5);
+        // Kept modest: the Fire TV Stick has under 2 GB shared with Fire OS, and decoding again from disk is quick
+        int budget = (int) Math.min(48L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 5);
         memory = new LruCache<String, Bitmap>(budget) {
             @Override
             protected int sizeOf(String key, Bitmap value) {
@@ -93,6 +94,14 @@ final class ImageCache {
     }
 
     /** Loads still in flight (tests wait for these before capturing a screen). */
+    /**
+     * Another app is in front: give most decoded images back (they come from disk again quickly),
+     * keeping the most recently drawn quarter, Home's own, so nothing pops in on the way back.
+     */
+    void trimMemory() {
+        memory.trimToSize(memory.maxSize() / 4);
+    }
+
     int pending() {
         return pending.size();
     }

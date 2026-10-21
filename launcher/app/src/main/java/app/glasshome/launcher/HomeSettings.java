@@ -38,6 +38,24 @@ final class HomeSettings {
         prefs.edit().putString("widgets", layout).apply();
     }
 
+    /** The widget the Smart Stack was left on ({@link WidgetPanel.Kind} name), or null for the first. */
+    String stackWidget() {
+        return prefs.getString("stack_widget", null);
+    }
+
+    void setStackWidget(String kind) {
+        prefs.edit().putString("stack_widget", kind).apply();
+    }
+
+    /** Whether the remote's Home button brings up Glass Home (on) or leaves Amazon's home screen (off). */
+    boolean homeButtonOpensGlassHome() {
+        return prefs.getBoolean("home_button", true);
+    }
+
+    void setHomeButtonOpensGlassHome(boolean on) {
+        prefs.edit().putBoolean("home_button", on).apply();
+    }
+
     /** When the sleep timer goes off (ms since the epoch), or 0 when it is off. */
     long sleepAt() {
         return prefs.getLong("sleep_at", 0L);

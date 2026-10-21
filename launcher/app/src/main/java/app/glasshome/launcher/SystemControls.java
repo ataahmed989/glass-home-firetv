@@ -165,24 +165,30 @@ final class SystemControls {
     }
 
     // ---- Fire TV settings screens --------------------------------------------------------------
+    // Fire OS answers some of Android's standard settings actions with an empty stand-in screen that
+    // closes at once (or nothing at all), so its own actions come first where it has them.
 
-    static Intent wifiSettings() {
-        return new Intent(Settings.ACTION_WIFI_SETTINGS);
+    static Intent[] wifiSettings() {
+        return new Intent[] {new Intent(Settings.ACTION_WIFI_SETTINGS)};
     }
 
-    static Intent bluetoothSettings() {
-        return new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
+    /** "Controllers & Bluetooth Devices": Fire OS has no screen for Android's Bluetooth action. */
+    static Intent[] bluetoothSettings() {
+        return new Intent[] {new Intent("com.amazon.device.settings.action.CONTROLLERS"),
+                new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)};
     }
 
-    static Intent displaySettings() {
-        return new Intent(Settings.ACTION_DISPLAY_SETTINGS);
+    static Intent[] displaySettings() {
+        return new Intent[] {new Intent(Settings.ACTION_DISPLAY_SETTINGS)};
     }
 
-    static Intent accessibilitySettings() {
-        return new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+    /** Android's accessibility action reaches only Fire OS's empty stand-in, which closes straight away. */
+    static Intent[] accessibilitySettings() {
+        return new Intent[] {new Intent("com.amazon.device.settings.action.ACCESSIBILITY"),
+                new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)};
     }
 
-    /** Fire TV's screen mirroring (its DisplayMirroring app), else Android's cast settings. */
+    /** Fire TV's screen mirroring screen (its DisplayMirroring app exports it, with no permission needed). */
     static Intent mirroring(Context c) {
         Intent launch = c.getPackageManager().getLaunchIntentForPackage(MIRRORING_PACKAGE);
         if (launch != null) return launch;
@@ -191,6 +197,7 @@ final class SystemControls {
 
     /** Opens the first of these that exists, then Fire TV's main settings; false if none would open. */
     static boolean open(Context c, Intent... candidates) {
+        HomeButtonService.opening(null);
         for (Intent i : candidates) {
             try {
                 c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

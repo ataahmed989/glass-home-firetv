@@ -5,19 +5,22 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 
 /**
- * Fire OS 8 is API 30, which has no live backdrop blur (RenderEffect is API 31). The hero only
- * changes on focus, so the glass instead samples a small pre-blurred copy of the current slide's
- * background, built once per change. Drawing it is a single shader fill.
+ * Fire OS 8 is API 30, which has no live backdrop blur (RenderEffect is API 31). The scene behind
+ * the glass only changes with the background or a featured title, so the glass instead samples a
+ * quarter-size, lightly blurred copy of it, built once per change off the main thread. Drawing it
+ * is a single shader fill. The frost is light, as Liquid Glass's is: shapes behind stay readable.
  */
 final class Backdrop {
-    static final int W = 240, H = 135;
+    static final int W = 480, H = 270;
+    /** Box-blur radius at quarter size: three passes come to a Gaussian of about 10 screen px. */
+    static final int RADIUS = 2;
 
     private Backdrop() {}
 
     static Bitmap render(HeroSlide slide) {
         Bitmap small = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
         HeroLayer.drawBackground(new Canvas(small), W, H, slide, new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG));
-        blur(small, 5);
+        blur(small, RADIUS);
         return small;
     }
 

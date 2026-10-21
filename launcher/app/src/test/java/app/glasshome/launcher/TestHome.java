@@ -73,8 +73,7 @@ final class TestHome {
      * {@code withTmdb}: writes an apps.json override carrying a TMDB token.
      */
     TestHome(boolean withBackground, boolean withTmdb) throws Exception {
-        TileView.swayEnabled = false;   // keeps the simulated clock exact; tiles hold a fixed tilt instead
-        WidgetPanel.rotateEnabled = false;   // and the Smart Stack stays on its first widget
+        TileView.swayEnabled = false;   // every render shows the focused tile at rest
         ImageCache.reset();
         Fixtures.install();
         Application app = RuntimeEnvironment.getApplication();
@@ -243,7 +242,7 @@ final class TestHome {
         new Canvas(backdrop).drawRect(0, 0, 1280, 720, p);
         FeaturedTitles.Title title = new FeaturedTitles.Title("Test Title", "2026", "Series",
                 "Placeholder overview used only to check the featured layout in an automated test.", "/test.jpg");
-        HeroSlide slide = HeroSlide.featured(appKey, Brand.of(appKey, brandName), null, backdrop, title);
+        HeroSlide slide = HeroSlide.featured(appKey, Brand.of(appKey, brandName), backdrop, title);
         activity.addFeaturedSlide(slide, activity.featuredGeneration());
     }
 

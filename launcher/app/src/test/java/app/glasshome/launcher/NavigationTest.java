@@ -9,6 +9,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.robolectric.Shadows.shadowOf;
 
@@ -98,6 +99,7 @@ public class NavigationTest {
     @Test
     public void heroWithActionIsReachableAndLinksToWeather() throws Exception {
         TestHome h = new TestHome();
+        h.press(KEYCODE_DPAD_RIGHT);            // FirePlayer
         h.press(KEYCODE_DPAD_RIGHT);            // Netflix
         TestHome.advance(Ui.HERO_DWELL_MS + 50);
         h.injectFeaturedSlide("com.netflix.ninja", "Netflix");
@@ -112,7 +114,7 @@ public class NavigationTest {
         assertEquals(Zone.HERO, h.zone());
         h.press(KEYCODE_DPAD_DOWN);
         assertEquals(Zone.GRID, h.zone());
-        assertEquals(1, h.focused());
+        assertEquals(2, h.focused());
 
         // Select on the hero opens the presented app, once
         h.press(KEYCODE_DPAD_UP);
@@ -146,7 +148,7 @@ public class NavigationTest {
     }
 
     @Test
-    public void backUnwindsFromLowerRowsThenLeavesAtRoot() throws Exception {
+    public void backUnwindsFromLowerRowsThenStopsAtRoot() throws Exception {
         TestHome h = new TestHome();
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_RIGHT);
@@ -157,7 +159,8 @@ public class NavigationTest {
         assertEquals("Back returns to the first row, same column as before", 2, h.focused());
         assertFalse(h.activity.isFinishing());
         h.back();
-        assertTrue("at the root, Back behaves as for any app (this test build is not the default home)", h.activity.isFinishing());
+        assertFalse("at the root, Back stays: a home screen has nothing behind it", h.activity.isFinishing());
+        assertEquals(2, h.focused());
     }
 
     @Test
@@ -176,12 +179,12 @@ public class NavigationTest {
     @Test
     public void selectActivatesOncePerPressEvenWhenHeld() throws Exception {
         TestHome h = new TestHome();
-        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);            // FirePlayer, second after TiviMate
         h.hold(KEYCODE_DPAD_CENTER, 1500, 50);
         ShadowActivity sa = shadowOf(h.activity);
         Intent started = sa.getNextStartedActivity();
         assertNotNull(started);
-        assertEquals("com.netflix.ninja", started.getComponent().getPackageName());
+        assertEquals("app.fireplayer", started.getComponent().getPackageName());
         assertNull("one launch per press", sa.getNextStartedActivity());
         // A select whose press was cancelled does nothing
         long t = SystemClock.uptimeMillis();
@@ -209,20 +212,16 @@ public class NavigationTest {
     }
 
     @Test
-    public void heroFollowsFocusOnlyAfterItRests() throws Exception {
+    public void movingAcrossAppsLeavesTheBackgroundAlone() throws Exception {
         TestHome h = new TestHome();
-        assertEquals("app.fireplayer", h.stage.current().appKey);
-        long t = SystemClock.uptimeMillis();
-        h.activity.dispatchKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KEYCODE_DPAD_RIGHT, 0));
-        h.activity.dispatchKeyEvent(new KeyEvent(t, t + 30, KeyEvent.ACTION_UP, KEYCODE_DPAD_RIGHT, 0));
-        TestHome.advance(200);
-        assertEquals("not yet: still the previous app", "app.fireplayer", h.stage.current().appKey);
-        h.activity.dispatchKeyEvent(new KeyEvent(t + 250, t + 250, KeyEvent.ACTION_DOWN, KEYCODE_DPAD_RIGHT, 0));
-        h.activity.dispatchKeyEvent(new KeyEvent(t + 250, t + 280, KeyEvent.ACTION_UP, KEYCODE_DPAD_RIGHT, 0));
-        TestHome.advance(300);
-        assertEquals("the Netflix update was cancelled", "app.fireplayer", h.stage.current().appKey);
-        TestHome.advance(200);
-        assertEquals("com.amazon.firetv.youtube", h.stage.current().appKey);
+        HeroSlide before = h.stage.current();
+        assertNotNull(before);
+        assertFalse("nothing about the focused app is shown", before.isFeatured());
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_DOWN);
+        TestHome.advance(Ui.HERO_DWELL_MS + Ui.CONTENT_FADE_MS + 100);
+        assertSame("the same background, not redrawn", before, h.stage.current());
     }
 
     @Test
@@ -259,9 +258,12 @@ public class NavigationTest {
         assertEquals("no third row any more", 11, h.focused());
     }
 
-    /** Home belongs to Fire OS: the launcher neither consumes the key nor registers as a home screen. */
+    /**
+     * The Home key itself is never intercepted (Fire OS handles it, long press included); Glass Home
+     * is a home screen that the system, and HomeButtonService, can bring up.
+     */
     @Test
-    public void homeButtonIsLeftToTheSystem() throws Exception {
+    public void homeKeyIsLeftToTheSystem() throws Exception {
         TestHome h = new TestHome();
         h.press(KEYCODE_DPAD_RIGHT);
         long t = SystemClock.uptimeMillis();
@@ -271,7 +273,32 @@ public class NavigationTest {
         assertEquals("nothing moved", 1, h.focused());
         assertFalse(h.activity.isFinishing());
         Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(h.activity.getPackageName());
-        assertTrue("not registered as a home screen", h.activity.getPackageManager().queryIntentActivities(home, 0).isEmpty());
+        assertFalse("registered as a home screen", h.activity.getPackageManager().queryIntentActivities(home, 0).isEmpty());
+    }
+
+    /** What HomeButtonService does when the Home button showed Amazon's home: back to Home, everything closed. */
+    @Test
+    public void homeButtonReturnsToHomeWithEverythingClosed() throws Exception {
+        TestHome h = new TestHome();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals("forecast open", Zone.OVERLAY, h.zone());
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("on the Sports tab", HomeActivity.SPORTS, h.activity.page());
+
+        h.controller.pause();
+        h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
+        h.controller.resume();
+        TestHome.settle();
+        assertEquals(HomeActivity.HOME, h.activity.page());
+        assertFalse(h.detail.isOpen());
+        assertEquals("back on the apps, where focus was", Zone.GRID, h.zone());
+        assertEquals(2, h.focused());
     }
 
     private static void uninstall(TestHome h, String pkg) throws Exception {

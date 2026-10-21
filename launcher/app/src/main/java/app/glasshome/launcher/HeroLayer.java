@@ -4,12 +4,12 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.ComposeShader;
 import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.RadialGradient;
-import android.graphics.Rect;
+import android.graphics.PorterDuff;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.text.Layout;
@@ -19,27 +19,21 @@ import android.text.TextUtils;
 import android.view.View;
 
 /**
- * Draws one {@link HeroSlide} full screen. Text sits in the content column on the left
- * (x 106–1415); the column to its right is reserved for the weather card.
+ * Draws one {@link HeroSlide} full screen: the background, and for a featured title its text in
+ * the content column on the left (x 106–1415); the column to its right is reserved for the widgets.
  */
 final class HeroLayer extends View {
     private final Paint background = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-    private final Paint card = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-    private final Paint cardShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint cardRim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint label = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint title = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint meta = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint body = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint credit = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final TextPaint name = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final TextPaint description = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint action = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Paint actionFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint actionRim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path play = new Path();
     private final RectF rect = new RectF();
-    private final Matrix matrix = new Matrix();
     private HeroSlide slide;
     private StaticLayout bodyLayout;
     private boolean actionFocused;
@@ -56,16 +50,6 @@ final class HeroLayer extends View {
         style(credit, context, 400, 16, 0x73FFFFFF);
         // A soft shadow under every line of featured text, for artwork with bright patches
         for (TextPaint t : new TextPaint[] {label, title, meta, body}) t.setShadowLayer(Ui.px(10), 0, Ui.px(1), 0x99000000);
-        style(name, context, 600, 52, 0xFFFFFFFF);
-        name.setTextAlign(Paint.Align.CENTER);
-        name.setLetterSpacing(-0.02f);
-        style(description, context, 400, 26, 0xC2FFFFFF);
-        description.setTextAlign(Paint.Align.CENTER);
-        cardShadow.setColor(0xFF000000);
-        cardShadow.setShadowLayer(Ui.px(34), 0, Ui.px(14), 0x99000000);
-        cardRim.setStyle(Paint.Style.STROKE);
-        cardRim.setStrokeWidth(Math.max(1.5f, Ui.px(1.5f)));
-        cardRim.setColor(0x33FFFFFF);
         style(action, context, 600, 22, 0xFFFFFFFF);
         actionRim.setStyle(Paint.Style.STROKE);
         actionRim.setStrokeWidth(Math.max(1.5f, Ui.px(1.5f)));
@@ -99,88 +83,44 @@ final class HeroLayer extends View {
         invalidate();
     }
 
-    /** Background, motif and scrims only; also used at 240x135 to build the glass backdrop. */
+    /**
+     * Background and scrims only, in one pass (the scrims multiply into the picture's shader rather
+     * than being layers of their own); also used at 240x135 to build the glass backdrop.
+     */
     static void drawBackground(Canvas c, int w, int h, HeroSlide s, Paint p) {
+        Shader picture;
         if (s.background != null) {
             Bitmap b = s.background;
             float scale = Math.max(w / (float) b.getWidth(), h / (float) b.getHeight());
-            int sw = Math.round(w / scale), sh = Math.round(h / scale);
-            int sx = (b.getWidth() - sw) / 2, sy = (b.getHeight() - sh) / 2;
-            c.drawBitmap(b, new Rect(sx, sy, sx + sw, sy + sh), new Rect(0, 0, w, h), p);
-            // Left scrim keeps the featured text readable on bright artwork
-            p.setShader(new LinearGradient(0, 0, w * 0.70f, 0, new int[] {0xD9000000, 0x8C000000, 0x00000000},
-                    new float[] {0f, 0.45f, 1f}, Shader.TileMode.CLAMP));
-            c.drawRect(0, 0, w, h, p);
+            BitmapShader art = new BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            Matrix m = new Matrix();
+            m.setScale(scale, scale);
+            m.postTranslate((w - b.getWidth() * scale) / 2f, (h - b.getHeight() * scale) / 2f);
+            art.setLocalMatrix(m);
+            picture = art;
+            if (s.isFeatured()) {
+                // Left scrim keeps the featured text readable on bright artwork
+                picture = new ComposeShader(picture, new LinearGradient(0, 0, w * 0.70f, 0,
+                        new int[] {FeaturePainter.through(0xD9), FeaturePainter.through(0x8C), FeaturePainter.through(0)},
+                        new float[] {0f, 0.45f, 1f}, Shader.TileMode.CLAMP), PorterDuff.Mode.MULTIPLY);
+            }
         } else {
-            Brand b = s.brand;
-            p.setShader(new LinearGradient(0, 0, w, h, b.start, b.end, Shader.TileMode.CLAMP));
-            c.drawRect(0, 0, w, h, p);
-            p.setShader(new RadialGradient(w * 0.80f, h * 0.22f, w * 0.62f, withAlpha(b.glow, 0x59), withAlpha(b.glow, 0), Shader.TileMode.CLAMP));
-            c.drawRect(0, 0, w, h, p);
-            p.setShader(new RadialGradient(w * 0.10f, h * 0.95f, w * 0.50f, withAlpha(b.glow, 0x24), withAlpha(b.glow, 0), Shader.TileMode.CLAMP));
-            c.drawRect(0, 0, w, h, p);
-            p.setShader(null);
-            motif(c, w, h, b, p);
+            // Until the background has decoded: quiet graphite, never the app's colours
+            picture = new LinearGradient(0, 0, w, h, 0xFF16181E, 0xFF0B0C10, Shader.TileMode.CLAMP);
         }
         // Dark gradient toward the bottom, behind the dock
-        p.setShader(new LinearGradient(0, h * 0.40f, 0, h, new int[] {0x00000000, 0x4D000000, 0xC7000000},
-                new float[] {0f, 0.43f, 1f}, Shader.TileMode.CLAMP));
+        p.setShader(new ComposeShader(picture, new LinearGradient(0, h * 0.40f, 0, h,
+                new int[] {FeaturePainter.through(0), FeaturePainter.through(0x4D), FeaturePainter.through(0xC7)},
+                new float[] {0f, 0.43f, 1f}, Shader.TileMode.CLAMP), PorterDuff.Mode.MULTIPLY));
         c.drawRect(0, 0, w, h, p);
         p.setShader(null);
-    }
-
-    /** Static, subtle texture per kind of app; nothing here animates. */
-    private static void motif(Canvas c, int w, int h, Brand b, Paint p) {
-        p.setStyle(Paint.Style.STROKE);
-        switch (b.kind) {
-            case MUSIC:
-                // Faint concentric grooves
-                p.setStrokeWidth(Math.max(1f, w * 0.0014f));
-                p.setColor(0x10FFFFFF);
-                for (float r = w * 0.05f; r < w * 0.46f; r += w * 0.026f) c.drawCircle(w * 0.80f, h * 0.34f, r, p);
-                break;
-            case GAMES:
-                // Two soft diagonal light bands
-                p.setStyle(Paint.Style.FILL);
-                c.save();
-                c.rotate(-24f, w / 2f, h / 2f);
-                for (float x : new float[] {0.58f, 0.70f}) {
-                    p.setShader(new LinearGradient(w * x, 0, w * (x + 0.06f), 0,
-                            new int[] {0x00FFFFFF, 0x14FFFFFF, 0x00FFFFFF}, null, Shader.TileMode.CLAMP));
-                    c.drawRect(w * x, -h, w * (x + 0.06f), h * 2, p);
-                }
-                p.setShader(null);
-                c.restore();
-                break;
-            case LIVE:
-                // Fine broadcast lines across the upper half
-                p.setStrokeWidth(Math.max(1f, h * 0.0012f));
-                p.setColor(0x0AFFFFFF);
-                for (float y = h * 0.05f; y < h * 0.55f; y += h * 0.012f) c.drawLine(0, y, w, y, p);
-                break;
-            default:
-                break;
-        }
-        p.setStyle(Paint.Style.FILL);
-    }
-
-    private static int withAlpha(int color, int alpha) {
-        return (color & 0x00FFFFFF) | (alpha << 24);
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         if (slide == null) return;
         drawBackground(canvas, getWidth(), getHeight(), slide, background);
-        if (slide.isFeatured()) {
-            drawFeatured(canvas);
-        } else if (slide.brand.kind == Brand.Kind.UTILITY) {
-            drawUtility(canvas);
-        } else {
-            // Branded fallback: the app's logo card, low on the left, above the dock
-            int w = Ui.px(400), h = Math.round(w * 0.6f);
-            drawCard(canvas, Ui.px(Ui.CONTENT_LEFT), Ui.px(Ui.CONTENT_BOTTOM) - h, w, h, slide.logo);
-        }
+        if (slide.isFeatured()) drawFeatured(canvas);
     }
 
     /** Laid out bottom-up from y = 735 so the block always ends just above the dock. */
@@ -233,36 +173,5 @@ final class HeroLayer extends View {
         Paint.FontMetrics fm = action.getFontMetrics();
         canvas.drawText(text, ix + icon + gap, cy - (fm.ascent + fm.descent) / 2f, action);
         return rect.right;
-    }
-
-    /** Centred icon, name and a one-line description in the content column. */
-    private void drawUtility(Canvas canvas) {
-        float cx = Ui.px((Ui.CONTENT_LEFT + Ui.CONTENT_RIGHT) / 2f);
-        int w = Ui.px(360), h = Math.round(w * 0.6f);
-        drawCard(canvas, Math.round(cx - w / 2f), Ui.px(250), w, h, slide.logo);
-        canvas.drawText(slide.brand.name, cx, Ui.px(250) + h + Ui.px(86), name);
-        if (slide.brand.description != null) {
-            CharSequence d = TextUtils.ellipsize(slide.brand.description, description, Ui.px(1100), TextUtils.TruncateAt.END);
-            canvas.drawText(d.toString(), cx, Ui.px(250) + h + Ui.px(134), description);
-        }
-    }
-
-    /** The app's 800x480 art at a modest size, rounded, never stretched or blurred. */
-    private void drawCard(Canvas canvas, int left, int top, int w, int h, Bitmap art) {
-        float r = Ui.px(24);
-        rect.set(left, top, left + w, top + h);
-        canvas.drawRoundRect(rect, r, r, cardShadow);
-        if (art != null) {
-            BitmapShader shader = new BitmapShader(art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-            float s = w / (float) art.getWidth();
-            matrix.setScale(s, s);
-            matrix.postTranslate(left, top);
-            shader.setLocalMatrix(matrix);
-            card.setShader(shader);
-            canvas.drawRoundRect(rect, r, r, card);
-        }
-        float inset = cardRim.getStrokeWidth() / 2f;
-        rect.inset(inset, inset);
-        canvas.drawRoundRect(rect, r - inset, r - inset, cardRim);
     }
 }

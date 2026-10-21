@@ -29,13 +29,17 @@ import java.util.Locale;
 /**
  * The widgets beside the focused app's content, in the layout chosen in Home Screen settings:
  *
- * - Smart Stack: one card that turns over every ten seconds between the weather card, your
- *   next game, Continue Watching and the date. Right turns it by hand while it has focus.
+ * - Smart Stack: one card showing one widget at a time (the weather card, your next game,
+ *   Continue Watching or the date). It never turns by itself: with focus on it, Play/Pause (or
+ *   Right, or fast-forward) scrolls to the next widget and rewind to the previous one, and it
+ *   stays on the widget chosen, across restarts too.
  * - Glances: four small squares (date and sunset, weather, next game, Continue Watching), each
  *   focused in turn with the arrows.
  *
- * It is one focus target that keeps its own position, moved by HomeActivity. Everything shown
- * is real: the weather from Open-Meteo, games from ESPN, Continue Watching from what played here;
+ * It is one focus target that keeps its own position, moved by HomeActivity. It draws into its
+ * own GPU layer, redrawn only when something on it changes; the view reaches {@link #PAD} past the
+ * widgets on every side so a focused square's growth and shadow fit inside that layer. Everything
+ * shown is real: the weather from Open-Meteo, games from ESPN, Continue Watching from what played here;
  * a widget with nothing to show says so rather than making something up.
  */
 final class WidgetPanel extends View {
@@ -46,10 +50,10 @@ final class WidgetPanel extends View {
 
     private static final Kind[] GLANCE_ORDER = {Kind.DATE, Kind.WEATHER, Kind.GAME, Kind.CONTINUE};
 
-    /** Tests switch the timed turning off, so each render shows a known widget. */
-    static boolean rotateEnabled = true;
-    private static final long ROTATE_MS = 10_000, TURN_MS = 600;
-    private static final int CARD_R = 34, SQUARE = 190, GAP = 25, SQUARE_R = 30;
+    private static final long TURN_MS = 520;
+    private static final int CARD_R = 40, SQUARE = 190, GAP = 25, SQUARE_R = 38;
+    /** Room around the widgets (design px), part of the view, for the focused square's growth and shadow. */
+    static final int PAD = 40;
     private static final DateTimeFormatter UPDATED = DateTimeFormatter.ofPattern("h:mm a", Locale.US).withZone(Weather.ZONE);
 
     private final Glass glass;
@@ -67,7 +71,10 @@ final class WidgetPanel extends View {
     private final RectF r = new RectF(), box = new RectF();
     private final Matrix matrix = new Matrix();
     private final Path path = new Path();
+    private final Path card = new Path();
     private final Context context;
+    private final HomeSettings settings;
+    private final int pad = Ui.px(PAD);
 
     private Weather.Data weather;
     private boolean weatherFailed;
@@ -75,8 +82,10 @@ final class WidgetPanel extends View {
     private WatchHistory.Entry watching;
     private String layout = STACK;
 
-    // Smart Stack: the page shown, and the one it is turning from
-    private int page, fromPage = -1;
+    // Smart Stack: the widget chosen (null: the first), and the one it is scrolling away from
+    private Kind chosen;
+    private Kind fromKind;
+    private int turnDirection = 1;   // 1: the next widget comes up from below; -1: down from above
     private float turn = 1f;
     private ValueAnimator turnAnim;
     // Glances: the focused square, eased in
@@ -84,26 +93,24 @@ final class WidgetPanel extends View {
     private float squareT = 1f;
     private ValueAnimator squareAnim;
 
-    private final Runnable rotate = new Runnable() {
-        @Override
-        public void run() {
-            if (STACK.equals(layout) && !isFocused() && pages().size() > 1) turnTo((page + 1) % pages().size());
-            schedule();
-        }
-    };
-
     WidgetPanel(Context context, Glass glass) {
         super(context);
         this.context = context;
         this.glass = glass;
+        settings = new HomeSettings(context);
         images = ImageCache.get(context);
+        try {
+            chosen = settings.stackWidget() == null ? null : Kind.valueOf(settings.stackWidget());
+        } catch (IllegalArgumentException e) {
+            chosen = null;
+        }
         setFocusable(true);
         setDefaultFocusHighlightEnabled(false);
         setContentDescription("Widgets");
         setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View view, Outline outline) {
-                if (STACK.equals(layout)) outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), Ui.px(CARD_R));
+                if (STACK.equals(layout)) outline.setRoundRect(pad, pad, view.getWidth() - pad, view.getHeight() - pad, Ui.px(CARD_R));
                 else outline.setEmpty();
             }
         });
@@ -115,6 +122,7 @@ final class WidgetPanel extends View {
         rim.setColor(0x24FFFFFF);
         panelFill.setColor(0x26000000);
         shadow.setColor(0xFF000000);
+        setLayerType(LAYER_TYPE_HARDWARE, null);
     }
 
     // ---- Content ----------------------------------------------------------------------------
@@ -123,13 +131,11 @@ final class WidgetPanel extends View {
         String next = GLANCES.equals(l) ? GLANCES : STACK;
         if (next.equals(layout)) return;
         layout = next;
-        page = 0;
-        fromPage = -1;
+        fromKind = null;
         turn = 1f;
         setScaleX(1f);
         setScaleY(1f);
         invalidateOutline();
-        schedule();
         invalidate();
     }
 
@@ -163,9 +169,7 @@ final class WidgetPanel extends View {
 
     /** Your team's live or next game, or null when none of them has one coming up. */
     void setGame(Sports.Game g) {
-        Kind shown = currentKind();
         game = g;
-        keepPage(shown);
         invalidate();
     }
 
@@ -175,9 +179,7 @@ final class WidgetPanel extends View {
 
     /** The most recent unfinished title watched on this TV, or null. */
     void setWatching(WatchHistory.Entry e) {
-        Kind shown = currentKind();
         watching = e;
-        keepPage(shown);
         invalidate();
     }
 
@@ -195,17 +197,10 @@ final class WidgetPanel extends View {
         return list;
     }
 
+    /** The chosen widget while it has something to show (a game, say); otherwise the first, until it does again. */
     private Kind currentKind() {
         List<Kind> p = pages();
-        return p.get(Math.min(page, p.size() - 1));
-    }
-
-    /** When pages come and go, the stack stays on the widget it was showing. */
-    private void keepPage(Kind shown) {
-        int i = pages().indexOf(shown);
-        page = i >= 0 ? i : 0;
-        fromPage = -1;
-        turn = 1f;
+        return chosen != null && p.contains(chosen) ? chosen : p.get(0);
     }
 
     /** The widget that Select acts on. */
@@ -235,12 +230,45 @@ final class WidgetPanel extends View {
             return true;
         }
         if (direction == View.FOCUS_RIGHT) {
-            // Turning the stack by hand
-            int n = pages().size();
-            if (n > 1) turnTo((page + 1) % n);
+            turn(1);   // the right edge of the screen: Right turns the stack instead
             return true;
         }
         return false;
+    }
+
+    /**
+     * Play/Pause on the Smart Stack: scrolls to the next widget ({@code step} 1) or the previous
+     * (-1). False in Glances, where every widget is already in view.
+     */
+    boolean turn(int step) {
+        if (GLANCES.equals(layout)) return false;
+        List<Kind> p = pages();
+        if (p.size() < 2) return true;
+        Kind from = currentKind();
+        int n = p.size();
+        Kind next = p.get(((p.indexOf(from) + step) % n + n) % n);
+        chosen = next;
+        settings.setStackWidget(next.name());
+        if (turnAnim != null) turnAnim.cancel();
+        if (Ui.reducedMotion) {
+            fromKind = null;
+            turn = 1f;
+            invalidate();
+            return true;
+        }
+        fromKind = from;
+        turnDirection = step >= 0 ? 1 : -1;
+        turn = 0f;
+        turnAnim = ValueAnimator.ofFloat(0f, 1f);
+        turnAnim.setDuration(TURN_MS);
+        turnAnim.setInterpolator(Ui.EASE);
+        turnAnim.addUpdateListener(a -> {
+            turn = (float) a.getAnimatedValue();
+            if (turn >= 1f) fromKind = null;
+            invalidate();
+        });
+        turnAnim.start();
+        return true;
     }
 
     int focusedSquare() {
@@ -267,54 +295,6 @@ final class WidgetPanel extends View {
         squareAnim.start();
     }
 
-    private void turnTo(int next) {
-        if (next == page) return;
-        fromPage = page;
-        page = next;
-        if (turnAnim != null) turnAnim.cancel();
-        if (Ui.reducedMotion) {
-            turn = 1f;
-            fromPage = -1;
-            invalidate();
-            return;
-        }
-        turn = 0f;
-        turnAnim = ValueAnimator.ofFloat(0f, 1f);
-        turnAnim.setDuration(TURN_MS);
-        turnAnim.setInterpolator(Ui.EASE);
-        turnAnim.addUpdateListener(a -> {
-            turn = (float) a.getAnimatedValue();
-            if (turn >= 1f) fromPage = -1;
-            invalidate();
-        });
-        turnAnim.start();
-    }
-
-    private void schedule() {
-        removeCallbacks(rotate);
-        if (STACK.equals(layout) && rotateEnabled && !Ui.reducedMotion && isAttachedToWindow() && getVisibility() == VISIBLE) {
-            postDelayed(rotate, ROTATE_MS);
-        }
-    }
-
-    @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        schedule();
-    }
-
-    @Override
-    protected void onDetachedFromWindow() {
-        removeCallbacks(rotate);
-        super.onDetachedFromWindow();
-    }
-
-    @Override
-    protected void onVisibilityChanged(View changedView, int visibility) {
-        super.onVisibilityChanged(changedView, visibility);
-        schedule();
-    }
-
     @Override
     protected void onFocusChanged(boolean gainFocus, int direction, Rect previouslyFocusedRect) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect);
@@ -328,7 +308,6 @@ final class WidgetPanel extends View {
             square = -1;
             setSquare(s0);
         }
-        schedule();
         invalidate();
     }
 
@@ -336,33 +315,53 @@ final class WidgetPanel extends View {
 
     @Override
     protected void onDraw(Canvas c) {
-        if (GLANCES.equals(layout)) {
-            drawGlances(c);
-            return;
-        }
-        int w = getWidth(), h = getHeight();
+        int save = c.save();
+        c.translate(pad, pad);
+        if (GLANCES.equals(layout)) drawGlances(c);
+        else drawStack(c);
+        c.restoreToCount(save);
+    }
+
+    private void drawStack(Canvas c) {
+        int w = getWidth() - 2 * pad, h = getHeight() - 2 * pad;
         List<Kind> p = pages();
-        if (fromPage >= 0 && fromPage < p.size() && turn < 1f) {
-            drawCard(c, p.get(fromPage), w, h);
-            int layer = c.saveLayerAlpha(0, 0, w, h, Math.round(255 * turn));
-            drawCard(c, currentKind(), w, h);
-            c.restoreToCount(layer);
+        Kind now = currentKind();
+        boolean turning = fromKind != null && turn < 1f && p.contains(fromKind);
+        float radius = Ui.px(CARD_R);
+        // One glass card; its tint follows the widgets across a turn
+        r.set(0, 0, w, h);
+        glass.draw(c, r, radius, getLeft() + pad, getTop() + pad, 0f, turning ? tintBetween(fromKind, now, turn, h) : tintFor(now, w, h));
+        if (turning) {
+            // The widgets scroll past each other inside the card, the old one fading as it goes
+            card.reset();
+            card.addRoundRect(r, radius, radius, Path.Direction.CW);
+            int save = c.save();
+            c.clipPath(card);
+            float travel = h * 0.45f * turnDirection;
+            drawScrolled(c, fromKind, w, h, -travel * turn, Math.max(0f, 1f - turn * 1.6f));
+            drawScrolled(c, now, w, h, travel * (1f - turn), Math.min(1f, turn * 1.25f));
+            c.restoreToCount(save);
         } else {
-            drawCard(c, currentKind(), w, h);
+            drawCard(c, now, w, h);
         }
         if (isFocused()) {
             float in = edge.getStrokeWidth() / 2f;
             r.set(in, in, w - in, h - in);
-            c.drawRoundRect(r, Ui.px(CARD_R) - in, Ui.px(CARD_R) - in, edge);
+            c.drawRoundRect(r, radius - in, radius - in, edge);
         }
-        if (p.size() > 1) drawDots(c, p.size(), w, h);
+        if (p.size() > 1) drawDots(c, p, now, w, h);
     }
 
-    /** One full-size Smart Stack card. */
+    private void drawScrolled(Canvas c, Kind kind, int w, int h, float dy, float alpha) {
+        if (alpha <= 0f) return;
+        int layer = c.saveLayerAlpha(0, 0, w, h, Math.round(255 * alpha));
+        c.translate(0, dy);
+        drawCard(c, kind, w, h);
+        c.restoreToCount(layer);
+    }
+
+    /** One full-size Smart Stack widget, drawn over the card's glass. */
     private void drawCard(Canvas c, Kind kind, int w, int h) {
-        r.set(0, 0, w, h);
-        float radius = Ui.px(CARD_R);
-        glass.draw(c, r, radius, getLeft(), getTop(), 0f, tintFor(kind, w, h));
         switch (kind) {
             case WEATHER:
                 drawWeatherLarge(c, w, h);
@@ -379,11 +378,12 @@ final class WidgetPanel extends View {
         }
     }
 
-    private void drawDots(Canvas c, int n, int w, int h) {
+    private void drawDots(Canvas c, List<Kind> p, Kind now, int w, int h) {
+        int n = p.size();
         float d = Ui.px(7), gap = Ui.px(9), x = w - Ui.px(16);
         float total = n * d + (n - 1) * gap, y = h / 2f - total / 2f;
         for (int i = 0; i < n; i++) {
-            fill.setColor(i == page ? 0xF2FFFFFF : 0x59FFFFFF);
+            fill.setColor(p.get(i) == now ? 0xF2FFFFFF : 0x59FFFFFF);
             c.drawCircle(x, y + d / 2f, d / 2f, fill);
             y += d + gap;
         }
@@ -410,7 +410,7 @@ final class WidgetPanel extends View {
             shadow.clearShadowLayer();
         }
         Kind kind = GLANCE_ORDER[i];
-        glass.draw(c, r, radius, getLeft() + x, getTop() + y, 0f, tintFor(kind, s, s));
+        glass.draw(c, r, radius, getLeft() + pad + x, getTop() + pad + y, 0f, tintFor(kind, s, s));
         switch (kind) {
             case WEATHER:
                 drawWeatherSmall(c, s);
@@ -435,34 +435,43 @@ final class WidgetPanel extends View {
         c.restore();
     }
 
-    /** The card's colour: the weather's own tint, team colours for a game, quiet graphite otherwise. */
+    /** The weather's own colour washed over the glass; the other widgets are plain glass. */
     private Paint tintFor(Kind kind, float w, float h) {
-        int top, bottom;
-        if (kind == Kind.WEATHER && weather != null) {
-            int[] tc = tintColors(weather);
-            top = tc[0];
-            bottom = tc[1];
-        } else if (kind == Kind.DATE) {
-            top = 0xA6262B3A;
-            bottom = 0xC7161A24;
-        } else {
-            top = 0xA6242730;
-            bottom = 0xCC121419;
-        }
-        tint.setShader(new LinearGradient(0, 0, 0, h, top, bottom, Shader.TileMode.CLAMP));
+        int[] tc = tintOf(kind);
+        tint.setShader(new LinearGradient(0, 0, 0, h, tc[0], tc[1], Shader.TileMode.CLAMP));
         return tint;
     }
 
+    /** Partway through a turn: the two widgets' tints blended. */
+    private Paint tintBetween(Kind from, Kind to, float t, float h) {
+        int[] a = tintOf(from), b = tintOf(to);
+        tint.setShader(new LinearGradient(0, 0, 0, h, blend(a[0], b[0], t), blend(a[1], b[1], t), Shader.TileMode.CLAMP));
+        return tint;
+    }
+
+    private int[] tintOf(Kind kind) {
+        if (kind == Kind.WEATHER && weather != null) return tintColors(weather);
+        return new int[] {0x00000000, 0x00000000};
+    }
+
+    private static int blend(int a, int b, float t) {
+        int r = 0;
+        for (int shift = 0; shift < 32; shift += 8) {
+            int x = (a >>> shift) & 0xFF, y = (b >>> shift) & 0xFF;
+            r |= (Math.round(x + (y - x) * t) & 0xFF) << shift;
+        }
+        return r;
+    }
+
     /**
-     * Top and bottom tint for the conditions. Translucent so the blurred backdrop still shows
-     * through, and darker than the source colours so white text stays readable: sky blue when
-     * clear by day, grey when cloudy or wet (after Jack Labbe's weather-app-clone, MIT), and the
-     * mockup's slate blue at night.
+     * Top and bottom tint for the conditions, a wash over the glass that still lets the scene show
+     * through: sky blue when clear by day, grey when cloudy or wet (after Jack Labbe's
+     * weather-app-clone, MIT), and the mockup's slate blue at night.
      */
     static int[] tintColors(Weather.Data d) {
-        if (d == null || !d.day) return new int[] {0xB3364663, 0xC71E2638};
-        if (d.code <= 1) return new int[] {0xCC6F86D6, 0xD9004FB8};
-        return new int[] {0xCC7D8792, 0xD9434B55};
+        if (d == null || !d.day) return new int[] {0x66364663, 0x8C1E2638};
+        if (d.code <= 1) return new int[] {0x736F86D6, 0x99004FB8};
+        return new int[] {0x737D8792, 0x99434B55};
     }
 
     private void text(int weight, float size, int color, Paint.Align align) {

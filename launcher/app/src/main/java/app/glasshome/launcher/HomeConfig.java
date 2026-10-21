@@ -16,7 +16,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** App order and options from apps.json; a copy in the app's external files dir overrides the bundled one. */
+/**
+ * App order and options from apps.json. A copy of it in the app's private files (written with
+ * {@code adb shell run-as}; Fire OS lets ADB into nothing else) or in its external files folder
+ * overrides the bundled one.
+ */
 final class HomeConfig {
     final List<String> order = new ArrayList<>();
     final Set<String> hidden = new HashSet<>();
@@ -42,10 +46,13 @@ final class HomeConfig {
     }
 
     static HomeConfig load(Context context) {
-        File custom = new File(context.getExternalFilesDir(null), "apps.json");
+        File external = context.getExternalFilesDir(null);
+        File[] custom = {new File(context.getFilesDir(), "apps.json"), external == null ? null : new File(external, "apps.json")};
         try {
-            String text = custom.isFile() ? read(new FileInputStream(custom)) : read(context.getAssets().open("apps.json"));
-            return new HomeConfig(new JSONObject(text));
+            for (File f : custom) {
+                if (f != null && f.isFile()) return new HomeConfig(new JSONObject(read(new FileInputStream(f))));
+            }
+            return new HomeConfig(new JSONObject(read(context.getAssets().open("apps.json"))));
         } catch (Exception e) {
             try {
                 return new HomeConfig(new JSONObject(read(context.getAssets().open("apps.json"))));

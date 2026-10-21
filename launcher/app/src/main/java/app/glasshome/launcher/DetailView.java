@@ -16,7 +16,6 @@ final class DetailView extends View {
     private final FeaturePainter painter;
     private final ImageCache images;
     private final TextPaint credit = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint dim = new Paint();
     private final Runnable invalidator = this::invalidate;
     private PageModel.Feature feature;
     private String creditText = "";
@@ -28,7 +27,6 @@ final class DetailView extends View {
         images = ImageCache.get(context);
         FeaturePainter.style(credit, context, 400, 17, 0x8CFFFFFF);
         credit.setTextAlign(Paint.Align.RIGHT);
-        dim.setColor(0x33000000);
         setFocusable(true);
         setDefaultFocusHighlightEnabled(false);
         setVisibility(GONE);
@@ -79,8 +77,7 @@ final class DetailView extends View {
         if (feature == null) return;
         int w = getWidth(), h = getHeight();
         Bitmap art = feature.imageUrl == null ? null : images.get(feature.imageUrl, w, false, invalidator);
-        painter.drawBackground(c, w, h, feature, art);
-        c.drawRect(0, 0, w, h, dim);
+        painter.drawBackground(c, w, h, feature, art, 0.2f, 1f);
         if (feature.game != null) {
             Bitmap away = images.get(Sports.logo(feature.game.away.logo, 300), Ui.px(220), true, invalidator);
             Bitmap home = images.get(Sports.logo(feature.game.home.logo, 300), Ui.px(220), true, invalidator);

@@ -43,6 +43,8 @@ final class ClockCapsule extends View {
 
     ClockCapsule(Context context, Glass glass) {
         super(context);
+        // Redrawn only when the time or focus changes; otherwise reused from its GPU layer every frame
+        setLayerType(LAYER_TYPE_HARDWARE, null);
         this.glass = glass;
         padStart = Ui.px(28);
         gap = Ui.px(20);

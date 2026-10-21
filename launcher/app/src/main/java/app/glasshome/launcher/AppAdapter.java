@@ -57,7 +57,13 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         // Each cell spans one 290 px column and one 224 px row; the tile sits centred at its top, and
         // the space under it is reserved for the name, so showing it never moves anything.
-        FrameLayout cell = new FrameLayout(parent.getContext());
+        // Rows fading out above the dock: the tile and its name never overlap, so the fade needs no offscreen pass
+        FrameLayout cell = new FrameLayout(parent.getContext()) {
+            @Override
+            public boolean hasOverlappingRendering() {
+                return false;
+            }
+        };
         cell.setClipChildren(false);
         cell.setClipToPadding(false);
         cell.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.px(Ui.ROW_PITCH)));

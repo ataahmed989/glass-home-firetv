@@ -2,12 +2,18 @@ package app.glasshome.launcher;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.ColorMatrixColorFilter;
+import android.graphics.ComposeShader;
+import android.graphics.LightingColorFilter;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PorterDuff;
 import android.graphics.RadialGradient;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.text.Layout;
@@ -16,6 +22,7 @@ import android.text.TextPaint;
 import android.text.TextUtils;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Draws a feature full screen, for a browse page's hero and for detail pages: the artwork (or, for
@@ -42,7 +49,10 @@ final class FeaturePainter {
     private final Paint logoShadow = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Path icon = new Path();
     private final RectF rect = new RectF();
-    private final Rect src = new Rect(), dst = new Rect();
+    /** Every paint the text block and a game's logos and score draw with, for {@link #setFade}. */
+    private final Paint[] fading = {label, title, meta, body, factLabel, factValue, note, button, score, teamName,
+            teamRecord, status, fill, rim, logoShadow, image};
+    private float fade = 1f;
     private StaticLayout bodyLayout;
     private String bodyText;
     private int bodyWidth, bodyLines;
@@ -75,6 +85,22 @@ final class FeaturePainter {
         rim.setStrokeWidth(Math.max(1.5f, Ui.px(1.5f)));
     }
 
+    /**
+     * Fades what {@link #drawText} and {@link #drawGame} draw next, shadows included (1 is opaque).
+     * Each paint's colour filter scales its alpha, which costs nothing extra, where fading the block
+     * as a group would mean an offscreen layer.
+     */
+    void setFade(float alpha) {
+        if (alpha == fade) return;
+        fade = alpha;
+        ColorFilter filter = alpha >= 1f ? null : new ColorMatrixColorFilter(new float[] {
+                1, 0, 0, 0, 0,
+                0, 1, 0, 0, 0,
+                0, 0, 1, 0, 0,
+                0, 0, 0, alpha, 0});
+        for (Paint p : fading) p.setColorFilter(filter);
+    }
+
     static void style(TextPaint p, Context c, int weight, float size, int color) {
         p.setTypeface(Fonts.inter(c, weight));
         p.setTextSize(Ui.px(size));
@@ -85,48 +111,83 @@ final class FeaturePainter {
 
     /** The artwork centre-cropped, a game's colours, or a neutral gradient; then the scrims. */
     void drawBackground(Canvas c, int w, int h, PageModel.Feature f, Bitmap art) {
-        if (art != null) {
-            float s = Math.max(w / (float) art.getWidth(), h / (float) art.getHeight());
-            int sw = Math.round(w / s), sh = Math.round(h / s);
-            int sx = (art.getWidth() - sw) / 2, sy = (art.getHeight() - sh) / 2;
-            src.set(sx, sy, sx + sw, sy + sh);
-            dst.set(0, 0, w, h);
-            c.drawBitmap(art, src, dst, image);
-        } else if (f != null && f.game != null) {
-            String key = f.game.id + "@" + w + "x" + h;
-            if (!key.equals(teamKey)) {
-                teamKey = key;
-                teamShaders = teamShaders(w, h, f.game);
-            }
-            for (Shader s : teamShaders) {
-                bg.setShader(s);
-                c.drawRect(0, 0, w, h, bg);
-            }
-            bg.setShader(null);
-        } else {
-            bg.setShader(new LinearGradient(0, 0, w, h, 0xFF101216, 0xFF262B34, Shader.TileMode.CLAMP));
-            c.drawRect(0, 0, w, h, bg);
-            bg.setShader(null);
-        }
-        if (w != scrimW || h != scrimH) {
-            scrimW = w;
-            scrimH = h;
-            scrimLeft = new LinearGradient(0, 0, w * 0.70f, 0, new int[] {0xD9000000, 0x8C000000, 0x00000000},
-                    new float[] {0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
-            scrimBottom = new LinearGradient(0, h * 0.40f, 0, h, new int[] {0x00000000, 0x4D000000, 0xC7000000},
-                    new float[] {0f, 0.43f, 1f}, Shader.TileMode.CLAMP);
-        }
-        scrim.setShader(scrimLeft);
-        c.drawRect(0, 0, w, h, scrim);
-        scrim.setShader(scrimBottom);
-        c.drawRect(0, 0, w, h, scrim);
+        drawBackground(c, w, h, f, art, 0f, 1f);
     }
 
-    private final Paint scrim = new Paint();
+    /**
+     * As above, darkened by {@code dim} (0–1) and drawn at {@code alpha} over what is already there.
+     * It is a single pass over the screen: the scrims are multiplied into the background's own
+     * shader and the dimming is its colour filter, where each used to be another full-screen layer
+     * for the TV's small GPU to blend.
+     */
+    void drawBackground(Canvas c, int w, int h, PageModel.Feature f, Bitmap art, float dim, float alpha) {
+        bg.setShader(background(w, h, f, art));
+        int keep = Math.round(255 * (1f - Math.max(0f, Math.min(1f, dim))));
+        if (keep != dimKeep) {
+            dimKeep = keep;
+            dimFilter = keep >= 255 ? null : new LightingColorFilter(0xFF000000 | keep * 0x010101, 0);
+        }
+        bg.setColorFilter(dimFilter);
+        bg.setAlpha(Math.round(255 * alpha));
+        c.drawRect(0, 0, w, h, bg);
+        bg.setShader(null);
+        bg.setColorFilter(null);
+        bg.setAlpha(255);
+    }
+
+    private static final Object NEUTRAL = new Object();
+    private final Object[] slotWhat = new Object[3];
+    private final int[] slotSize = new int[3];
+    private final Shader[] slotShader = new Shader[3];
+    private int slotNext, dimKeep = 255;
+    private ColorFilter dimFilter;
     private Shader scrimLeft, scrimBottom;
     private int scrimW, scrimH;
-    private String teamKey;
-    private Shader[] teamShaders;
+
+    /** The background with its scrims as one shader, kept for the last few pictures (a crossfade draws two). */
+    private Shader background(int w, int h, PageModel.Feature f, Bitmap art) {
+        Object what = art != null ? art : f != null && f.game != null ? f.game.id : NEUTRAL;
+        int size = w << 16 | h;
+        for (int i = 0; i < slotShader.length; i++) {
+            if (slotShader[i] != null && slotSize[i] == size && Objects.equals(slotWhat[i], what)) return slotShader[i];
+        }
+        Shader base;
+        if (art != null) {
+            BitmapShader s = new BitmapShader(art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            float k = Math.max(w / (float) art.getWidth(), h / (float) art.getHeight());
+            Matrix m = new Matrix();
+            m.setScale(k, k);
+            m.postTranslate((w - art.getWidth() * k) / 2f, (h - art.getHeight() * k) / 2f);
+            s.setLocalMatrix(m);
+            base = s;
+        } else if (f != null && f.game != null) {
+            Shader[] layers = teamShaders(w, h, f.game);
+            base = layers[0];
+            for (int i = 1; i < layers.length; i++) base = new ComposeShader(base, layers[i], PorterDuff.Mode.SRC_OVER);
+        } else {
+            base = new LinearGradient(0, 0, w, h, 0xFF101216, 0xFF262B34, Shader.TileMode.CLAMP);
+        }
+        if (w != scrimW || h != scrimH) {
+            // Each scrim as the share of the picture it lets through, to multiply by
+            scrimW = w;
+            scrimH = h;
+            scrimLeft = new LinearGradient(0, 0, w * 0.70f, 0, new int[] {through(0xD9), through(0x8C), through(0)},
+                    new float[] {0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
+            scrimBottom = new LinearGradient(0, h * 0.40f, 0, h, new int[] {through(0), through(0x4D), through(0xC7)},
+                    new float[] {0f, 0.43f, 1f}, Shader.TileMode.CLAMP);
+        }
+        Shader shader = new ComposeShader(new ComposeShader(base, scrimLeft, PorterDuff.Mode.MULTIPLY), scrimBottom, PorterDuff.Mode.MULTIPLY);
+        slotWhat[slotNext] = what;
+        slotSize[slotNext] = size;
+        slotShader[slotNext] = shader;
+        slotNext = (slotNext + 1) % slotShader.length;
+        return shader;
+    }
+
+    /** Black at {@code alpha} over a picture leaves 1 - alpha of it: that as an opaque grey, to multiply by. */
+    static int through(int alpha) {
+        return 0xFF000000 | (255 - alpha) * 0x010101;
+    }
 
     /** The away team's colour on the left blending into the home team's on the right, each glowing behind its logo. */
     static Shader[] teamShaders(int w, int h, Sports.Game g) {

@@ -109,10 +109,10 @@ public class SettingsTest {
 
         h.back();
         h.back();
-        for (int i = 0; i < 3; i++) h.press(KEYCODE_DPAD_RIGHT);
+        for (int i = 0; i < 4; i++) h.press(KEYCODE_DPAD_RIGHT);   // Apple TV, after TiviMate, FirePlayer, Netflix and YouTube
         TestHome.advance(Ui.HERO_DWELL_MS + 50);
         TestHome.settle();
-        assertEquals("com.apple.atve.amazon.appletv", h.stage.current().appKey);
+        assertEquals(4, h.focused());
         assertSame("the same background behind another app", glow, h.stage.current().background);
         SharedPreferences prefs = h.activity.getSharedPreferences("home", 0);
         assertEquals("3-glow.jpg", prefs.getString("background", ""));

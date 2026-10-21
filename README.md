@@ -7,9 +7,10 @@ no ads and no sponsored rows.
 
 ## What it has
 
-- **Home**: the focused app's presentation over a constant background (five included), a glass
-  dock of 5:3 app tiles six to a row, and the widgets on the right. Tiles are layered icons:
-  on focus the layers drift apart, a soft light moves across them and the edge catches a glare.
+- **Home**: a constant background (five included), or a featured title when a streaming app
+  is focused, behind a glass dock of 5:3 app tiles six to a row (TiviMate and FirePlayer
+  first), and the widgets on the right. Tiles are layered icons: on focus the layers sway a
+  little and settle, a soft light moves across them and the edge catches a glare.
 - **Tabs** at the top: Home, Movies, TV Shows and Sports. The remote's ☰ (Menu) button jumps to
   them from anywhere; pressing Up repeatedly ends there too.
 - **Movies and TV Shows** (TMDB): a hero carousel with title logos, Continue Watching, Top 10,
@@ -20,10 +21,16 @@ no ads and no sponsored rows.
 - **Continue Watching**: built only from what has actually played on this TV, read from the
   streaming apps' media sessions. Fire TV does not share Amazon's or the apps' own watch
   history with other launchers, so it starts empty and fills as you watch.
-- **Widgets**: a Smart Stack (one card that turns between weather, your next game, Continue
-  Watching and the date) or Glances (four small squares), chosen in Home Screen settings.
+- **Widgets**: a Smart Stack (one card with weather, your next game, Continue Watching and the
+  date) or Glances (four small squares), chosen in Home Screen settings. The stack turns only
+  when asked, with Play/Pause while it has focus, and stays where it was left.
 - **Control Center** from the status capsule: Sleep, Sleep Timer, Wi-Fi, Bluetooth, and
-  shortcuts to screen mirroring, accessibility, display settings and Home Screen settings.
+  shortcuts to screen mirroring, accessibility, display settings and Home Screen settings,
+  laid out on the grid of a Figma Community kit of the iOS 26 Control Center.
+- **Liquid Glass** after that kit's "Regular" material: the scene behind, lightly frosted and
+  bent at the rim, lifted by the kit's plus-lighter tint, with light caught on the top-left and
+  bottom-right edges. The focused control turns to the kit's near-white On state. Only the
+  kit's measurements and colour recipe are used; its fonts, symbols and images are not.
 
 More screens: [pages](docs/screenshots/sheet-pages.png),
 [widgets](docs/screenshots/sheet-widgets.png),
@@ -31,11 +38,13 @@ More screens: [pages](docs/screenshots/sheet-pages.png),
 
 ## Status
 
-Built and tested off the device: Robolectric renders every screen at 1920x1080 and drives it
-with remote key events (navigation, held keys, Back, the Menu button). It has **not been
-installed on the TV yet**. Still to check there: that the Home button stays Amazon's, which
-streaming apps report their titles for Continue Watching, that the Sleep permission works on
-Fire OS, and which Fire TV settings screens the Control Center shortcuts open.
+Tested off the device with Robolectric, which renders every screen at 1920x1080 and drives it
+with remote key events (navigation, held keys, Back, the Menu button), and installed on a Fire TV
+Stick 4K Plus (Fire OS 8.1.8.5): live weather, the Home button redirect, opening the Appstore
+and Settings, and both one-time permissions work there. The TV's GPU (PowerVR GE9215) is the
+limit on smoothness, so full-screen backgrounds are drawn in one pass, with their scrims and
+dimming folded in, and nothing animates behind content that is not on show. Still to check on
+the TV: which streaming apps report their titles for Continue Watching, and Sleep itself.
 
 ## Build and test
 
@@ -65,12 +74,27 @@ adb shell cmd notification allow_listener app.glasshome.launcher/app.glasshome.l
 # Control Center Sleep and Sleep Timer: allows turning the screen off, nothing else.
 # Home Screen settings > Allow Sleep gives it back, so the launcher can always be uninstalled.
 adb shell dpm set-active-admin app.glasshome.launcher/.SleepAdmin
+
+# Home button: Fire OS always sends Home to Amazon's home screen, whatever the default home app is.
+# This accessibility service notices that screen appearing and brings Glass Home forward
+# (long-press Home still opens Fire TV's quick menu). Home Screen settings > Home Button turns it off.
+# It is told which app comes to the front and when a remote key is pressed; it takes no keys,
+# reads nothing on screen and sends nothing anywhere.
+adb shell settings put secure enabled_accessibility_services app.glasshome.launcher/app.glasshome.launcher.HomeButtonService
+adb shell settings put secure accessibility_enabled 1
 ```
 
 **TMDB token** (for Movies, TV Shows and featured titles): copy
-`launcher/app/src/main/assets/apps.json`, put the token in `tmdb_api_key`, and push it to
-`/sdcard/Android/data/app.glasshome.launcher/files/apps.json`. It stays on the TV; never commit it.
-The same file sets the app order, hidden apps and `favorite_teams` (e.g. `"nfl:CIN"`).
+`launcher/app/src/main/assets/apps.json`, put the token in `tmdb_api_key`, and write it into the
+launcher's private files (Fire OS lets ADB into no other folder of the app; this works because it is
+a debug build):
+
+```sh
+adb shell "run-as app.glasshome.launcher sh -c 'mkdir -p files && cat > files/apps.json && chmod 600 files/apps.json'" < apps.json
+```
+
+It stays on the TV; never commit it. The same file sets the app order, hidden apps and
+`favorite_teams` (e.g. `"nfl:CIN"`).
 
 ## Remote
 
@@ -80,7 +104,8 @@ The same file sets the app order, hidden apps and `favorite_teams` (e.g. `"nfl:C
 | Select | Opens the focused app, title, game or widget (once per press). |
 | ☰ Menu | To the tab bar, closing anything open; again to go back down. |
 | Back | Closes what is open, then steps back toward Home. |
-| Home | Left to Fire TV. |
+| Play/Pause | On the Smart Stack, turns to the next widget (Rewind goes back). |
+| Home | Glass Home's Home page, closing anything open. Coming from another app, the screen is dark for a moment on the way. |
 
 ## Debloat
 

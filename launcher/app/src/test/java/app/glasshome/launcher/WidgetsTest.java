@@ -5,6 +5,9 @@ import static android.view.KeyEvent.KEYCODE_DPAD_DOWN;
 import static android.view.KeyEvent.KEYCODE_DPAD_LEFT;
 import static android.view.KeyEvent.KEYCODE_DPAD_RIGHT;
 import static android.view.KeyEvent.KEYCODE_DPAD_UP;
+import static android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
+import static android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE;
+import static android.view.KeyEvent.KEYCODE_MEDIA_REWIND;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -57,16 +60,22 @@ public class WidgetsTest {
     }
 
     @Test
-    public void smartStackTurnsWithRightAndOpensEachWidget() throws Exception {
+    public void smartStackTurnsOnlyWhenAskedAndOpensEachWidget() throws Exception {
         TestHome h = home();
         assertEquals(WidgetPanel.STACK, h.weather.layout());
+        TestHome.advance(60_000);
+        assertEquals("it never turns by itself", WidgetPanel.Kind.WEATHER, h.weather.focusedKind());
         h.press(KEYCODE_DPAD_UP);
         assertEquals(Zone.WEATHER, h.zone());
         assertEquals(WidgetPanel.Kind.WEATHER, h.weather.focusedKind());
         h.capture("widgets-stack-1-weather.png");
 
-        h.press(KEYCODE_DPAD_RIGHT);
-        assertEquals(WidgetPanel.Kind.GAME, h.weather.focusedKind());
+        // Mid-scroll: the weather leaving upwards, the game coming up from below
+        h.tap(KEYCODE_MEDIA_PLAY_PAUSE);
+        TestHome.advance(170);
+        h.capture("widgets-stack-turning.png");
+        TestHome.settle();
+        assertEquals("Play/Pause scrolls to the next widget", WidgetPanel.Kind.GAME, h.weather.focusedKind());
         assertTrue(h.weather.game().favourite);
         h.capture("widgets-stack-2-game.png");
         h.press(KEYCODE_DPAD_CENTER);
@@ -76,20 +85,49 @@ public class WidgetsTest {
         assertEquals(WidgetPanel.Kind.GAME, h.weather.focusedKind());
 
         h.press(KEYCODE_DPAD_RIGHT);
-        assertEquals(WidgetPanel.Kind.CONTINUE, h.weather.focusedKind());
+        assertEquals("Right turns it too", WidgetPanel.Kind.CONTINUE, h.weather.focusedKind());
         h.capture("widgets-stack-3-continue.png");
         h.press(KEYCODE_DPAD_CENTER);
         Intent started = shadowOf(h.activity).getNextStartedActivity();
         assertNotNull(started);
         assertEquals("com.hbo.hbonow", started.getComponent().getPackageName());
 
-        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
         assertEquals(WidgetPanel.Kind.DATE, h.weather.focusedKind());
         h.capture("widgets-stack-4-date.png");
-        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_MEDIA_REWIND);
+        assertEquals("rewind goes back one", WidgetPanel.Kind.CONTINUE, h.weather.focusedKind());
+        h.press(KEYCODE_MEDIA_FAST_FORWARD);
+        assertEquals(WidgetPanel.Kind.DATE, h.weather.focusedKind());
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
         assertEquals("round again", WidgetPanel.Kind.WEATHER, h.weather.focusedKind());
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
+        assertEquals(WidgetPanel.Kind.GAME, h.weather.focusedKind());
+
+        // The stack stays where it was left, after a restart too
+        TestHome again = new TestHome(false, true);
+        again.loadSampleWeather();
+        for (int i = 0; i < 200 && again.weather.game() == null; i++) {
+            Thread.sleep(25);
+            TestHome.idle();
+        }
+        assertEquals(WidgetPanel.Kind.GAME, again.weather.focusedKind());
+
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
+        assertEquals(WidgetPanel.Kind.WEATHER, h.weather.focusedKind());
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals("weather opens the forecast", Zone.OVERLAY, h.zone());
+    }
+
+    @Test
+    public void playPauseOnTheAppsLeavesTheStackAlone() throws Exception {
+        TestHome h = home();
+        assertEquals(Zone.GRID, h.zone());
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);   // the remote's usual media job, not the widgets'
+        assertEquals(Zone.GRID, h.zone());
+        assertEquals(WidgetPanel.Kind.WEATHER, h.weather.focusedKind());
     }
 
     @Test
@@ -146,12 +184,15 @@ public class WidgetsTest {
         assertEquals(ControlCenter.Item.SLEEP, cc.focusedItem());
         h.capture("control-center-1.png");
 
+        // The kit's grid: Wi-Fi and Bluetooth pills on top, the Sleep and Sleep Timer tiles, then four circles
         h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals(ControlCenter.Item.TIMER, cc.focusedItem());
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(ControlCenter.Item.BLUETOOTH, cc.focusedItem());
+        h.press(KEYCODE_DPAD_LEFT);
         assertEquals(ControlCenter.Item.WIFI, cc.focusedItem());
         h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(ControlCenter.Item.BLUETOOTH, cc.focusedItem());
-        h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(ControlCenter.Item.TIMER, cc.focusedItem());
+        assertEquals(ControlCenter.Item.SLEEP, cc.focusedItem());
         h.press(KEYCODE_DPAD_DOWN);
         assertTrue("a shortcut button", cc.focusedItem().ordinal() >= ControlCenter.Item.MIRRORING.ordinal());
         while (cc.focusedItem() != ControlCenter.Item.MIRRORING) h.press(KEYCODE_DPAD_LEFT);
@@ -163,9 +204,7 @@ public class WidgetsTest {
                 mirroring.getComponent() != null ? mirroring.getComponent().getPackageName() : mirroring.getPackage());
 
         h.press(KEYCODE_DPAD_UP);
-        assertEquals(ControlCenter.Item.TIMER, cc.focusedItem());
-        h.press(KEYCODE_DPAD_UP);
-        assertEquals("the tile right above the timer", ControlCenter.Item.BLUETOOTH, cc.focusedItem());
+        assertEquals("the tile right above", ControlCenter.Item.SLEEP, cc.focusedItem());
         h.press(KEYCODE_DPAD_UP);
         assertEquals(ControlCenter.Item.WIFI, cc.focusedItem());
         h.press(KEYCODE_DPAD_CENTER);
@@ -174,11 +213,13 @@ public class WidgetsTest {
         assertEquals(Settings.ACTION_WIFI_SETTINGS, wifi.getAction());
 
         // Sleep has not been granted in this test: it says so instead of doing nothing silently
-        h.press(KEYCODE_DPAD_LEFT);
+        h.press(KEYCODE_DPAD_DOWN);
         assertEquals(ControlCenter.Item.SLEEP, cc.focusedItem());
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals("still open", Zone.CONTROL, h.zone());
 
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(ControlCenter.Item.WIFI, cc.focusedItem());
         h.press(KEYCODE_DPAD_UP);
         assertEquals("Up from the top row closes it", Zone.CAPSULE, h.zone());
         h.press(KEYCODE_DPAD_CENTER);

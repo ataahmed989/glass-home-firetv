@@ -31,6 +31,8 @@ final class TabBar extends View {
 
     TabBar(Context context, Glass glass) {
         super(context);
+        // Redrawn only when its selection or focus changes; otherwise reused from its GPU layer every frame
+        setLayerType(LAYER_TYPE_HARDWARE, null);
         this.glass = glass;
         inset = Ui.px(8);
         padX = Ui.px(30);
@@ -59,10 +61,15 @@ final class TabBar extends View {
 
     /** Moves the selection; the pill slides there (or jumps, with reduced motion). */
     void select(int index) {
+        select(index, true);
+    }
+
+    /** As {@link #select(int)}; without {@code slide}, the pill is there at once. */
+    void select(int index, boolean slide) {
         if (index < 0 || index >= TABS.length || index == selected) return;
         selected = index;
         if (pillAnim != null) pillAnim.cancel();
-        if (Ui.reducedMotion) {
+        if (Ui.reducedMotion || !slide) {
             pillX = tabX[index];
             pillW = tabW[index];
             invalidate();

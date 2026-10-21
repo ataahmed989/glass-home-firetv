@@ -85,9 +85,18 @@ final class AppRepository {
         }
     }
 
+    /**
+     * Fire TV's Settings. Android TV's settings intent opens Fire OS's settings screen directly, in
+     * Glass Home's own task, so Back comes straight back here; Android's generic one passes through
+     * Amazon's home screen first, so it is only the fallback.
+     */
     private static AppEntry settings(Context context) {
-        Intent launch = new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        if (launch.resolveActivity(context.getPackageManager()) == null) return null;
+        PackageManager pm = context.getPackageManager();
+        Intent tv = new Intent(Intent.ACTION_MAIN).addCategory(LEANBACK_SETTINGS);
+        Intent launch = tv.resolveActivity(pm) != null ? tv : new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (launch.resolveActivity(pm) == null) return null;
         return new AppEntry(AppEntry.SETTINGS, "Settings", launch);
     }
+
+    private static final String LEANBACK_SETTINGS = "android.intent.category.LEANBACK_SETTINGS";
 }

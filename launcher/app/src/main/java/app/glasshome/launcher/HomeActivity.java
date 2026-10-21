@@ -2,6 +2,7 @@ package app.glasshome.launcher;
 
 import android.animation.ValueAnimator;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -55,6 +56,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private static final long WEATHER_RETRY_MS = 5 * 60 * 1000L;
     private static final long CATALOG_REFRESH_MS = 2 * 60 * 1000L;
     private static final long SPORTS_LIVE_MS = 60 * 1000L, SPORTS_IDLE_MS = 10 * 60 * 1000L;
+    private static final long FEATURED_WAIT_MS = 1200;
+    /** Once the screen has been still this long (focus and the tile's sway settled), its frame is kept for the Home button. */
+    private static final long SNAPSHOT_IDLE_MS = 2800;
 
     enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL }
 
@@ -97,7 +101,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private Zone lastZone = Zone.GRID;
     private Zone homeZone = Zone.GRID;   // where focus was on Home, for coming back down from the tabs
 
-    private final Runnable commitTab = () -> showPage(tabs.selected());
+    private final Runnable commitTab = () -> showPage(tabs.selected(), false);
     private final Runnable sportsTick = new Runnable() {
         @Override
         public void run() {
@@ -113,8 +117,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private int backdropGeneration;
     private int featuredGeneration;
     private boolean resumed;
+    /** Whether Glass Home is the screen in front (for HomeButtonService); main thread only. */
+    static boolean inFront;
 
-    // The focused app's presentation
+    // What fills the screen behind Home: the background, or the focused streaming app's featured titles
     private String presentedKey;
     private AppEntry presentedApp;
     private AppEntry pendingApp;
@@ -123,6 +129,18 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     private final Runnable presentPending = () -> {
         if (pendingApp != null) present(pendingApp);
+    };
+
+    private final Runnable takeSnapshot = () -> {
+        if (resumed && showingHomeAsTheHomeButtonLeavesIt()) HomeSnapshot.capture(this);
+    };
+
+    /** In case the window reports no enter animation: by now Glass Home is drawn in front. */
+    private final Runnable shownFallback = HomeButtonService::glassHomeShown;
+
+    /** A streaming app's featured titles are slow to come: the plain background takes over meanwhile. */
+    private final Runnable featuredLate = () -> {
+        if (slides == null) showBackground();
     };
 
     private final Runnable advanceSlide = new Runnable() {
@@ -200,15 +218,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         stage = new HeroStage(this);
         root.addView(stage, match());
 
-        weatherGlass = new Glass(config.blurGlass, 0x9E263247, 0xDB1E2636);
+        weatherGlass = new Glass(config.blurGlass, 0xDB1E2636);
         weather = new WidgetPanel(this, weatherGlass);
         weather.setLayout(settings.widgetLayout());
-        FrameLayout.LayoutParams wl = new FrameLayout.LayoutParams(Ui.px(Ui.WEATHER_W), Ui.px(Ui.WEATHER_H));
-        wl.leftMargin = Ui.px(Ui.WEATHER_LEFT);
-        wl.topMargin = Ui.px(Ui.WEATHER_TOP);
+        // The widgets' view reaches PAD past them on every side (see WidgetPanel)
+        int pad = Ui.px(WidgetPanel.PAD);
+        FrameLayout.LayoutParams wl = new FrameLayout.LayoutParams(Ui.px(Ui.WEATHER_W) + 2 * pad, Ui.px(Ui.WEATHER_H) + 2 * pad);
+        wl.leftMargin = Ui.px(Ui.WEATHER_LEFT) - pad;
+        wl.topMargin = Ui.px(Ui.WEATHER_TOP) - pad;
         root.addView(weather, wl);
 
-        dockGlass = new Glass(config.blurGlass, 0x4D1A1B20, 0xA61C1E25);
+        dockGlass = new Glass(config.blurGlass, 0xA61C1E25);
         dock = new GlassDock(dockGlass);
         adapter = new AppAdapter(this);
         grid = new RecyclerView(this);
@@ -241,7 +261,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
 
         // Darker glass than the dock: the capsule's white text must hold up over bright skies
-        capsuleGlass = new Glass(config.blurGlass, 0x661C1E23, 0xB31C1E23);
+        capsuleGlass = new Glass(config.blurGlass, 0xB31C1E23);
         capsule = new ClockCapsule(this, capsuleGlass);
         FrameLayout.LayoutParams cl = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, Ui.px(Ui.CAPSULE_H), Gravity.TOP | Gravity.END);
@@ -250,7 +270,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         root.addView(capsule, cl);
         capsule.updateTime();
 
-        tabGlass = new Glass(config.blurGlass, 0x661C1E23, 0xB31C1E23);
+        tabGlass = new Glass(config.blurGlass, 0xB31C1E23);
         tabs = new TabBar(this, tabGlass);
         FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, Ui.px(Ui.CAPSULE_H), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
@@ -262,11 +282,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         root.addView(detail, match());
         titleDetail = new DetailView(this);
         root.addView(titleDetail, match());
-        controlGlass = new Glass(config.blurGlass, 0x8C2A2E36, 0xE62A2E36);
+        controlGlass = new Glass(config.blurGlass, 0xE62A2E36);
         control = new ControlCenter(this, controlGlass);
         control.setListener(this::onControl);
         root.addView(control, match());
-        panelGlass = new Glass(config.blurGlass, 0x99181A20, 0xE6181A20);
+        panelGlass = new Glass(config.blurGlass, 0xE6181A20);
         panel = new SettingsPanel(this, panelGlass);
         panel.setListener(this::onSettingChosen);
         root.addView(panel, match());
@@ -301,9 +321,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     /**
-     * Shows the focused app over the user's constant background (the app's own colours only for
-     * the moment before that image has decoded). With "Featured titles" on, the streaming apps
-     * then swap in a TMDB slideshow once artwork has loaded; if that fails, the background stays.
+     * Home shows the user's constant background and nothing about the focused app itself, so moving
+     * between apps changes nothing behind them. With "Featured titles" on, a streaming app swaps in a
+     * TMDB slideshow once its artwork has loaded (what was showing stays until then, for a moment at
+     * most); if that fails, the background stays.
      */
     private void present(AppEntry app) {
         main.removeCallbacks(presentPending);
@@ -312,16 +333,32 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         presentedKey = app.key;
         presentedApp = app;
         main.removeCallbacks(advanceSlide);
+        main.removeCallbacks(featuredLate);
         slides = null;
         final int generation = ++featuredGeneration;
 
         Brand brand = Brand.of(app.key, app.label);
         Backgrounds.Entry chosen = Backgrounds.find(backgrounds, settings.backgroundName());
         boolean ready = background != null && chosen != null && chosen.name.equals(backgroundName);
-        if (!ready) loadBackground(chosen);
-        showSlide(ready ? HeroSlide.backdrop(app.key, brand, app.art, background) : HeroSlide.branded(app.key, brand, app.art),
-                Ui.CONTENT_FADE_MS);
-        if (featuredTitles() && brand.kind == Brand.Kind.FEATURED) loadFeatured(app, brand, generation);
+        if (chosen == null) {
+            showSlide(HeroSlide.backdrop(null), Ui.CONTENT_FADE_MS);   // no backgrounds at all: plain graphite
+        } else if (!ready) {
+            loadBackground(chosen);
+        }
+        if (featuredTitles() && brand.kind == Brand.Kind.FEATURED) {
+            loadFeatured(app, brand, generation);
+            main.postDelayed(featuredLate, FEATURED_WAIT_MS);
+        } else {
+            showBackground();
+        }
+    }
+
+    /** The constant background; when it is already showing (moving between apps), nothing redraws. */
+    private void showBackground() {
+        if (background == null) return;   // still decoding: it shows once ready
+        HeroSlide current = stage.current();
+        if (current != null && !current.isFeatured() && current.background == background) return;
+        showSlide(HeroSlide.backdrop(background), Ui.CONTENT_FADE_MS);
     }
 
     /** Decodes the chosen background off the main thread, then re-presents the current app over it. */
@@ -334,9 +371,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (b == null || chosen == null || !chosen.name.equals(entry.name)) return;
                 background = b;
                 backgroundName = entry.name;
-                // A featured slide already showing stays; everything else picks up the background now
+                // A featured slide already showing stays; otherwise the background shows now
                 HeroSlide current = stage.current();
-                if (current == null || !current.isFeatured()) representCurrentApp();
+                if (current == null || !current.isFeatured()) showBackground();
             });
         });
     }
@@ -364,7 +401,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (generation != featuredGeneration) return;
                 HeroSlide slide;
                 try {
-                    slide = HeroSlide.featured(app.key, brand, app.art, FeaturedTitles.backdrop(this, t), t);
+                    slide = HeroSlide.featured(app.key, brand, FeaturedTitles.backdrop(this, t), t);
                 } catch (Exception e) {
                     continue;
                 }
@@ -400,6 +437,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void showSlide(HeroSlide slide, long fadeMs) {
         stage.show(slide, Ui.reducedMotion ? 0 : fadeMs);
         refreshHomeBackdrop();
+        // Home's snapshot follows the slideshow once the new slide has settled
+        main.removeCallbacks(takeSnapshot);
+        main.postDelayed(takeSnapshot, fadeMs + SNAPSHOT_IDLE_MS);
     }
 
     private void refreshHomeBackdrop() {
@@ -569,11 +609,26 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void launch(AppEntry app) {
+        // The Appstore and Settings pass through Amazon's launcher on their way up; that is not the Home button
+        HomeButtonService.opening(app.key);
         try {
-            startActivity(app.launchIntent);
+            startActivity(app.launchIntent, openingAnimation());
         } catch (ActivityNotFoundException | SecurityException e) {
             Toast.makeText(this, app.label + " couldn't be opened", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /**
+     * An app opens by growing out of what was selected while Home holds still behind it, rather
+     * than with a cut to black while the app starts: a tile zooms up into the app, as on tvOS;
+     * anything else (a widget) grows from its place.
+     */
+    private Bundle openingAnimation() {
+        View from = getCurrentFocus();
+        if (Ui.reducedMotion || from == null || from.getWidth() == 0 || from.getWidth() >= screenW) return null;
+        Bitmap tile = from instanceof TileView ? ((TileView) from).snapshot() : null;
+        if (tile != null) return ActivityOptions.makeThumbnailScaleUpAnimation(from, tile, 0, 0).toBundle();
+        return ActivityOptions.makeScaleUpAnimation(from, 0, 0, from.getWidth(), from.getHeight()).toBundle();
     }
 
     /** Opens an app by its key, if it is installed. */
@@ -611,15 +666,23 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Applies a tab change that is still waiting out its dwell. */
     private void flushTab() {
         main.removeCallbacks(commitTab);
-        if (tabs.selected() != page) showPage(tabs.selected());
+        if (tabs.selected() != page) showPage(tabs.selected(), false);
     }
 
-    private void showPage(int p) {
+    /** The Home button from another tab: straight to Home, the tab and the bar already in place, nothing fading. */
+    private void showHomeAtOnce() {
+        main.removeCallbacks(commitTab);
+        tabs.select(HOME, false);
+        showPage(HOME, true);
+        setBarHidden(false, true);
+    }
+
+    private void showPage(int p, boolean atOnce) {
         main.removeCallbacks(commitTab);
         if (p == page) return;
         int old = page;
         page = p;
-        long fade = Ui.reducedMotion ? 0 : Ui.PAGE_FADE_MS;
+        long fade = Ui.reducedMotion || atOnce ? 0 : Ui.PAGE_FADE_MS;
         View[] home = {stage, weather, grid};
         if (p == HOME) {
             for (View v : home) fadeIn(v, fade);
@@ -631,7 +694,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         } else {
             fadeOut(pages[old], fade);
         }
-        setBarHidden(false);
+        setBarHidden(false, atOnce);
         main.removeCallbacks(sportsTick);
         if (p == HOME) {
             main.removeCallbacks(advanceSlide);
@@ -728,12 +791,22 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** While browsing the shelves, the tab bar and the capsule slide up out of the way. */
     private void setBarHidden(boolean hidden) {
-        if (hidden == barHidden) return;
+        setBarHidden(hidden, false);
+    }
+
+    private void setBarHidden(boolean hidden, boolean atOnce) {
+        if (hidden == barHidden && !atOnce) return;
         barHidden = hidden;
         float y = hidden ? -Ui.px(Ui.BAR_HIDE_Y) : 0f;
-        long ms = Ui.reducedMotion ? 0 : Ui.SCROLL_MS;
+        long ms = Ui.reducedMotion || atOnce ? 0 : Ui.SCROLL_MS;
         for (View v : new View[] {tabs, capsule}) {
-            v.animate().translationY(y).alpha(hidden ? 0f : 1f).setDuration(ms).setInterpolator(Ui.EASE).start();
+            v.animate().cancel();
+            if (ms == 0) {
+                v.setTranslationY(y);
+                v.setAlpha(hidden ? 0f : 1f);
+            } else {
+                v.animate().translationY(y).alpha(hidden ? 0f : 1f).setDuration(ms).setInterpolator(Ui.EASE).start();
+            }
         }
     }
 
@@ -777,6 +850,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         if (intent != null && latest) {
             try {
+                HomeButtonService.opening(e.pkg);
                 intent.send();
                 return;
             } catch (android.app.PendingIntent.CanceledException ignored) {
@@ -1016,6 +1090,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         boolean sleep = SystemControls.canSleep(this);
         options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
                 sleep ? "Lets Control Center put the TV to sleep" : "Turned on during setup over ADB", sleep, sleep));
+        boolean redirect = homeButtonServiceOn();
+        options.add(SettingsPanel.Option.toggle("HOME BUTTON", "Opens Glass Home",
+                redirect ? "Off: the Home button shows Amazon's home" : "Turned on during setup over ADB",
+                redirect, redirect && settings.homeButtonOpensGlassHome()));
         panel.setOptions(options, start);
         panel.setVisibility(View.VISIBLE);
         panel.setAlpha(Ui.reducedMotion ? 1f : 0f);
@@ -1046,10 +1124,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void hideControlCenter() {
+        hideControlCenter(false);
+    }
+
+    private void hideControlCenter(boolean atOnce) {
         control.animate().cancel();
         control.setVisibility(View.GONE);
         capsule.setControlOpen(false);
-        weather.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).start();
+        weather.animate().cancel();
+        if (atOnce || Ui.reducedMotion) weather.setAlpha(1f);
+        else weather.animate().alpha(1f).setDuration(200).start();
     }
 
     private void closeControlCenter() {
@@ -1089,7 +1173,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 SystemControls.open(this, SystemControls.bluetoothSettings());
                 return;
             case MIRRORING:
-                SystemControls.open(this, SystemControls.mirroring(this), new Intent("android.settings.CAST_SETTINGS"));
+                // Fire TV's mirroring screen (open to other apps); failing that, Display & Sounds, where it can be enabled
+                SystemControls.open(this, SystemControls.mirroring(this), new Intent(android.provider.Settings.ACTION_DISPLAY_SETTINGS));
                 return;
             case ACCESSIBILITY:
                 SystemControls.open(this, SystemControls.accessibilitySettings());
@@ -1110,7 +1195,18 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         else focusPage();
     }
 
+    /** Whether HomeButtonService has been turned on (over ADB; Fire TV has no screen for it). */
+    private boolean homeButtonServiceOn() {
+        String enabled = android.provider.Settings.Secure.getString(getContentResolver(),
+                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        return enabled != null && enabled.contains(getPackageName() + "/" + HomeButtonService.class.getName());
+    }
+
     private void onSettingChosen(SettingsPanel.Option option) {
+        if (option.toggle && option.section.equals("HOME BUTTON")) {
+            settings.setHomeButtonOpensGlassHome(option.checked);
+            return;
+        }
         if (option.toggle && option.section.equals("CONTROL CENTER")) {
             if (!option.checked) {
                 SystemControls.releaseSleep(this);
@@ -1177,6 +1273,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        main.removeCallbacks(takeSnapshot);
+        main.postDelayed(takeSnapshot, SNAPSHOT_IDLE_MS);
         int code = event.getKeyCode();
         int direction = direction(code);
         if (direction != 0) {
@@ -1199,7 +1297,28 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) onMenu();
             return true;
         }
+        int step = stackStep(code);
+        if (step != 0 && zone() == Zone.WEATHER && WidgetPanel.STACK.equals(weather.layout())) {
+            // Play/Pause on the Smart Stack scrolls it, once per press; elsewhere the media keys keep their usual job
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) weather.turn(step);
+            return true;
+        }
         return super.dispatchKeyEvent(event);   // Back reaches onBackPressed; Home is never handled here
+    }
+
+    /** Play/Pause and fast-forward turn the Smart Stack to the next widget, rewind to the previous. */
+    private static int stackStep(int code) {
+        switch (code) {
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                return 1;
+            case KeyEvent.KEYCODE_MEDIA_REWIND:
+                return -1;
+            default:
+                return 0;
+        }
     }
 
     private static int direction(int code) {
@@ -1428,7 +1547,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     focusGrid(lastDockColumn);
                     return;
                 }
-                if (isDefaultHome()) return;   // a home screen has nothing behind it
+                // A home screen has nothing behind it. On Fire TV, Glass Home is the home screen when the Home
+                // button leads here, even though Fire OS still names Amazon's launcher as the default
+                if (isDefaultHome() || (homeButtonServiceOn() && settings.homeButtonOpensGlassHome())) return;
                 super.onBackPressed();
         }
     }
@@ -1445,6 +1566,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     protected void onResume() {
         super.onResume();
         resumed = true;
+        inFront = true;
         capsule.updateTime();
         restoreFocus();
         scheduleSlides();
@@ -1455,11 +1577,61 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (page != HOME && pages[page].hasModel()) loadPage(page);
         refreshMyTeams();
         refreshWatching();
+        main.removeCallbacks(shownFallback);
+        main.postDelayed(shownFallback, 600);
+        main.removeCallbacks(takeSnapshot);
+        main.postDelayed(takeSnapshot, SNAPSHOT_IDLE_MS);
+    }
+
+    /** Glass Home is drawn and in front: whatever covered the trip back (see HomeButtonService) can go. */
+    @Override
+    public void onEnterAnimationComplete() {
+        super.onEnterAnimationComplete();
+        HomeButtonService.glassHomeShown();
+    }
+
+    /** Brought forward by the Home button (see HomeButtonService): back to Home with everything closed. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (!intent.getBooleanExtra(HomeButtonService.EXTRA_HOME_BUTTON, false)) return;
+        // Everything changes at once, under the snapshot of Home that covers the trip back (see HomeSnapshot)
+        if (panel.isOpen()) {
+            panel.animate().cancel();
+            panel.setVisibility(View.GONE);
+        }
+        if (control.isOpen()) hideControlCenter(true);
+        if (detail.isOpen()) {
+            detail.animate().cancel();
+            detail.setVisibility(View.GONE);
+        }
+        if (titleDetail.isOpen()) {
+            titleDetail.animate().cancel();
+            titleDetail.setVisibility(View.GONE);
+        }
+        if (page != HOME) showHomeAtOnce();
+        lastZone = Zone.GRID;
+        homeZone = Zone.GRID;
+    }
+
+    /**
+     * Whether the screen is as the Home button brings it back (the Home tab, nothing open, focus on
+     * the apps), so a snapshot of it can stand in for Glass Home while Fire OS makes the trip.
+     */
+    private boolean showingHomeAsTheHomeButtonLeavesIt() {
+        return page == HOME && zone() == Zone.GRID && !barHidden;
     }
 
     @Override
     protected void onPause() {
         resumed = false;
+        inFront = false;
+        main.removeCallbacks(shownFallback);
+        main.removeCallbacks(takeSnapshot);
+        // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
+        HomeButtonService.leftUnexpectedly();
+        if (showingHomeAsTheHomeButtonLeavesIt()) HomeSnapshot.capture(this);
         lastZone = zone();
         selectArmed = false;
         // Nothing animates or polls while another app is in front
@@ -1468,6 +1640,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(sportsTick);
         main.removeCallbacks(teamsTick);
         super.onPause();
+    }
+
+    /** Out of sight, Glass Home keeps little: the TV has under 2 GB for Fire OS and every app. */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= TRIM_MEMORY_UI_HIDDEN) ImageCache.get(this).trimMemory();
     }
 
     @Override

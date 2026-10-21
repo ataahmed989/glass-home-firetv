@@ -23,17 +23,23 @@ import android.view.animation.LinearInterpolator;
  *
  * The art is flat; this view adds the dimension. With layers (an opaque back layer and one or
  * more transparent foreground layers), each foreground layer casts a soft shadow onto what is
- * behind it, and on focus the layers drift apart in a slow sway (parallax) while a soft virtual
- * light glides across the surface and the rim catches a glare. Unfocused tiles keep only a very
- * subtle shadow and edge glare. Everything is clipped to the rounded tile, so nothing spills out.
+ * behind it, and on focus the layers drift apart in one gentle sway (parallax) that dies away
+ * and settles, while a soft virtual light glides across the surface and the rim catches a glare.
+ * Unfocused tiles keep only a very subtle shadow and edge glare. Everything is clipped to the
+ * rounded tile, so nothing spills out.
  *
- * Focus also scales the tile about 6% and lifts it onto a deeper shadow (the view's elevation).
+ * Focus also scales the tile about 6% and lifts it onto a shadow (the view's elevation).
+ *
+ * Only the focused tile has a live shadow and redraws while it animates. A tile at rest is kept
+ * as a ready-drawn GPU layer, so a screenful of tiles costs one textured quad each per frame.
  */
 final class TileView extends View {
-    private static final float MAX_SHIFT = 7f;        // design px a front layer can drift at full tilt
-    private static final long SWAY_PERIOD_MS = 6000;
+    private static final float MAX_SHIFT = 5f;        // design px a front layer can drift at full tilt
+    private static final long SWAY_MS = 2400;          // the sway on focus, from first swing to rest
+    private static final float SWAY_CYCLES = 1.25f;    // swings in that time, each smaller than the last
+    private static final float REST_TILT_Y = -0.25f;   // at rest: tipped back a touch so the layers read as separate
 
-    /** Tests switch the endless sway off: Robolectric's simulated clock cannot step past it exactly. */
+    /** Tests switch the sway off, so every render shows the tile at rest. */
     static boolean swayEnabled = true;
 
     private final Paint flatPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -55,7 +61,7 @@ final class TileView extends View {
     private RadialGradient light;
 
     private float focus;          // 0..1, eased with the focus transition
-    private float tiltX, tiltY;   // -1..1, the slow sway while focused
+    private float tiltX, tiltY = REST_TILT_Y;   // -1..1, the sway after focus arrives
     private ValueAnimator focusAnimator, swayAnimator;
 
     TileView(Context context) {
@@ -83,7 +89,7 @@ final class TileView extends View {
                 outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
             }
         });
-        setElevation(Ui.px(4));
+        setLayerType(LAYER_TYPE_HARDWARE, null);
     }
 
     void setArt(Bitmap flat, TileLayers layered) {
@@ -108,6 +114,17 @@ final class TileView extends View {
         invalidate();
     }
 
+    /** The tile as it looks now, at its size on screen (focus scale included), for the zoom into the app it opens. */
+    Bitmap snapshot() {
+        int w = Math.round(getWidth() * getScaleX()), h = Math.round(getHeight() * getScaleY());
+        if (w <= 0 || h <= 0) return null;
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        c.scale(getScaleX(), getScaleY());
+        draw(c);
+        return b;
+    }
+
     /** Puts a recycled tile back to its resting state without animating. */
     void resetFocusState() {
         animate().cancel();
@@ -118,8 +135,9 @@ final class TileView extends View {
         setScaleY(s);
         setTranslationZ(f ? Ui.px(Ui.FOCUS_LIFT) : 0);
         focus = f ? 1f : 0f;
-        tiltX = tiltY = 0f;
-        if (f) startSway();
+        tiltX = 0f;
+        tiltY = REST_TILT_Y;
+        setLayerType(f ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
         invalidate();
     }
 
@@ -206,6 +224,8 @@ final class TileView extends View {
         if (getParent() instanceof View) ((View) getParent()).setTranslationZ(gainFocus ? 1f : 0f);
 
         if (focusAnimator != null) focusAnimator.cancel();
+        // Drawn directly while it changes (its bloom reaches past its edges); a layer again once it rests
+        if (gainFocus) setLayerType(LAYER_TYPE_NONE, null);
         focusAnimator = ValueAnimator.ofFloat(focus, gainFocus ? 1f : 0f);
         focusAnimator.setDuration(ms);
         focusAnimator.setInterpolator(Ui.EASE);
@@ -213,27 +233,36 @@ final class TileView extends View {
             focus = (float) a.getAnimatedValue();
             invalidate();
         });
+        focusAnimator.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                if (!isFocused() && focus == 0f) setLayerType(LAYER_TYPE_HARDWARE, null);
+            }
+        });
         focusAnimator.start();
         if (gainFocus) startSway();
         else if (swayAnimator != null) swayAnimator.cancel();
     }
 
-    /** The slow sway only runs on the one focused tile, and not at all with reduced motion. */
+    /**
+     * One sway when focus arrives, each swing smaller than the last until the tile is still: it
+     * starts and ends at rest, so nothing jumps, and the focused tile stops redrawing once settled.
+     * None at all with reduced motion.
+     */
     private void startSway() {
         if (swayAnimator != null) swayAnimator.cancel();
-        if (Ui.reducedMotion || !swayEnabled) {
-            tiltX = 0f;
-            tiltY = -0.4f;   // a fixed, gentle angle so the layers still read as separate
-            return;
-        }
-        swayAnimator = ValueAnimator.ofFloat(0f, (float) (2 * Math.PI));
-        swayAnimator.setDuration(SWAY_PERIOD_MS);
-        swayAnimator.setRepeatCount(ValueAnimator.INFINITE);
+        tiltX = 0f;
+        tiltY = REST_TILT_Y;
+        if (Ui.reducedMotion || !swayEnabled) return;
+        swayAnimator = ValueAnimator.ofFloat(0f, 1f);
+        swayAnimator.setDuration(SWAY_MS);
         swayAnimator.setInterpolator(new LinearInterpolator());
         swayAnimator.addUpdateListener(a -> {
             float t = (float) a.getAnimatedValue();
-            tiltX = (float) Math.sin(t) * 0.8f;
-            tiltY = (float) Math.sin(t * 2f + 0.6f) * 0.45f;
+            float fade = (1f - t) * (1f - t) * (1f - t);   // dies away smoothly, reaching rest at the end
+            float phase = (float) (2 * Math.PI * SWAY_CYCLES * t);
+            tiltX = (float) Math.sin(phase) * 0.5f * fade;
+            tiltY = REST_TILT_Y + (float) Math.sin(phase * 0.5f) * 0.3f * fade;
             invalidate();
         });
         swayAnimator.start();
