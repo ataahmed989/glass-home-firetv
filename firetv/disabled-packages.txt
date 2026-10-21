@@ -17,3 +17,14 @@ com.amazon.sneakpeek
 com.amazon.shoptv.client
 com.amazon.shoptv.firetv.client
 com.amazon.d3
+com.amazon.logan
+com.amazon.media.recommendations
+com.amazon.minitv.android.app
+com.amazon.gamehub
+com.amazon.tv.earlyaccess
+com.amazon.tv.releasenotes
+com.amazon.storm.lightning.tutorial
+com.amazon.tmm.tutorial
+com.amazon.smarthomemapviewapp
+com.android.protips
+com.android.printservice.recommendation

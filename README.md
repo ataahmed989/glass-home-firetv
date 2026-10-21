@@ -109,10 +109,18 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 
 ## Debloat
 
-`firetv/disabled-packages.txt` lists the 19 Amazon packages that were turned off with
-`pm disable-user --user 0` (telemetry, ads, ambient and shopping). Nothing was uninstalled, and
-Fire OS updates, voice, casting and mirroring were kept. `firetv/restore.sh` turns them all
-back on.
+`firetv/disabled-packages.txt` lists the 30 packages that were turned off with
+`pm disable-user --user 0` (telemetry, ads, recommendations, ambient, shopping, tutorials and
+unused extras such as miniTV and the games hub). Nothing was uninstalled, and Fire OS updates,
+voice, casting and mirroring were kept. `firetv/restore.sh` turns them all back on.
+
+Fire OS 8.1.8.5 refuses to disable some packages as protected, among them
+`com.amazon.device.metrics`, `com.amazon.device.logmanager`, `com.amazon.device.crashmanager`
+and `com.amazon.ftvads.deeplinking`.
+
+Private DNS on the TV (for example an ad-blocking resolver) fails while Tailscale runs there:
+all traffic goes through Tailscale's VPN, where Android reports Private DNS as broken and no
+names resolve. Set the resolver as a nameserver in Tailscale's DNS settings instead.
 
 ## Data and credits
 
