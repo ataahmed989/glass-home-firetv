@@ -123,7 +123,15 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 `pm disable-user --user 0` (telemetry, ads, recommendations, ambient, shopping, tutorials,
 smart-home and Alexa calling services, and unused extras such as miniTV, the games hub, Silk
 and Amazon Kids). Nothing was uninstalled, and Fire OS updates, voice, casting and mirroring
-were kept. `firetv/restore.sh` turns them all back on.
+were kept. Amazon's own home screen stays installed and enabled (Fire OS sends the Home button
+to it, and its Settings menu lives there), but it and its app-tracking client
+(`firetv/background-restricted.txt`) may not run in the background:
+`cmd appops set <package> RUN_ANY_IN_BACKGROUND ignore`, so its telemetry uploads and row
+refreshes wait. `firetv/restore.sh` undoes all of it.
+
+Fire OS's Dynamic Warming keeps the apps Amazon picks as "favorites" (Prime Video and YouTube
+here) started in the background so they open faster. It is switched by a system property that
+ADB may not change, so it stays on.
 
 Fire OS 8.1.8.5 refuses to disable some packages as protected, among them
 `com.amazon.device.metrics`, `com.amazon.device.logmanager`, `com.amazon.device.crashmanager`
