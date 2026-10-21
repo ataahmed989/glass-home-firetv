@@ -27,6 +27,7 @@ import org.robolectric.shadows.ShadowSystemClock;
 import org.robolectric.shadows.ShadowUsageStatsManager;
 
 import java.time.Duration;
+import java.util.concurrent.Executor;
 
 /**
  * Amazon's home is never left on screen: what Fire OS lets the service see of the Home button
@@ -39,6 +40,7 @@ public class HomeButtonServiceTest {
     private static final String AMAZON_HOME = "com.amazon.tv.launcher.ui.HomeActivity_vNext";
     private Application app;
     private HomeButtonService service;
+    private Executor starts;
 
     @Before
     public void start() {
@@ -46,6 +48,8 @@ public class HomeButtonServiceTest {
         HomeActivity.inFront = false;
         // The service's timing is static, and the clock starts again for each case: none may carry over
         HomeButtonService.forgetTrips();
+        starts = HomeButtonService.starts;
+        HomeButtonService.starts = Runnable::run;   // Glass Home's start, seen at once
         service = Robolectric.setupService(HomeButtonService.class);
     }
 
@@ -54,6 +58,7 @@ public class HomeButtonServiceTest {
         HomeActivity.inFront = false;
         HomeButtonService.glassHomeResumed();
         HomeButtonService.forgetTrips();
+        HomeButtonService.starts = starts;
         service.onUnbind(new Intent());
     }
 

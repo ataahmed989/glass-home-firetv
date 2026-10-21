@@ -6,4 +6,17 @@
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:defaultFocusHighlightEnabled">false</item>
     </style>
+
+    <!-- The cover over the trip back from the Home button (HomeButtonService), faded by Fire OS itself:
+         in over the black on the way back from another app, out once Glass Home is drawn beneath -->
+    <style name="CoverFadeIn">
+        <item name="android:windowEnterAnimation">@anim/cover_in</item>
+        <item name="android:windowExitAnimation">@anim/cover_out</item>
+    </style>
+
+    <!-- Over Glass Home itself, still on screen: up at once, faded out -->
+    <style name="CoverAtOnce">
+        <item name="android:windowEnterAnimation">@null</item>
+        <item name="android:windowExitAnimation">@anim/cover_out</item>
+    </style>
 </resources>

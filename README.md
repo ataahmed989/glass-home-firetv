@@ -125,7 +125,7 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 | ☰ Menu | To the tab bar, closing anything open; again to go back down. |
 | Back | Closes what is open, then steps back toward Home. |
 | Play/Pause | On the Smart Stack, turns to the next widget (Rewind goes back). |
-| Home | Glass Home's Home page, closing anything open, however often it is pressed. Fire OS sends Home to Amazon's home first, so the screen may go dark for a moment on the way (0-0.3 s measured). Held: Fire TV's quick menu. |
+| Home | Glass Home's Home page, closing anything open, however often it is pressed. Fire OS sends Home to Amazon's home first, so from another app the screen goes dark for a moment on the way (0.04-0.5 s measured on the Fire TV Stick 4K Plus) and Home then fades in; Amazon's home is never seen. Held: Fire TV's quick menu. |
 
 ## Debloat
 

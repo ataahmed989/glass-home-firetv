@@ -1843,6 +1843,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         titleDetail.trimMemory();
         main.removeCallbacks(collect);
         main.postDelayed(collect, COLLECT_AFTER_MS);
+        HomeButtonService.glassHomeHidden();
     }
 
     /**

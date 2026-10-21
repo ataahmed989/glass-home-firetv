@@ -41,8 +41,10 @@ final class HomeSnapshot {
         try {
             PixelCopy.request(activity.getWindow(), frame, result -> {
                 copying = false;
-                complete = result == PixelCopy.SUCCESS;
-                if (!complete) return;
+                // A copy that fails (the window going as Glass Home goes to the back) leaves the bitmap as it
+                // was: the last complete frame still stands in, rather than none
+                if (result != PixelCopy.SUCCESS) return;
+                complete = true;
                 frame.prepareToDraw();   // onto the GPU now, so the cover has nothing to upload when it is needed
                 HomeButtonService.snapshotChanged();
             }, new Handler(Looper.getMainLooper()));
