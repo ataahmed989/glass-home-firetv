@@ -90,7 +90,7 @@ public class HomeButtonServiceTest {
         HomeActivity.inFront = true;
         HomeButtonService.glassHomeResumed();
         HomeActivity.inFront = false;   // the second press
-        HomeButtonService.leftUnexpectedly(true, true);   // as Glass Home's onPause says
+        HomeButtonService.leftUnexpectedly(true);   // as Glass Home's onPause says
         redraw("com.amazon.tv.launcher");
         assertGlassHomeStarted();
     }
@@ -160,7 +160,7 @@ public class HomeButtonServiceTest {
 
         HomeActivity.inFront = false;
         resumed("com.amazon.tv.launcher", AMAZON_HOME);
-        HomeButtonService.leftUnexpectedly(true, true);
+        HomeButtonService.leftUnexpectedly(true);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.LEFT_CHECK_MS));
         assertGlassHomeStarted();
     }
@@ -177,7 +177,7 @@ public class HomeButtonServiceTest {
 
         HomeActivity.inFront = false;
         resumed("com.netflix.ninja", "com.netflix.ninja.MainActivity");
-        HomeButtonService.leftUnexpectedly(true, true);
+        HomeButtonService.leftUnexpectedly(true);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.CHECK_MS));
         assertNull(shadowOf(app).getNextStartedActivity());
     }
@@ -256,12 +256,12 @@ public class HomeButtonServiceTest {
     }
 
     /**
-     * Home pressed on the Home tab: Fire OS's usage record has Amazon's home by the time Glass Home is
-     * paused, so the trip back starts at once, with one select tick; Amazon's window reporting in later
-     * is the same press, and a trip made again because the first did not land is no press at all.
+     * Home pressed on Glass Home: Fire OS's usage record has Amazon's home by the time Glass Home is
+     * paused, so the trip back starts at once; Amazon's window reporting in later is the same press,
+     * and is not followed by a second trip.
      */
     @Test
-    public void homePressedOnTheHomeTabTicksOnce() {
+    public void homePressedOnGlassHomeIsFollowedAtOnceAndOnce() {
         usageAccess();
         connectedAfterStartUp();
         HomeActivity.inFront = true;
@@ -269,52 +269,19 @@ public class HomeButtonServiceTest {
 
         HomeActivity.inFront = false;
         resumed("com.amazon.tv.launcher", AMAZON_HOME);
-        HomeButtonService.leftUnexpectedly(true, true);
+        HomeButtonService.leftUnexpectedly(true);
         assertGlassHomeStarted();
-        assertEquals(1, service.selectTicks());
 
         window("com.amazon.tv.launcher", AMAZON_HOME);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.WATCH_MS));
         assertNull("the same press", shadowOf(app).getNextStartedActivity());
-
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.CHECK_MS));
-        assertGlassHomeStarted();
-        assertEquals("a trip made again is no press", 1, service.selectTicks());
-    }
-
-    /** Home pressed on a browse page, or from an app (here one opened by voice from the Home tab): no tick. */
-    @Test
-    public void onlyTheHomeTabTicks() {
-        usageAccess();
-        connectedAfterStartUp();
-        HomeActivity.inFront = true;
-        HomeButtonService.glassHomeResumed();
-        HomeActivity.inFront = false;
-        resumed("com.amazon.tv.launcher", AMAZON_HOME);
-        HomeButtonService.leftUnexpectedly(false, false);
-        assertGlassHomeStarted();
-        assertEquals(0, service.selectTicks());
-
-        HomeActivity.inFront = true;
-        HomeButtonService.glassHomeResumed();
-        HomeActivity.inFront = false;
-        ShadowSystemClock.advanceBy(Duration.ofMillis(HomeButtonService.REDIRECT_GAP_MS));
-        resumed("com.netflix.ninja", "com.netflix.ninja.MainActivity");
-        HomeButtonService.leftUnexpectedly(true, true);
-        window("com.netflix.ninja", "com.netflix.ninja.MainActivity");
-        assertNull(shadowOf(app).getNextStartedActivity());
-        ShadowSystemClock.advanceBy(Duration.ofMillis(100));
-        resumed("com.amazon.tv.launcher", AMAZON_HOME);   // Home pressed in that app
-        window("com.amazon.tv.launcher", AMAZON_HOME);
-        assertGlassHomeStarted();
-        assertEquals(0, service.selectTicks());
     }
 
     /** Without usage access, Glass Home leaving unexpectedly is not taken for Amazon's home: nothing is guessed. */
     @Test
     public void withoutUsageAccessNothingIsGuessed() {
         connectedAfterStartUp();
-        HomeButtonService.leftUnexpectedly(true, true);
+        HomeButtonService.leftUnexpectedly(true);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.CHECK_MS));
         assertNull(shadowOf(app).getNextStartedActivity());
     }

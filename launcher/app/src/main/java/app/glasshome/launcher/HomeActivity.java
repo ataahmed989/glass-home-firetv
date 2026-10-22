@@ -1836,7 +1836,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(shownFallback);
         main.removeCallbacks(takeSnapshot);
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
-        HomeButtonService.leftUnexpectedly(showingHomeAsTheHomeButtonLeavesIt(), page == HOME && tabs.selected() == HOME);
+        HomeButtonService.leftUnexpectedly(showingHomeAsTheHomeButtonLeavesIt());
         // The snapshot shows Home as it is now: copied again only if Home has been drawn since (focus
         // moved on to the app just opened, the clock turned…), as its stand-in on the way back must match it
         if (snapshotDue && showingHomeAsTheHomeButtonLeavesIt()) {
