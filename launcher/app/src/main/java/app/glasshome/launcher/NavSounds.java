@@ -9,10 +9,10 @@ import android.view.View;
 import java.io.File;
 
 /**
- * The faint ticks Fire TV's own home makes as focus moves, for moves on Glass Home's Home page.
- * They are Fire OS's files (one per direction, 125 ms, quiet); the standard Android navigation
- * sound is a different, generic tick. Silent when Fire TV's navigation sounds are switched off,
- * and on a TV without the files.
+ * The faint ticks Fire TV's own home makes as focus moves, for moves on Glass Home's Home page,
+ * and its select tick, for the Home button pressed on that page. They are Fire OS's files (one per
+ * direction, 125 ms, quiet); the standard Android navigation sound is a different, generic tick.
+ * Silent when Fire TV's navigation sounds are switched off, and on a TV without the files.
  */
 final class NavSounds {
     private static final String DIR = "/system/media/audio/ui/";
@@ -21,9 +21,9 @@ final class NavSounds {
 
     private final Context context;
     private final SoundPool pool;
-    private final int left, right, up, down;
+    private final int left, right, up, down, select;
     /** Ticks asked for (whether or not the TV has the sounds), for tests. */
-    int requests;
+    int requests, selects;
 
     NavSounds(Context context) {
         this.context = context.getApplicationContext();
@@ -38,6 +38,7 @@ final class NavSounds {
         right = load("Right_Tick.ogg");
         up = load("Up_Tick.ogg");
         down = load("Down_Tick.ogg");
+        select = load("Select_Tick.ogg");
     }
 
     /** Decoded on SoundPool's own thread; 0 when the TV has no such file. */
@@ -49,8 +50,17 @@ final class NavSounds {
     /** The tick for a move in {@code direction} (one of View.FOCUS_LEFT, RIGHT, UP, DOWN). */
     void play(int direction) {
         requests++;
-        int id = direction == View.FOCUS_LEFT ? left : direction == View.FOCUS_RIGHT ? right
-                : direction == View.FOCUS_UP ? up : down;
+        sound(direction == View.FOCUS_LEFT ? left : direction == View.FOCUS_RIGHT ? right
+                : direction == View.FOCUS_UP ? up : down);
+    }
+
+    /** Fire TV's select tick: the Home button pressed where Glass Home already is. */
+    void select() {
+        selects++;
+        sound(select);
+    }
+
+    private void sound(int id) {
         if (id == 0 || Settings.System.getInt(context.getContentResolver(), Settings.System.SOUND_EFFECTS_ENABLED, 1) == 0) return;
         pool.play(id, VOLUME, VOLUME, 0, 0, 1f);
     }

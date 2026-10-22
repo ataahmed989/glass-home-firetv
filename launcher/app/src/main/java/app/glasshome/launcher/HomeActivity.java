@@ -130,8 +130,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private int backdropGeneration;
     private int featuredGeneration;
     private boolean resumed;
-    /** Whether Glass Home is the screen in front (for HomeButtonService); main thread only. */
-    static boolean inFront;
+    /**
+     * Glass Home has been out of sight (onStop) since it was last in front: back from another app,
+     * rather than from a trip through Amazon's home (the Home button pressed on Home), which only pauses it.
+     */
+    private boolean stopped = true;
+    private boolean teamsFetching;
+    /** Whether Glass Home is the screen in front (for HomeButtonService); set on the main thread. */
+    static volatile boolean inFront;
 
     // What fills the screen behind Home: the background, or the focused streaming app's featured titles
     private String presentedKey;
@@ -544,6 +550,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      */
     private void refreshMyTeams() {
         main.removeCallbacks(teamsTick);
+        teamsFetching = true;
         final List<String> teams = config.favoriteTeams;
         pagesNet.execute(() -> {
             List<Sports.Game> games = new ArrayList<>();
@@ -557,7 +564,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             Sports.Game next = Sports.nextFor(games, teams);
             main.post(() -> {
                 weather.setGame(next);
-                if (resumed) main.postDelayed(teamsTick, next != null && next.live() ? SPORTS_LIVE_MS : SPORTS_IDLE_MS);
+                teamsFetching = false;
+                if (!stopped) main.postDelayed(teamsTick, next != null && next.live() ? SPORTS_LIVE_MS : SPORTS_IDLE_MS);
             });
         });
     }
@@ -1751,6 +1759,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onResume() {
         super.onResume();
+        boolean back = stopped;
+        stopped = false;
         resumed = true;
         inFront = true;
         HomeButtonService.glassHomeResumed();
@@ -1760,11 +1770,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(weatherTick);
         long age = System.currentTimeMillis() - weather.lastUpdated();
         main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? RESUME_REFRESH_MS : WEATHER_EVERY_MS - age);
+        // Back from a trip through Amazon's home (the Home button pressed on Home), nothing else has run
+        // meanwhile: nothing is fetched again, and the scores' timer kept going
         main.removeCallbacks(resumeRefresh);
-        main.postDelayed(resumeRefresh, RESUME_REFRESH_MS);
+        if (back || (!teamsFetching && !main.hasCallbacks(teamsTick))) main.postDelayed(resumeRefresh, RESUME_REFRESH_MS);
         // Continue Watching is read from the TV itself, quickly: it is up to date before Home shows
         // (under the cover, after the Home button), rather than changing just after
-        refreshWatching();
+        if (back) refreshWatching();
         main.removeCallbacks(shownFallback);
         main.postDelayed(shownFallback, SHOWN_FALLBACK_MS);
         snapshotLater(SNAPSHOT_IDLE_MS);
@@ -1824,7 +1836,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(shownFallback);
         main.removeCallbacks(takeSnapshot);
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
-        HomeButtonService.leftUnexpectedly(showingHomeAsTheHomeButtonLeavesIt());
+        HomeButtonService.leftUnexpectedly(showingHomeAsTheHomeButtonLeavesIt(), page == HOME && tabs.selected() == HOME);
         // The snapshot shows Home as it is now: copied again only if Home has been drawn since (focus
         // moved on to the app just opened, the clock turned…), as its stand-in on the way back must match it
         if (snapshotDue && showingHomeAsTheHomeButtonLeavesIt()) {
@@ -1837,7 +1849,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(advanceSlide);
         main.removeCallbacks(weatherTick);
         main.removeCallbacks(sportsTick);
-        main.removeCallbacks(teamsTick);
         super.onPause();
     }
 
@@ -1856,6 +1867,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onStop() {
         super.onStop();
+        stopped = true;
+        main.removeCallbacks(teamsTick);
         ImageCache.get(this).trimMemory();
         for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
         titleDetail.trimMemory();
