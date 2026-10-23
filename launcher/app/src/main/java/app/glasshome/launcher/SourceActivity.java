@@ -44,11 +44,12 @@ public final class SourceActivity extends Activity {
             // HW4, HW5, HW6 are HDMI 1, 2, 3
             all.sort((a, b) -> a.getId().compareTo(b.getId()));
             for (TvInputInfo info : all) {
-                if (info.getType() != TvInputInfo.TYPE_HDMI || info.isHidden(this)) continue;
+                int t = info.getType();
+                if (t != TvInputInfo.TYPE_HDMI && t != TvInputInfo.TYPE_COMPOSITE && t != TvInputInfo.TYPE_COMPONENT || info.isHidden(this)) continue;
                 inputs.add(info);
                 CharSequence label = info.loadCustomLabel(this);
                 if (label == null) label = info.loadLabel(this);
-                names.add(label == null ? "HDMI " + inputs.size() : label.toString());
+                names.add(label == null ? (t == TvInputInfo.TYPE_HDMI ? "HDMI " : "AV ") + inputs.size() : label.toString());
             }
         }
         list = new SourceList(this);
