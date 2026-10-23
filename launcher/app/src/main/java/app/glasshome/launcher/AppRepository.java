@@ -45,7 +45,7 @@ final class AppRepository {
         List<AppEntry> extras = new ArrayList<>();
         for (Map.Entry<String, ActivityInfo> app : launchable.entrySet()) {
             String pkg = app.getKey();
-            if (added.contains(pkg) || config.hidden.contains(pkg) || pkg.equals(context.getPackageName())) continue;
+            if (added.contains(pkg) || config.hidden.contains(pkg) || (!BuildConfig.FRIEND_TV && pkg.equals(context.getPackageName()))) continue;
             if ((app.getValue().applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) continue;
             AppEntry entry = entryFor(pm, pkg, app.getValue(), categories.get(pkg));
             if (entry != null) extras.add(entry);
