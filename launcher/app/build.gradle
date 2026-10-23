@@ -6,10 +6,16 @@ android {
     namespace "app.glasshome.launcher"
     compileSdk 35
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
+        // -PfriendTv=true: a TV set up for someone else: no Sleep (no device admin), and a Remove Glass Home option
+        buildConfigField "boolean", "FRIEND_TV", (project.findProperty("friendTv") ?: "false").toString()
         applicationId "app.glasshome.launcher"
         // Fire TV Stick 4K Plus runs Fire OS 8 (Android 11, API 30)
-        minSdk 30
+        minSdk 28
         targetSdk 35
         versionCode 1
         versionName "1.0"

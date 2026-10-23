@@ -504,7 +504,7 @@ public final class HomeButtonService extends AccessibilityService {
 
     private boolean usageAccess() {
         AppOpsManager ops = getSystemService(AppOpsManager.class);
-        return ops != null && ops.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), getPackageName())
+        return ops != null && ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), getPackageName())
                 == AppOpsManager.MODE_ALLOWED;
     }
 

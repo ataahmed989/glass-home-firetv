@@ -202,7 +202,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Rect window = getWindowManager().getCurrentWindowMetrics().getBounds();
+        Rect window;
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            window = getWindowManager().getCurrentWindowMetrics().getBounds();
+        } else {
+            // Fire OS 7 (Android 9): the screen's full size, as WindowMetrics gives it on Fire OS 8
+            android.graphics.Point size = new android.graphics.Point();
+            getWindowManager().getDefaultDisplay().getRealSize(size);
+            window = new Rect(0, 0, size.x, size.y);
+        }
         screenW = window.width();
         screenH = window.height();
         Ui.init(screenW);
@@ -1254,13 +1262,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 WidgetPanel.GLANCES.equals(layout)));
         // Sleep's permission can be given back here (it is granted once over ADB), so the launcher can always be uninstalled
         boolean sleep = SystemControls.canSleep(this);
-        options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
+        if (!BuildConfig.FRIEND_TV) options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
                 sleep ? "Lets Control Center put the TV to sleep" : "Turned on during setup over ADB", sleep, sleep));
         // Glass Home can turn its service back on itself when allowed to (see HomeServiceRecovery)
         boolean redirect = homeButtonServiceOn() || HomeServiceRecovery.allowed(this);
         options.add(SettingsPanel.Option.toggle("HOME BUTTON", "Opens Glass Home",
                 redirect ? "Off: the Home button shows Amazon's home" : "Turned on during setup over ADB",
                 redirect, redirect && settings.homeButtonOpensGlassHome()));
+        if (BuildConfig.FRIEND_TV) options.add(SettingsPanel.Option.choice("REMOVE", "Remove Glass Home",
+                "Uninstalls it; the Home button goes back to Amazon's home", "remove", null, false));
         panel.setOptions(options, start);
         panel.setVisibility(View.VISIBLE);
         panel.setAlpha(Ui.reducedMotion ? 1f : 0f);
@@ -1370,6 +1380,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void onSettingChosen(SettingsPanel.Option option) {
+        if (option.section.equals("REMOVE")) {
+            // Fire OS's own uninstall screen; the Home button goes back to Amazon's home with it
+            startActivity(new Intent(Intent.ACTION_DELETE, android.net.Uri.parse("package:" + getPackageName()))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            return;
+        }
         if (option.toggle && option.section.equals("HOME BUTTON")) {
             settings.setHomeButtonOpensGlassHome(option.checked);
             if (option.checked) HomeServiceRecovery.restore(this);   // Fire OS may have turned the service off meanwhile
@@ -1773,7 +1789,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         // Back from a trip through Amazon's home (the Home button pressed on Home), nothing else has run
         // meanwhile: nothing is fetched again, and the scores' timer kept going
         main.removeCallbacks(resumeRefresh);
-        if (back || (!teamsFetching && !main.hasCallbacks(teamsTick))) main.postDelayed(resumeRefresh, RESUME_REFRESH_MS);
+        if (back || (!teamsFetching && !(android.os.Build.VERSION.SDK_INT >= 29 && main.hasCallbacks(teamsTick)))) main.postDelayed(resumeRefresh, RESUME_REFRESH_MS);
         // Continue Watching is read from the TV itself, quickly: it is up to date before Home shows
         // (under the cover, after the Home button), rather than changing just after
         if (back) refreshWatching();
