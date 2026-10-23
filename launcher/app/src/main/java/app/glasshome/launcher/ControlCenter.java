@@ -17,7 +17,7 @@ import android.view.View;
  * Control Center, after the iOS 26 Control Center kit: separate Liquid Glass modules on the kit's
  * grid (a 68 px unit, 15 px gutters, four columns), scaled for the TV and hung under the status
  * capsule. Wi-Fi and Bluetooth are 2×1 pills, Sleep and the Sleep Timer 2×2 tiles, and the four
- * shortcuts (Fire TV's screen mirroring, accessibility and display settings, and this launcher's
+ * shortcuts (Fire TV's screen mirroring, the HDMI inputs (Source), display settings, and this launcher's
  * Home Screen settings) 1×1 circles. Each module is its own glass; the focused one lights up, the
  * kit's On look (near-white glass, dark content). Symbol wells follow the kit too: blue while
  * connected, white while a timer runs.
@@ -26,7 +26,7 @@ import android.view.View;
  * sit, Select acts, Back (or Up from the top) closes it.
  */
 final class ControlCenter extends View {
-    enum Item { SLEEP, WIFI, BLUETOOTH, TIMER, MIRRORING, ACCESSIBILITY, DISPLAY, HOME_SCREEN }
+    enum Item { SLEEP, WIFI, BLUETOOTH, TIMER, MIRRORING, SOURCE, DISPLAY, HOME_SCREEN }
 
     interface Listener {
         void onControl(Item item);
@@ -37,7 +37,7 @@ final class ControlCenter extends View {
     // In kit px: the grid's right edge lines up with the capsule's, under it
     private static final float GRID_W = 318, TOP = 152 / K, RIGHT = 57 / K;
     private static final float WELL = 40, TILE_R = 30;
-    private static final String[] ROUND_NAMES = {"Screen Mirroring", "Accessibility", "Display & Sounds", "Home Screen"};
+    private static final String[] ROUND_NAMES = {"Screen Mirroring", "Source", "Display & Sounds", "Home Screen"};
     private static final int ACCENT_BLUE = 0xFF0088FF;
 
     private final Glass glass;
@@ -392,18 +392,19 @@ final class ControlCenter extends View {
                 c.drawRoundRect(front, rr, rr, glyph);
                 break;
             }
-            case ACCESSIBILITY: {
-                // The accessibility figure cut out of a solid disc: head, arms open and level, body, legs apart
-                float u = h * 0.98f;
-                int layer = c.saveLayer(cx - u - 2, cy - u - 2, cx + u + 2, cy + u + 2, null);
-                c.drawCircle(cx, cy, u, glyphFill);
-                cutout.setStrokeWidth(u * 0.17f);
-                c.drawCircle(cx, cy - u * 0.50f, u * 0.15f, cutoutFill);
-                c.drawLine(cx - u * 0.50f, cy - u * 0.20f, cx + u * 0.50f, cy - u * 0.20f, cutout);
-                c.drawLine(cx, cy - u * 0.20f, cx, cy + u * 0.16f, cutout);
-                c.drawLine(cx, cy + u * 0.14f, cx - u * 0.26f, cy + u * 0.58f, cutout);
-                c.drawLine(cx, cy + u * 0.14f, cx + u * 0.26f, cy + u * 0.58f, cutout);
-                c.restoreToCount(layer);
+            case SOURCE: {
+                // Input: an arrow into an open box
+                path.moveTo(cx - h * 0.2f, cy - h * 0.85f);
+                path.lineTo(cx + h * 0.85f, cy - h * 0.85f);
+                path.lineTo(cx + h * 0.85f, cy + h * 0.85f);
+                path.lineTo(cx - h * 0.2f, cy + h * 0.85f);
+                c.drawPath(path, glyph);
+                c.drawLine(cx - h * 0.9f, cy, cx + h * 0.3f, cy, glyph);
+                path.reset();
+                path.moveTo(cx - h * 0.08f, cy - h * 0.38f);
+                path.lineTo(cx + h * 0.3f, cy);
+                path.lineTo(cx - h * 0.08f, cy + h * 0.38f);
+                c.drawPath(path, glyph);
                 break;
             }
             case DISPLAY: {

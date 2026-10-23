@@ -57,6 +57,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Source: the HDMI inputs, opened from Control Center -->
+        <activity
+            android:name=".SourceActivity"
+            android:excludeFromRecents="true"
+            android:taskAffinity="app.glasshome.launcher.source"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
         <!-- Launchable from Your Apps, and a home screen the Home button can be pointed at -->
         <activity
             android:name=".HomeActivity"
