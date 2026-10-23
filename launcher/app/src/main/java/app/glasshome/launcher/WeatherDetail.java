@@ -88,7 +88,7 @@ final class WeatherDetail extends View {
         glass.draw(c, rect, Ui.px(44), getLeft(), getTop(), 0f, tint);
 
         float x = left + Ui.px(64);
-        c.drawText("Centerville", x, top + Ui.px(86), city);
+        c.drawText("Columbus", x, top + Ui.px(86), city);
         c.drawText("Ohio", x, top + Ui.px(122), state);
         if (data == null) {
             float cx = (left + right) / 2f;

@@ -18,7 +18,7 @@ import java.util.Locale;
 /** Live Centerville, OH weather from Open-Meteo (no API key), in °F and America/New_York time. */
 final class Weather {
     static final ZoneId ZONE = ZoneId.of("America/New_York");
-    private static final String URL = "https://api.open-meteo.com/v1/forecast?latitude=39.6284&longitude=-84.1594"
+    private static final String URL = "https://api.open-meteo.com/v1/forecast?latitude=39.9995&longitude=-83.0128"
             + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code,is_day"
             + "&hourly=temperature_2m,weather_code,is_day,precipitation_probability"
             + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"

@@ -497,7 +497,7 @@ final class WidgetPanel extends View {
     private void drawWeatherLarge(Canvas c, int w, int h) {
         float cx = w / 2f;
         text(400, 32, 0xFFFFFFFF, Paint.Align.CENTER);
-        c.drawText("Centerville", cx, Ui.px(49), t);
+        c.drawText("Columbus", cx, Ui.px(49), t);
         text(400, 19, 0xB3FFFFFF, Paint.Align.CENTER);
         c.drawText("Ohio", cx, Ui.px(78), t);
         if (weather == null) {
@@ -555,7 +555,7 @@ final class WidgetPanel extends View {
     private void drawWeatherSmall(Canvas c, float s) {
         float left = Ui.px(18);
         text(500, 16, 0xF2FFFFFF, Paint.Align.LEFT);
-        c.drawText("Centerville", left, Ui.px(34), t);
+        c.drawText("Columbus", left, Ui.px(34), t);
         if (weather == null) {
             text(400, 15, 0x99FFFFFF, Paint.Align.LEFT);
             c.drawText(weatherFailed ? "Unavailable" : "Loading…", left, Ui.px(100), t);
