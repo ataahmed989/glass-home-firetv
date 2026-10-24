@@ -80,9 +80,11 @@ public final class SourceActivity extends Activity {
 
     @Override
     protected void onStop() {
+        // Amazon's brief overlays (input notices, volume) stop this too: keep the list, drop the picture
         super.onStop();
         tv.reset();
-        finish();
+        list.current = -1;
+        list.setVisibility(View.VISIBLE);
     }
 
     /** The list, drawn like Control Center's modules. */
