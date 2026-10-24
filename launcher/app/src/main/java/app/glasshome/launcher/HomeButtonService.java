@@ -258,6 +258,19 @@ public final class HomeButtonService extends AccessibilityService {
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
         keyAt = SystemClock.uptimeMillis();
+        // On the friend's TV (Android 9) Glass Home takes up to 5 s to come back: arrows and Select
+        // pressed meanwhile are held, so Amazon's home under the cover neither moves nor shows
+        if (BuildConfig.FRIEND_TV && covering) {
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                case KeyEvent.KEYCODE_DPAD_CENTER:
+                case KeyEvent.KEYCODE_ENTER:
+                    return true;
+            }
+        }
         lift();   // someone is using the remote: nothing may stand in front of it
         if (overAmazonHome && event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
             // Back closes what was over Amazon's home (Fire TV's quick menu); a moment later, if Amazon's
