@@ -98,6 +98,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private Glass dockGlass, capsuleGlass, weatherGlass, tabGlass;
     private ClockCapsule capsule;
     private SourcePill source;
+    private boolean menuHeld;
     private NavSounds navSounds;
     private TabBar tabs;
     private final ShelfPage[] pages = new ShelfPage[4];   // index by tab; [HOME] stays null
@@ -308,7 +309,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 ViewGroup.LayoutParams.WRAP_CONTENT, Ui.px(Ui.CAPSULE_H), Gravity.TOP | Gravity.START);
         sl.topMargin = Ui.px(Ui.CAPSULE_TOP);
         sl.leftMargin = Ui.px(Ui.CAPSULE_RIGHT);
-        if (!BuildConfig.FRIEND_TV) source.setVisibility(View.GONE);
+        source.setVisibility(View.GONE);   // Source opens by holding ☰ instead
         root.addView(source, sl);
         capsule.updateTime();
 
@@ -1491,8 +1492,20 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             return true;
         }
         if (code == KeyEvent.KEYCODE_MENU) {
-            // The remote's ☰ button: once per press, to the tab bar and back
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) onMenu();
+            // The remote's ☰ button: a press goes to the tab bar and back; on the friend's TV, holding it opens Source
+            if (!BuildConfig.FRIEND_TV) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) onMenu();
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) menuHeld = false;
+                else if (!menuHeld && (event.isLongPress() || event.getEventTime() - event.getDownTime() >= 600)) {
+                    menuHeld = true;
+                    startActivity(new Intent(this, SourceActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                }
+            } else if (event.getAction() == KeyEvent.ACTION_UP && !menuHeld) {
+                onMenu();
+            }
             return true;
         }
         int step = stackStep(code);
@@ -1575,7 +1588,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case TABS:
                 // Moving along the tabs selects them; the page follows once the selection rests
-                if (direction == View.FOCUS_LEFT && tabs.selected() == 0 && BuildConfig.FRIEND_TV) {
+                if (direction == View.FOCUS_LEFT && tabs.selected() == 0 && source.getVisibility() == View.VISIBLE) {
                     source.requestFocus();
                 } else if (direction == View.FOCUS_LEFT && tabs.selected() > 0) {
                     selectTab(tabs.selected() - 1, true);

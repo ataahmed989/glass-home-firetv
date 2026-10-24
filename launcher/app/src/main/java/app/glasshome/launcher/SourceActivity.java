@@ -42,7 +42,7 @@ public final class SourceActivity extends Activity {
         if (manager != null) {
             List<TvInputInfo> all = new ArrayList<>(manager.getTvInputList());
             // HW4, HW5, HW6 are HDMI 1, 2, 3
-            all.sort((a, b) -> a.getId().compareTo(b.getId()));
+            all.sort((a, b) -> a.getType() != b.getType() ? (a.getType() == TvInputInfo.TYPE_HDMI ? -1 : b.getType() == TvInputInfo.TYPE_HDMI ? 1 : 0) : a.getId().compareTo(b.getId()));
             for (TvInputInfo info : all) {
                 int t = info.getType();
                 if (t != TvInputInfo.TYPE_HDMI && t != TvInputInfo.TYPE_COMPOSITE && t != TvInputInfo.TYPE_COMPONENT || info.isHidden(this)) continue;
