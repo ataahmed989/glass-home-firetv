@@ -70,7 +70,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
     private static final long RESUME_REFRESH_MS = 600;
 
-    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL }
+    enum Zone { GRID, HERO, WEATHER, CAPSULE, SOURCE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL }
 
     static final int HOME = 0, MOVIES = 1, TV = 2, SPORTS = 3;
 
@@ -97,6 +97,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private GlassDock dock;
     private Glass dockGlass, capsuleGlass, weatherGlass, tabGlass;
     private ClockCapsule capsule;
+    private SourcePill source;
     private NavSounds navSounds;
     private TabBar tabs;
     private final ShelfPage[] pages = new ShelfPage[4];   // index by tab; [HOME] stays null
@@ -302,6 +303,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         cl.topMargin = Ui.px(Ui.CAPSULE_TOP);
         cl.rightMargin = Ui.px(Ui.CAPSULE_RIGHT);
         root.addView(capsule, cl);
+        source = new SourcePill(this, capsuleGlass);
+        FrameLayout.LayoutParams sl = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.px(Ui.CAPSULE_H), Gravity.TOP | Gravity.START);
+        sl.topMargin = Ui.px(Ui.CAPSULE_TOP);
+        sl.leftMargin = Ui.px(Ui.CAPSULE_RIGHT);
+        if (!BuildConfig.FRIEND_TV) source.setVisibility(View.GONE);
+        root.addView(source, sl);
         capsule.updateTime();
 
         tabGlass = new Glass(config.blurGlass, 0xB31C1E23);
@@ -865,7 +873,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         barHidden = hidden;
         float y = hidden ? -Ui.px(Ui.BAR_HIDE_Y) : 0f;
         long ms = Ui.reducedMotion || atOnce ? 0 : Ui.SCROLL_MS;
-        for (View v : new View[] {tabs, capsule}) {
+        for (View v : new View[] {tabs, capsule, source}) {
             v.animate().cancel();
             if (ms == 0) {
                 v.setTranslationY(y);
@@ -1123,6 +1131,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void onMenu() {
         switch (zone()) {
             case TABS:
+            case SOURCE:
                 flushTab();
                 focusPage();
                 return;
@@ -1177,6 +1186,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (titleDetail.isOpen()) return Zone.PAGE_DETAIL;
         if (tabs.isFocused()) return Zone.TABS;
         if (capsule.isFocused()) return Zone.CAPSULE;
+        if (source.isFocused()) return Zone.SOURCE;
         if (page != HOME) return Zone.PAGE;
         if (stage.isFocused()) return Zone.HERO;
         if (weather.isFocused()) return Zone.WEATHER;
@@ -1565,7 +1575,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case TABS:
                 // Moving along the tabs selects them; the page follows once the selection rests
-                if (direction == View.FOCUS_LEFT && tabs.selected() > 0) {
+                if (direction == View.FOCUS_LEFT && tabs.selected() == 0 && BuildConfig.FRIEND_TV) {
+                    source.requestFocus();
+                } else if (direction == View.FOCUS_LEFT && tabs.selected() > 0) {
                     selectTab(tabs.selected() - 1, true);
                 } else if (direction == View.FOCUS_RIGHT) {
                     if (tabs.selected() < tabs.count() - 1) {
@@ -1615,6 +1627,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 else if (direction == View.FOCUS_RIGHT && capsule.item() == ClockCapsule.CONTROL) capsule.setItem(ClockCapsule.PROFILE);
                 else if (direction == View.FOCUS_LEFT && capsule.item() == ClockCapsule.PROFILE) capsule.setItem(ClockCapsule.CONTROL);
                 else if (direction == View.FOCUS_LEFT) focusTabs();
+                return;
+            case SOURCE:
+                if (direction == View.FOCUS_RIGHT) focusTabs();
+                else if (direction == View.FOCUS_DOWN) leaveCapsuleDown();
                 return;
             case CONTROL:
                 if (!control.move(direction) && direction == View.FOCUS_UP) closeControlCenter();
@@ -1670,6 +1686,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case SETTINGS:
                 panel.choose();
+                return;
+            case SOURCE:
+                startActivity(new Intent(this, SourceActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 return;
             case CAPSULE:
                 if (capsule.item() == ClockCapsule.CONTROL) openControlCenter();
