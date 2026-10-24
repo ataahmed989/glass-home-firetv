@@ -88,7 +88,7 @@ public final class HomeButtonService extends AccessibilityService {
     /** The service starting this soon after Fire OS has is the TV starting, on Amazon's home. */
     static final long BOOT_MS = 2 * 60_000;
     /** The cover never stays longer than this, whatever happens. */
-    static final long COVER_MAX_MS = 2000;
+    static final long COVER_MAX_MS = BuildConfig.FRIEND_TV ? 6500 : 2000;   // Android 9 holds starts back about 5 s after Home
     /** How long after another app has taken the screen the cover is made ready, out of the way of its opening. */
     static final long COVER_READY_MS = 1500;
     /** How long after Glass Home is back (and its cover gone) a cover is made ready over it, for the next press. */
