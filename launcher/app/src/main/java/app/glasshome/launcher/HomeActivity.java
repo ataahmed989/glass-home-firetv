@@ -1827,11 +1827,29 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return page == HOME && zone() == Zone.GRID && !barHidden;
     }
 
+    /** Glass Home lost the top spot and has not been paused since. */
+    private boolean lostTop;
+
+    /** Losing the top spot comes before the pause: the Home button's cover goes up then (see HomeButtonService#losingTop). */
+    @Override
+    public void onTopResumedActivityChanged(boolean top) {
+        super.onTopResumedActivityChanged(top);
+        if (!resumed) return;
+        if (!top) {
+            lostTop = true;
+            HomeButtonService.losingTop(showingHomeAsTheHomeButtonLeavesIt());
+        } else if (lostTop) {
+            lostTop = false;
+            HomeButtonService.glassHomeShown();   // never left after all: the cover goes again
+        }
+    }
+
     @Override
     protected void onPause() {
         main.removeCallbacks(resumeRefresh);
         resumed = false;
         inFront = false;
+        lostTop = false;
         cancelLinkWait();
         main.removeCallbacks(shownFallback);
         main.removeCallbacks(takeSnapshot);

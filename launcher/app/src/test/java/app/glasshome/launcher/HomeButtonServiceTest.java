@@ -277,6 +277,27 @@ public class HomeButtonServiceTest {
         assertNull("the same press", shadowOf(app).getNextStartedActivity());
     }
 
+    /**
+     * Glass Home losing the top spot, which Fire OS says before it pauses, only puts the cover up: the
+     * trip back waits for the pause, and Glass Home kept in front (Alexa's overlay) is left as it is.
+     */
+    @Test
+    public void losingTheTopSpotOnlyCovers() {
+        usageAccess();
+        connectedAfterStartUp();
+        HomeActivity.inFront = true;
+        HomeButtonService.glassHomeResumed();
+
+        resumed("com.amazon.tv.launcher", AMAZON_HOME);
+        HomeButtonService.losingTop(true);
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(HomeButtonService.WATCH_MS));
+        assertNull("not yet paused", shadowOf(app).getNextStartedActivity());
+
+        HomeActivity.inFront = false;
+        HomeButtonService.leftUnexpectedly(true);
+        assertGlassHomeStarted();
+    }
+
     /** Without usage access, Glass Home leaving unexpectedly is not taken for Amazon's home: nothing is guessed. */
     @Test
     public void withoutUsageAccessNothingIsGuessed() {

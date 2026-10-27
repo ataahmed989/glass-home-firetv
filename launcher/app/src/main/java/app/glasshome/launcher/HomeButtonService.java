@@ -98,6 +98,8 @@ public final class HomeButtonService extends AccessibilityService {
     static final int PRESS_TRIES = 5;
     /** How long the cover stays once Glass Home is shown again (see {@link #glassHomeShown}). */
     static final long SHOWN_HOLD_MS = 400;
+    /** How long Home's cover takes to fade out over Glass Home, and in over a browse page. */
+    static final long COVER_OUT_MS = 120, COVER_ACROSS_MS = 150;
 
     /**
      * Glass Home is started from here, so that the cover is drawn meanwhile: the start waits on the
@@ -138,10 +140,14 @@ public final class HomeButtonService extends AccessibilityService {
     private int retries;
     private final Runnable check = this::check;
     /**
-     * The cover's window: made ready (hidden) while another app is in front, and while Glass Home is,
-     * and shown for a trip back.
+     * The cover's window: made ready (hidden) while another app is in front, and shown for a trip back;
+     * over Glass Home, when {@link #home} is not ready yet, added at the press.
      */
     private CoverView cover;
+    /** The cover kept up, invisible, over Glass Home, for the Home button pressed there; null otherwise. */
+    private HomeCover home;
+    /** The cover up is {@link #home}. */
+    private boolean homeCovering;
     /** Beneath the cover when it fades in (see {@link #addCover}); null otherwise. */
     private View blackout;
     private boolean covering;
@@ -167,6 +173,19 @@ public final class HomeButtonService extends AccessibilityService {
         leftAt = -LEFT_MS;
         redirectedAt = -REDIRECT_GAP_MS;
         answeredAt = 0;
+    }
+
+    /**
+     * Glass Home is no longer the top screen, without opening anything: Home pressed on Glass Home, as a
+     * rule. Fire OS says so before Glass Home is paused (20-200 ms before, measured), and Amazon's home,
+     * pressed for again and again, can already be on screen, black, by the time it is: the cover goes
+     * up now. Should Glass Home stay in front after all (Alexa's overlay), it goes again once Glass
+     * Home is back on top.
+     */
+    static void losingTop(boolean asSnapshot) {
+        HomeButtonService s = connected;
+        if (s == null || opening()) return;
+        s.cover(asSnapshot ? Fade.AT_ONCE : Fade.ACROSS);
     }
 
     /**
@@ -210,10 +229,10 @@ public final class HomeButtonService extends AccessibilityService {
         s.overAmazonHome = false;
         s.handler.removeCallbacks(s.check);
         s.handler.removeCallbacks(s.readyCover);
-        if (!s.covering && (s.cover == null || s.coverFade == Fade.FROM_BLACK)) {
+        if (!s.covering) {
             s.dropCover();   // back some other way (Back from an app): the cover made ready for that is not needed
             s.handler.removeCallbacks(s.readyHomeCover);
-            s.handler.postDelayed(s.readyHomeCover, HOME_COVER_READY_MS);
+            if (s.home == null) s.handler.postDelayed(s.readyHomeCover, HOME_COVER_READY_MS);
         }
     }
 
@@ -227,13 +246,16 @@ public final class HomeButtonService extends AccessibilityService {
         if (s == null) return;
         s.handler.removeCallbacks(s.readyCover);
         s.handler.removeCallbacks(s.readyHomeCover);
-        s.dropCover();   // the one made ready over Glass Home: the way back from an app fades in from black instead
+        s.dropCover();
+        if (!s.homeCovering) s.dropHomeCover();   // the way back from an app fades in from black instead
         s.handler.postDelayed(s.readyCover, COVER_READY_MS);
     }
 
     static void snapshotChanged() {
         HomeButtonService s = connected;
-        if (s != null && s.cover != null && HomeSnapshot.latest() != null) s.cover.show(HomeSnapshot.latest());
+        if (s == null || HomeSnapshot.latest() == null) return;
+        if (s.cover != null) s.cover.show(HomeSnapshot.latest());
+        if (s.home != null) s.home.draw(HomeSnapshot.latest());
     }
 
     @Override
@@ -248,6 +270,7 @@ public final class HomeButtonService extends AccessibilityService {
     public boolean onUnbind(Intent intent) {
         lift();
         dropCover();
+        dropHomeCover();
         handler.removeCallbacks(readyCover);
         handler.removeCallbacks(readyHomeCover);
         handler.removeCallbacks(check);
@@ -524,6 +547,12 @@ public final class HomeButtonService extends AccessibilityService {
         handler.removeCallbacks(readyHomeCover);
         handler.removeCallbacks(lift);
         handler.postDelayed(lift, COVER_MAX_MS);
+        if (homeCovering || (!covering && cover == null && home != null && home.ready())) {
+            boolean across = fade == Fade.ACROSS && !homeCovering;   // over a browse page, Home crossfades in
+            covering = homeCovering = true;
+            home.show(across ? COVER_ACROSS_MS : 0);
+            return;
+        }
         if (cover == null && !addCover(fade, View.VISIBLE)) return;   // no overlay possible right now; the redirect still happens
         if (!covering && blackout == null && fade != coverFade && fade != Fade.FROM_BLACK) restyle(fade);
         covering = true;
@@ -533,15 +562,24 @@ public final class HomeButtonService extends AccessibilityService {
     }
 
     /**
-     * Glass Home is in front with no cover up: one is made ready over it, hidden (so without a
-     * surface), and the Home button pressed here only has to show it. Added at the press instead, its
+     * Glass Home is in front with no cover up: one is put up over it, invisible ({@link HomeCover}),
+     * and the Home button pressed here only has to make it visible. Added at the press instead, its
      * first frame came 59-292 ms after the press, and past some 150 ms Amazon's home had put a black
-     * frame on screen first (1 press in 5); made ready, 31-117 ms, and no black frame in 12 presses.
+     * frame on screen first (1 press in 5).
      */
     private void readyHomeCover() {
-        if (!HomeActivity.inFront || covering || cover != null || HomeSnapshot.latest() == null
+        if (!HomeActivity.inFront || covering || cover != null || home != null || HomeSnapshot.latest() == null
                 || !new HomeSettings(this).homeButtonOpensGlassHome()) return;
-        if (addCover(Fade.AT_ONCE, View.GONE)) cover.show(HomeSnapshot.latest());
+        WindowManager.LayoutParams lp = overlay(PixelFormat.TRANSLUCENT);
+        lp.windowAnimations = 0;
+        home = HomeCover.add(this, getSystemService(WindowManager.class), lp);
+    }
+
+    private void dropHomeCover() {
+        if (home == null) return;
+        home.remove();
+        home = null;
+        homeCovering = false;
     }
 
     /**
@@ -617,16 +655,17 @@ public final class HomeButtonService extends AccessibilityService {
 
     /**
      * Takes the cover away: the black at once, the snapshot faded out by Fire OS (over Glass Home,
-     * once it is drawn). A cover made ready but not up stays ready. Over Glass Home it is only hidden,
-     * and so ready again at once: taken away, the next press (Home pressed again and again) had to
-     * add it afresh, which can take long enough for Amazon's home to put a black frame up first.
+     * once it is drawn). A cover made ready but not up stays ready.
      */
     private void lift() {
         handler.removeCallbacks(lift);
         if (!covering) return;
         covering = false;
-        if (HomeActivity.inFront && blackout == null && cover != null && coverFade != Fade.FROM_BLACK) {
-            cover.setVisibility(View.GONE);   // faded out by Fire OS all the same
+        if (homeCovering) {
+            homeCovering = false;
+            // Over Glass Home it fades out and stays, ready for the next press; over anything else it goes
+            if (HomeActivity.inFront) home.hide(COVER_OUT_MS);
+            else dropHomeCover();
             return;
         }
         removeCover();
