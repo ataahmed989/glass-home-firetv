@@ -210,7 +210,7 @@ public final class HomeButtonService extends AccessibilityService {
         s.overAmazonHome = false;
         s.handler.removeCallbacks(s.check);
         s.handler.removeCallbacks(s.readyCover);
-        if (!s.covering) {
+        if (!s.covering && (s.cover == null || s.coverFade == Fade.FROM_BLACK)) {
             s.dropCover();   // back some other way (Back from an app): the cover made ready for that is not needed
             s.handler.removeCallbacks(s.readyHomeCover);
             s.handler.postDelayed(s.readyHomeCover, HOME_COVER_READY_MS);
@@ -617,12 +617,18 @@ public final class HomeButtonService extends AccessibilityService {
 
     /**
      * Takes the cover away: the black at once, the snapshot faded out by Fire OS (over Glass Home,
-     * once it is drawn). A cover made ready but not up stays ready.
+     * once it is drawn). A cover made ready but not up stays ready. Over Glass Home it is only hidden,
+     * and so ready again at once: taken away, the next press (Home pressed again and again) had to
+     * add it afresh, which can take long enough for Amazon's home to put a black frame up first.
      */
     private void lift() {
         handler.removeCallbacks(lift);
         if (!covering) return;
         covering = false;
+        if (HomeActivity.inFront && blackout == null && cover != null && coverFade != Fade.FROM_BLACK) {
+            cover.setVisibility(View.GONE);   // faded out by Fire OS all the same
+            return;
+        }
         removeCover();
         if (HomeActivity.inFront) {
             handler.removeCallbacks(readyHomeCover);
