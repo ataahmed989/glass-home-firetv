@@ -109,6 +109,14 @@ def netflix():
     """Flat near-black, no gradient; the red wordmark alone on its layer, with no glow baked in."""
     img = load("netflix-white.png")
     alpha = np.clip((0.92 - img[..., 1]) / (0.92 - 0.05), 0, 1)
+    # The wordmark at 80% of the tile's width, about its centre, as on tvOS: black all round it
+    ys, xs = np.nonzero(alpha > 0.5)
+    gx, gy = (xs.min() + xs.max()) / 2, (ys.min() + ys.max()) / 2
+    scale = 0.80 * W / (xs.max() - xs.min())
+    small = Image.fromarray(np.uint8(alpha * 255), "L").resize((round(W * scale), round(H * scale)), Image.LANCZOS)
+    canvas = Image.new("L", (W, H), 0)
+    canvas.paste(small, (round(W / 2 - gx * scale), round(H / 2 - gy * scale)))
+    alpha = np.asarray(canvas, dtype=np.float32) / 255.0
     red = np.array([226, 9, 20], dtype=np.float32) / 255
     l0 = np.full(img.shape, 15 / 255, dtype=np.float32)
     save_layers("com.netflix.ninja", l0, [(np.broadcast_to(red, img.shape).copy(), alpha)])
