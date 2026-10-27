@@ -17,19 +17,14 @@ no ads and no sponsored rows.
   picture gives way to the Home background, darkened.
 - **Tabs** at the top: Home, Movies, TV Shows and Sports. The remote's ☰ (Menu) button jumps to
   them from anywhere; pressing Up repeatedly ends there too.
-- **Movies and TV Shows** (TMDB): a hero carousel with title logos, Continue Watching, Top 10,
-  new arrivals, "Popular on …" for each streaming app installed, In Theaters and Coming Soon,
+- **Movies and TV Shows** (TMDB): a hero carousel with title logos, Top 10, new arrivals, "Popular on …" for each streaming app installed, In Theaters and Coming Soon,
   Top Rated. Select opens a details page with where it streams; its "Open …" buttons go
   straight to the title's own page in that app (or to the app, where it has no link for it).
 - **Sports** (ESPN): Live Now, My Teams, and a row per league (NFL, college football, NBA,
   NHL, MLB, MLS, Premier League), with live scores, start times and the channel or app.
-- **Continue Watching**: built only from what has actually played on this TV, read from the
-  streaming apps' media sessions. Fire TV does not share Amazon's or the apps' own watch
-  history with other launchers, so it starts empty and fills as you watch. Some apps say that
-  they are playing but not what (Netflix): there, a film or show counts once it has been
-  opened from Glass Home and plays. FirePlayer tells Android nothing, so it cannot appear.
-- **Widgets**: a Smart Stack (one card with weather, your next game, Continue Watching and the
-  date) or Glances (four small squares), chosen in Home Screen settings. The stack turns only
+- **Widgets**: a Smart Stack (one card with weather, your next game and the date) or Glances
+  (four small squares: the date, weather, next game, sunrise and sunset), chosen in Home Screen
+  settings. The stack turns only
   when asked, with Play/Pause while it has focus, and stays where it was left.
 - **Control Center** from the status capsule: Sleep, Sleep Timer, Wi-Fi, Bluetooth, and
   shortcuts to screen mirroring, accessibility, display settings and Home Screen settings,
@@ -52,9 +47,8 @@ and Settings, and both one-time permissions work there. The TV's GPU (PowerVR GE
 limit on smoothness, so full-screen backgrounds are drawn in one pass, with their scrims and
 dimming folded in, and nothing animates behind content that is not on show. Its Home button
 service keeps it running as a foreground app, so Android never asks it to free memory: it lets
-go of the browse pages' pictures itself while another app is in front. Checked on the TV:
-Netflix reports that it is playing and where, but no title; FirePlayer reports nothing. Still
-to check: the other streaming apps, and Sleep itself.
+go of the browse pages' pictures itself while another app is in front. Still to check on the
+TV: Sleep itself.
 
 ## Build and test
 
@@ -77,9 +71,6 @@ With ADB debugging on and the TV reachable at `<tv-address>`:
 ```sh
 adb connect <tv-address>:5555
 adb install -r app-debug.apk
-
-# Continue Watching: lets the launcher see what the streaming apps play (Fire TV has no screen for this)
-adb shell cmd notification allow_listener app.glasshome.launcher/app.glasshome.launcher.MediaWatcher
 
 # Control Center Sleep and Sleep Timer: allows turning the screen off, nothing else.
 # Home Screen settings > Allow Sleep gives it back, so the launcher can always be uninstalled.
@@ -172,7 +163,7 @@ names resolve. Set the resolver as a nameserver in Tailscale's DNS settings inst
   API but is not endorsed or certified by TMDB. Streaming availability: JustWatch, via TMDB.
 - Links into the streaming apps: JustWatch's public GraphQL API, which is unofficial and may
   change (then "Open …" opens the app itself). Only a title's name is sent: for the banner's titles
-  and a details page as they are shown, and for a Continue Watching title when its card is opened.
+  and a details page as they are shown.
 - Scores and schedules: ESPN's public scoreboard feed, which is unofficial and may change.
 - Weather: [Open-Meteo](https://open-meteo.com/).
 - Font: [Inter](https://rsms.me/inter/), SIL Open Font License 1.1 (`assets/fonts/Inter-OFL.txt`).

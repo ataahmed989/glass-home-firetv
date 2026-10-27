@@ -14,14 +14,12 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.robolectric.Shadows.shadowOf;
 
-import android.app.Application;
 import android.content.Intent;
 import android.provider.Settings;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.annotation.LooperMode;
@@ -30,7 +28,7 @@ import app.glasshome.launcher.HomeActivity.Zone;
 
 /**
  * The widgets (Smart Stack and Glances) and the Control Center, with the remote. The next game is
- * real ESPN data recorded on 20 October 2026; the Continue Watching entry is test data.
+ * real ESPN data recorded on 20 October 2026.
  */
 @RunWith(RobolectricTestRunner.class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -38,24 +36,15 @@ import app.glasshome.launcher.HomeActivity.Zone;
 @Config(sdk = 30, qualifiers = "w960dp-h540dp-land-xhdpi")
 public class WidgetsTest {
 
-    /** Test data only: one show, as the media-session watcher would have recorded it. */
-    private static void watched() {
-        Fixtures.install();
-        Application app = RuntimeEnvironment.getApplication();
-        WatchHistory.record(app, PagesTest.snapshot("com.hbo.hbonow", "The Last of Us", "Season 2, Episode 3", 55, 12,
-                Fixtures.RECORDED_AT - 3600_000L));
-    }
-
     private static TestHome home() throws Exception {
-        watched();
+        Fixtures.install();
         TestHome h = TestHome.withTmdb();
         h.loadSampleWeather();
-        for (int i = 0; i < 200 && (h.weather.game() == null || h.weather.watching() == null); i++) {
+        for (int i = 0; i < 200 && h.weather.game() == null; i++) {
             Thread.sleep(25);
             TestHome.idle();
         }
         assertNotNull("your team's game, from the recorded scoreboards", h.weather.game());
-        assertNotNull(h.weather.watching());
         return h;
     }
 
@@ -85,18 +74,10 @@ public class WidgetsTest {
         assertEquals(WidgetPanel.Kind.GAME, h.weather.focusedKind());
 
         h.press(KEYCODE_DPAD_RIGHT);
-        assertEquals("Right turns it too", WidgetPanel.Kind.CONTINUE, h.weather.focusedKind());
-        h.capture("widgets-stack-3-continue.png");
-        h.press(KEYCODE_DPAD_CENTER);
-        Intent started = shadowOf(h.activity).getNextStartedActivity();
-        assertNotNull(started);
-        assertEquals("com.hbo.hbonow", started.getComponent().getPackageName());
-
-        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
-        assertEquals(WidgetPanel.Kind.DATE, h.weather.focusedKind());
-        h.capture("widgets-stack-4-date.png");
+        assertEquals("Right turns it too", WidgetPanel.Kind.DATE, h.weather.focusedKind());
+        h.capture("widgets-stack-3-date.png");
         h.press(KEYCODE_MEDIA_REWIND);
-        assertEquals("rewind goes back one", WidgetPanel.Kind.CONTINUE, h.weather.focusedKind());
+        assertEquals("rewind goes back one", WidgetPanel.Kind.GAME, h.weather.focusedKind());
         h.press(KEYCODE_MEDIA_FAST_FORWARD);
         assertEquals(WidgetPanel.Kind.DATE, h.weather.focusedKind());
         h.press(KEYCODE_MEDIA_PLAY_PAUSE);
@@ -113,7 +94,6 @@ public class WidgetsTest {
         }
         assertEquals(WidgetPanel.Kind.GAME, again.weather.focusedKind());
 
-        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
         h.press(KEYCODE_MEDIA_PLAY_PAUSE);
         h.press(KEYCODE_MEDIA_PLAY_PAUSE);
         assertEquals(WidgetPanel.Kind.WEATHER, h.weather.focusedKind());
@@ -155,7 +135,7 @@ public class WidgetsTest {
         assertEquals(WidgetPanel.Kind.GAME, h.weather.focusedKind());
         h.capture("widgets-glances.png");
         h.press(KEYCODE_DPAD_RIGHT);
-        assertEquals(WidgetPanel.Kind.CONTINUE, h.weather.focusedKind());
+        assertEquals("sunrise and sunset", WidgetPanel.Kind.SUN, h.weather.focusedKind());
         h.press(KEYCODE_DPAD_UP);
         assertEquals(WidgetPanel.Kind.WEATHER, h.weather.focusedKind());
         h.press(KEYCODE_DPAD_LEFT);

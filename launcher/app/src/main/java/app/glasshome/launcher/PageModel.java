@@ -8,7 +8,6 @@ final class PageModel {
     enum Style {
         LANDSCAPE,  // 16:9 artwork, title and a detail line underneath
         RANKED,     // 2:3 poster beside a large rank number (Top 10)
-        PROGRESS,   // 16:9 artwork with a progress bar (Continue Watching)
         SCORE       // a game: team colours, logos, score or start time
     }
 
@@ -47,8 +46,6 @@ final class PageModel {
     static final class Card {
         String title = "", subtitle = "";
         String imageUrl;          // backdrop (16:9) or poster (2:3)
-        String appKey;            // Continue Watching: the app it plays in
-        float progress = -1f;     // 0..1, or -1 when unknown
         int rank;
         Sports.Game game;
         Object ref;
@@ -58,7 +55,6 @@ final class PageModel {
         final String title;
         final Style style;
         final List<Card> cards = new ArrayList<>();
-        String empty;             // shown in place of cards when there are none (the row is then skipped by focus)
 
         Shelf(String title, Style style) {
             this.title = title;

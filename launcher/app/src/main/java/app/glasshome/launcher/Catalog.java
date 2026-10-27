@@ -1,14 +1,12 @@
 package app.glasshome.launcher;
 
-import android.content.Context;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
 /**
- * Builds the Movies and TV Shows pages: Continue Watching (from what has played on this TV), then
- * TMDB shelves around the apps installed here: Top 10, new arrivals, popular on each service.
+ * Builds the Movies and TV Shows pages: TMDB shelves around the apps installed here: Top 10, new
+ * arrivals, popular on each service.
  */
 final class Catalog {
     /** The subscription apps, in the order their shelves appear. */
@@ -22,7 +20,7 @@ final class Catalog {
         return Brand.of(appKey, appKey).name;
     }
 
-    static PageModel page(Context context, Tmdb tmdb, boolean series, Set<String> installed, List<WatchHistory.Entry> history) throws Exception {
+    static PageModel page(Tmdb tmdb, boolean series, Set<String> installed) throws Exception {
         PageModel page = new PageModel();
         page.credit = Tmdb.CREDIT;
         String type = series ? "tv" : "movie";
@@ -44,7 +42,6 @@ final class Catalog {
             }
         }
 
-        page.shelves.add(continueWatching(context, tmdb, series, history));
         String today = Clock.today().toString();
         tryShelf(page, () -> ranked(series ? "Top 10 Shows This Week" : "Top 10 Movies This Week",
                 tmdb.list("trending/" + type + "/week", "", series)));
@@ -157,45 +154,6 @@ final class Catalog {
             c.rank = s.cards.size() + 1;
             c.ref = t;
             s.cards.add(c);
-        }
-        return s;
-    }
-
-    /**
-     * Continue Watching: only what has really played here, newest first, with TMDB artwork looked
-     * up once per title. Empty until something has been watched.
-     */
-    static PageModel.Shelf continueWatching(Context context, Tmdb tmdb, boolean series, List<WatchHistory.Entry> history) {
-        PageModel.Shelf s = new PageModel.Shelf("Continue Watching", PageModel.Style.PROGRESS);
-        boolean changed = false;
-        for (WatchHistory.Entry e : WatchHistory.forPage(history, series)) {
-            if (!e.matched && tmdb != null) {
-                try {
-                    Tmdb.Title t = tmdb.search(e.episode ? e.series : e.title, series, 0);
-                    if (t != null) {
-                        e.tmdbId = t.id;
-                        e.backdrop = t.backdrop;
-                        e.tmdbName = t.name;
-                    }
-                    e.matched = true;
-                    changed = true;
-                } catch (Exception ignored) {
-                    // try again next time
-                }
-            }
-            PageModel.Card c = new PageModel.Card();
-            c.title = e.name();
-            c.subtitle = e.detail();
-            c.imageUrl = e.backdrop.isEmpty() ? null : Tmdb.IMG + "w780" + e.backdrop;
-            c.appKey = e.pkg;
-            c.progress = e.progress();
-            c.ref = e;
-            s.cards.add(c);
-            if (s.cards.size() >= 20) break;
-        }
-        if (changed) WatchHistory.save(context, history);
-        if (s.cards.isEmpty()) {
-            s.empty = (series ? "Shows" : "Movies") + " you start in Netflix, HBO Max, Disney+, Prime Video or Apple TV will appear here.";
         }
         return s;
     }

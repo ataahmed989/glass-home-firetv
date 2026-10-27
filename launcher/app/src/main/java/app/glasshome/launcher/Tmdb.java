@@ -25,7 +25,6 @@ final class Tmdb {
     static final String CREDIT = "Data and artwork: TMDB  ·  Streaming availability: JustWatch";
     private static final long LIST_AGE = 6 * 60 * 60 * 1000L;
     private static final long DETAIL_AGE = 24 * 60 * 60 * 1000L;
-    private static final long SEARCH_AGE = 30L * 24 * 60 * 60 * 1000L;
 
     /** A film or series. List fields are fixed; detail fields are filled by {@link #details}. */
     static final class Title {
@@ -237,21 +236,6 @@ final class Tmdb {
             if (fallback == null && l.isNull("iso_639_1")) fallback = path;
         }
         return fallback;
-    }
-
-    /** Best match for a name seen playing on the TV (Continue Watching artwork). */
-    Title search(String query, boolean series, int year) throws Exception {
-        String q = "query=" + Uri.encode(query) + "&include_adult=false&page=1";
-        if (year > 0) q += series ? "&first_air_date_year=" + year : "&year=" + year;
-        JSONArray results = get(series ? "search/tv" : "search/movie", q, SEARCH_AGE).optJSONArray("results");
-        Title first = null;
-        for (int i = 0; results != null && i < results.length(); i++) {
-            Title t = parse(results.optJSONObject(i), series);
-            if (t == null) continue;
-            if (t.name.equalsIgnoreCase(query.trim())) return t;
-            if (first == null) first = t;
-        }
-        return first;
     }
 
     // ---- Streaming services and the apps on this TV ------------------------------------------

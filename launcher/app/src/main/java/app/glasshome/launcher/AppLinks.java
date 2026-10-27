@@ -30,8 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * app; JustWatch, which supplies TMDB's streaming data, has each service's own link. Its API is
  * public but unofficial, so when it fails or changes, the app simply opens as before. A link is
  * kept only for an app on this TV that says it can open it, and only the title's name is sent:
- * for the banner's titles and a title's details page as they are shown, and for a Continue
- * Watching title when its card is opened.
+ * for the banner's titles and a title's details page as they are shown.
  */
 final class AppLinks {
     interface Poster {

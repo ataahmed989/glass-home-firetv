@@ -20,7 +20,6 @@ import android.text.TextUtils;
 import android.view.View;
 import android.view.ViewGroup;
 
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -57,7 +56,6 @@ final class ShelfPage extends ViewGroup {
     private static final int TITLE_H = 56, CAPTION_H = 78, ROW_GAP = 30;
     private static final int CARD_W = 372, CARD_H = 209, CARD_GAP = 32;
     private static final int POSTER_W = 222, POSTER_H = 333, RANK_W = 124, POSTER_GAP = 22;
-    private static final int EMPTY_H = 150;
     private static final int RADIUS = 14;
     private static final float CARD_SCALE = 1.08f;
     private static final long HERO_EVERY_MS = 8000, HERO_FADE_MS = 650;
@@ -77,7 +75,6 @@ final class ShelfPage extends ViewGroup {
     private PageModel model;
     private String message = "";
     private long loadedAt;
-    private Map<String, Bitmap> appArt = Collections.emptyMap();
 
     // Focus: row -1 is the hero (button = its focused button); otherwise a shelf and its column
     private int row = -1, button;
@@ -102,7 +99,6 @@ final class ShelfPage extends ViewGroup {
     private final TextPaint cardSub = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint rank = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint messagePaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final TextPaint emptyPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint credit = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint abbr = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint bigScore = new TextPaint(Paint.ANTI_ALIAS_FLAG);
@@ -162,7 +158,6 @@ final class ShelfPage extends ViewGroup {
         rank.setTextAlign(Paint.Align.RIGHT);
         rank.setLetterSpacing(-0.06f);
         FeaturePainter.style(messagePaint, context, 500, 30, 0xB3FFFFFF);
-        FeaturePainter.style(emptyPaint, context, 500, 23, 0xB3FFFFFF);
         FeaturePainter.style(credit, context, 400, 17, 0x73FFFFFF);
         FeaturePainter.style(abbr, context, 700, 22, 0xFFFFFFFF);
         abbr.setTextAlign(Paint.Align.CENTER);
@@ -177,11 +172,6 @@ final class ShelfPage extends ViewGroup {
 
     void setListener(Listener l) {
         listener = l;
-    }
-
-    void setAppArt(Map<String, Bitmap> art) {
-        appArt = art;
-        invalidateAll();
     }
 
     /** Another app is in front: gives back the pictures that are made again when next drawn. */
@@ -388,7 +378,6 @@ final class ShelfPage extends ViewGroup {
     }
 
     private float rowHeight(PageModel.Shelf s) {
-        if (s.cards.isEmpty()) return Ui.px(TITLE_H + EMPTY_H + ROW_GAP + 20);
         int body = s.style == PageModel.Style.RANKED ? POSTER_H : CARD_H;
         return Ui.px(TITLE_H + body + CAPTION_H + ROW_GAP);
     }
@@ -877,10 +866,6 @@ final class ShelfPage extends ViewGroup {
         float top = Ui.px(ROW_MARGIN);
         c.drawText(s.title, Ui.px(LEFT), top + Ui.px(36), shelfTitle);
         float cardTop = top + Ui.px(TITLE_H);
-        if (s.cards.isEmpty()) {
-            drawEmpty(c, s, cardTop);
-            return;
-        }
         float pitch = pitch(s), focusedX = Float.NaN;
         int first = Math.max(0, (int) Math.floor((rowX[r] - Ui.px(LEFT)) / pitch) - 1);
         for (int i = first; i < s.cards.size(); i++) {
@@ -950,9 +935,6 @@ final class ShelfPage extends ViewGroup {
         switch (s.style) {
             case SCORE:
                 drawScoreCard(c, card.game, w, h, r);
-                break;
-            case PROGRESS:
-                drawProgressCard(c, card, w, h, r, cardImageWidth(s));
                 break;
             default:
                 drawImage(c, card.imageUrl, rect, r, cardImageWidth(s));
@@ -1040,46 +1022,6 @@ final class ShelfPage extends ViewGroup {
         art.setShader(shader);
         c.drawRoundRect(r, radius, radius, art);
         art.setShader(null);
-    }
-
-    /** Continue Watching: the artwork (or the app's own colours), the app's tile in the corner and a progress bar. */
-    private void drawProgressCard(Canvas c, PageModel.Card card, float w, float h, float radius, int decodeWidth) {
-        Bitmap b = card.imageUrl == null ? null : images.get(card.imageUrl, decodeWidth, false, invalidator);
-        Bitmap tile = card.appKey == null ? null : appArt.get(card.appKey);
-        rect.set(0, 0, w, h);
-        if (b != null) {
-            drawBitmap(c, b, rect, radius);
-        } else {
-            Brand brand = Brand.of(card.appKey == null ? "" : card.appKey, "");
-            fill.setShader(cached("brand" + brand.start + "/" + brand.end + "/" + w,
-                    () -> new LinearGradient(0, 0, w, h, brand.start, brand.end, Shader.TileMode.CLAMP)));
-            c.drawRoundRect(rect, radius, radius, fill);
-            fill.setShader(null);
-            if (tile != null) {
-                float tw = w * 0.46f, th = tw * 0.6f;
-                rect.set(w / 2f - tw / 2f, h / 2f - th / 2f - Ui.px(8), w / 2f + tw / 2f, h / 2f + th / 2f - Ui.px(8));
-                drawBitmap(c, tile, rect, Ui.px(10));
-            }
-        }
-        // A dark fade at the bottom keeps the bar visible on bright artwork
-        rect.set(0, 0, w, h);
-        fill.setShader(cached("fade" + h, () -> new LinearGradient(0, h * 0.55f, 0, h, 0x00000000, 0x99000000, Shader.TileMode.CLAMP)));
-        c.drawRoundRect(rect, radius, radius, fill);
-        fill.setShader(null);
-        if (b != null && tile != null) {
-            float tw = Ui.px(72), th = tw * 0.6f;
-            rect.set(Ui.px(12), Ui.px(12), Ui.px(12) + tw, Ui.px(12) + th);
-            drawBitmap(c, tile, rect, Ui.px(7));
-        }
-        if (card.progress >= 0f) {
-            float pad = Ui.px(16), bh = Ui.px(6), y = h - Ui.px(16) - bh;
-            rect.set(pad, y, w - pad, y + bh);
-            fill.setColor(0x59FFFFFF);
-            c.drawRoundRect(rect, bh / 2f, bh / 2f, fill);
-            rect.right = rect.left + Math.max(bh, (w - 2 * pad) * card.progress);
-            fill.setColor(0xFFFFFFFF);
-            c.drawRoundRect(rect, bh / 2f, bh / 2f, fill);
-        }
     }
 
     /**
@@ -1194,48 +1136,6 @@ final class ShelfPage extends ViewGroup {
         logoBox.set(cx - b.getWidth() * s / 2f, cy - b.getHeight() * s / 2f, cx + b.getWidth() * s / 2f, cy + b.getHeight() * s / 2f);
         c.drawBitmap(b, null, logoBox, art);
     }
-
-    /** An empty shelf (Continue Watching before anything has played) says what will appear there. */
-    private void drawEmpty(Canvas c, PageModel.Shelf s, float top) {
-        float w = Ui.px(CARD_W * 2 + CARD_GAP), h = Ui.px(EMPTY_H);
-        rect.set(Ui.px(LEFT), top, Ui.px(LEFT) + w, top + h);
-        fill.setColor(0x1FFFFFFF);
-        c.drawRoundRect(rect, Ui.px(RADIUS), Ui.px(RADIUS), fill);
-        rim.setColor(0x26FFFFFF);
-        c.drawRoundRect(rect, Ui.px(RADIUS), Ui.px(RADIUS), rim);
-        // A play symbol in a ring, then the text
-        float cx = rect.left + Ui.px(64), cy = rect.centerY(), ring = Ui.px(26);
-        rim.setColor(0x99FFFFFF);
-        c.drawCircle(cx, cy, ring, rim);
-        if (emptyPlay.isEmpty()) {
-            emptyPlay.moveTo(-Ui.px(7), -Ui.px(11));
-            emptyPlay.lineTo(Ui.px(12), 0);
-            emptyPlay.lineTo(-Ui.px(7), Ui.px(11));
-            emptyPlay.close();
-        }
-        fill.setColor(0xB3FFFFFF);
-        c.save();
-        c.translate(cx, cy);
-        c.drawPath(emptyPlay, fill);
-        c.restore();
-        // Laid out once, and again only if the text or its width changes
-        int textW = Math.round(w - Ui.px(140));
-        if (emptyLayout == null || !s.empty.equals(emptyText) || textW != emptyWidth) {
-            emptyText = s.empty;
-            emptyWidth = textW;
-            emptyLayout = android.text.StaticLayout.Builder.obtain(s.empty, 0, s.empty.length(), emptyPaint, textW)
-                    .setMaxLines(3).setLineSpacing(0f, 1.15f).build();
-        }
-        c.save();
-        c.translate(rect.left + Ui.px(112), cy - emptyLayout.getHeight() / 2f);
-        emptyLayout.draw(c);
-        c.restore();
-    }
-
-    private final android.graphics.Path emptyPlay = new android.graphics.Path();
-    private android.text.StaticLayout emptyLayout;
-    private String emptyText;
-    private int emptyWidth;
 
     /** Before content arrives: quiet placeholders where the first shelf will be. */
     private void drawSkeleton(Canvas c) {

@@ -3,10 +3,8 @@ package app.glasshome.launcher;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapShader;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
-import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -29,26 +27,27 @@ import java.util.Locale;
 /**
  * The widgets beside the focused app's content, in the layout chosen in Home Screen settings:
  *
- * - Smart Stack: one card showing one widget at a time (the weather card, your next game,
- *   Continue Watching or the date). It never turns by itself: with focus on it, Play/Pause (or
+ * - Smart Stack: one card showing one widget at a time (the weather card, your next game or the
+ *   date, with sunrise and sunset). It never turns by itself: with focus on it, Play/Pause (or
  *   Right, or fast-forward) scrolls to the next widget and rewind to the previous one, and it
  *   stays on the widget chosen, across restarts too.
- * - Glances: four small squares (date and sunset, weather, next game, Continue Watching), each
+ * - Glances: four small squares (date, weather, next game, sunrise and sunset), each
  *   focused in turn with the arrows.
  *
  * It is one focus target that keeps its own position, moved by HomeActivity. It draws into its
  * own GPU layer, redrawn only when something on it changes; the view reaches {@link #PAD} past the
  * widgets on every side so a focused square's growth and shadow fit inside that layer. Everything
- * shown is real: the weather from Open-Meteo, games from ESPN, Continue Watching from what played here;
+ * shown is real: the weather (and the sun's times) from Open-Meteo, games from ESPN;
  * a widget with nothing to show says so rather than making something up.
  */
 final class WidgetPanel extends View {
     static final String STACK = "stack", GLANCES = "glances";
     static final long STALE_MS = 90 * 60 * 1000L;
 
-    enum Kind { WEATHER, GAME, CONTINUE, DATE }
+    /** SUN (sunrise and sunset) is a Glance only: the Smart Stack's date card shows both already. */
+    enum Kind { WEATHER, GAME, SUN, DATE }
 
-    private static final Kind[] GLANCE_ORDER = {Kind.DATE, Kind.WEATHER, Kind.GAME, Kind.CONTINUE};
+    private static final Kind[] GLANCE_ORDER = {Kind.DATE, Kind.WEATHER, Kind.GAME, Kind.SUN};
 
     private static final long TURN_MS = 520;
     private static final int CARD_R = 40, SQUARE = 190, GAP = 25, SQUARE_R = 38;
@@ -69,7 +68,6 @@ final class WidgetPanel extends View {
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint t = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final RectF r = new RectF(), box = new RectF();
-    private final Matrix matrix = new Matrix();
     private final Path path = new Path();
     private final Path card = new Path();
     private final Context context;
@@ -79,7 +77,6 @@ final class WidgetPanel extends View {
     private Weather.Data weather;
     private boolean weatherFailed;
     private Sports.Game game;
-    private WatchHistory.Entry watching;
     private String layout = STACK;
 
     // Smart Stack: the widget chosen (null: the first), and the one it is scrolling away from
@@ -177,22 +174,11 @@ final class WidgetPanel extends View {
         return game;
     }
 
-    /** The most recent unfinished title watched on this TV, or null. */
-    void setWatching(WatchHistory.Entry e) {
-        watching = e;
-        invalidate();
-    }
-
-    WatchHistory.Entry watching() {
-        return watching;
-    }
-
     /** The Smart Stack's pages: only widgets with something to show (weather and the date always do). */
     private List<Kind> pages() {
         List<Kind> list = new ArrayList<>();
         list.add(Kind.WEATHER);
         if (game != null) list.add(Kind.GAME);
-        if (watching != null) list.add(Kind.CONTINUE);
         list.add(Kind.DATE);
         return list;
     }
@@ -369,9 +355,6 @@ final class WidgetPanel extends View {
             case GAME:
                 drawGameLarge(c, w, h);
                 break;
-            case CONTINUE:
-                drawContinueLarge(c, w, h);
-                break;
             default:
                 drawDateLarge(c, w, h);
                 break;
@@ -418,8 +401,8 @@ final class WidgetPanel extends View {
             case GAME:
                 drawGameSmall(c, s);
                 break;
-            case CONTINUE:
-                drawContinueSmall(c, s);
+            case SUN:
+                drawSunSmall(c, s);
                 break;
             default:
                 drawDateSmall(c, s);
@@ -685,92 +668,6 @@ final class WidgetPanel extends View {
         c.drawBitmap(b, null, box, art);
     }
 
-    // ---- Continue Watching ------------------------------------------------------------------
-
-    private void drawContinueLarge(Canvas c, int w, int h) {
-        float pad = Ui.px(24);
-        caps(700, 14, 0xCCFFFFFF, Paint.Align.LEFT);
-        c.drawText("CONTINUE WATCHING", pad, Ui.px(44), t);
-        if (watching == null) return;
-        float aw = w - 2 * Ui.px(20);
-        box.set(Ui.px(20), Ui.px(64), Ui.px(20) + aw, Ui.px(64) + aw * 9f / 16f);
-        drawArtwork(c, box, Ui.px(18), Math.round(aw));
-        text(600, 26, 0xFFFFFFFF, Paint.Align.LEFT);
-        draw(c, watching.name(), pad, box.bottom + Ui.px(50), w - 2 * pad);
-        text(400, 19, 0xB3FFFFFF, Paint.Align.LEFT);
-        draw(c, watching.detail(), pad, box.bottom + Ui.px(82), w - 2 * pad);
-        text(500, 17, 0x8CFFFFFF, Paint.Align.LEFT);
-        c.drawText(Brand.of(watching.pkg, watching.pkg).name, pad, box.bottom + Ui.px(112), t);
-    }
-
-    private void drawContinueSmall(Canvas c, float s) {
-        float pad = Ui.px(14);
-        if (watching == null) {
-            caps(700, 11, 0xCCFFFFFF, Paint.Align.LEFT);
-            c.drawText("CONTINUE", Ui.px(16), Ui.px(30), t);
-            float cx = s / 2f, cy = Ui.px(92), ring = Ui.px(22);
-            rim.setColor(0x80FFFFFF);
-            rim.setStrokeWidth(Math.max(1.5f, Ui.px(2)));
-            c.drawCircle(cx, cy, ring, rim);
-            rim.setStrokeWidth(Math.max(1f, Ui.px(1)));
-            rim.setColor(0x24FFFFFF);
-            path.reset();
-            path.moveTo(cx - Ui.px(6), cy - Ui.px(9));
-            path.lineTo(cx + Ui.px(10), cy);
-            path.lineTo(cx - Ui.px(6), cy + Ui.px(9));
-            path.close();
-            fill.setColor(0x99FFFFFF);
-            c.drawPath(path, fill);
-            text(400, 14, 0xA6FFFFFF, Paint.Align.CENTER);
-            c.drawText("Nothing yet", cx, Ui.px(150), t);
-            return;
-        }
-        float aw = s - 2 * Ui.px(12);
-        box.set(Ui.px(12), Ui.px(12), Ui.px(12) + aw, Ui.px(12) + aw * 9f / 16f);
-        drawArtwork(c, box, Ui.px(16), Math.round(aw));
-        text(600, 16, 0xFFFFFFFF, Paint.Align.LEFT);
-        draw(c, watching.name(), pad, box.bottom + Ui.px(30), s - 2 * pad);
-        text(400, 13, 0xB3FFFFFF, Paint.Align.LEFT);
-        draw(c, watching.detail(), pad, box.bottom + Ui.px(52), s - 2 * pad);
-    }
-
-    /** The title's artwork (or its app's colours and tile), with a progress bar along the bottom. */
-    private void drawArtwork(Canvas c, RectF area, float radius, int width) {
-        String url = watching.backdrop.isEmpty() ? null : Tmdb.IMG + "w780" + watching.backdrop;
-        Bitmap b = url == null ? null : images.get(url, width, false, invalidator);
-        RectF a = new RectF(area);
-        if (b != null) {
-            BitmapShader shader = new BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-            float sc = Math.max(a.width() / b.getWidth(), a.height() / b.getHeight());
-            matrix.setScale(sc, sc);
-            matrix.postTranslate(a.left + (a.width() - b.getWidth() * sc) / 2f, a.top + (a.height() - b.getHeight() * sc) / 2f);
-            shader.setLocalMatrix(matrix);
-            art.setShader(shader);
-            c.drawRoundRect(a, radius, radius, art);
-            art.setShader(null);
-        } else {
-            Brand brand = Brand.of(watching.pkg, watching.pkg);
-            fill.setShader(new LinearGradient(a.left, a.top, a.right, a.bottom, brand.start, brand.end, Shader.TileMode.CLAMP));
-            c.drawRoundRect(a, radius, radius, fill);
-            fill.setShader(null);
-            text(700, 22, 0xE6FFFFFF, Paint.Align.CENTER);
-            c.drawText(brand.name, a.centerX(), a.centerY() + Ui.px(8), t);
-        }
-        fill.setShader(new LinearGradient(0, a.bottom - a.height() * 0.4f, 0, a.bottom, 0x00000000, 0x8C000000, Shader.TileMode.CLAMP));
-        c.drawRoundRect(a, radius, radius, fill);
-        fill.setShader(null);
-        float progress = watching.progress();
-        if (progress >= 0f) {
-            float pad = Ui.px(12), bh = Ui.px(5), y = a.bottom - Ui.px(12) - bh;
-            RectF bar = new RectF(a.left + pad, y, a.right - pad, y + bh);
-            fill.setColor(0x59FFFFFF);
-            c.drawRoundRect(bar, bh / 2f, bh / 2f, fill);
-            bar.right = bar.left + Math.max(bh, (a.width() - 2 * pad) * progress);
-            fill.setColor(0xFFFFFFFF);
-            c.drawRoundRect(bar, bh / 2f, bh / 2f, fill);
-        }
-    }
-
     // ---- Date and sunset --------------------------------------------------------------------
 
     private void drawDateLarge(Canvas c, int w, int h) {
@@ -807,10 +704,22 @@ final class WidgetPanel extends View {
         c.drawText(String.valueOf(now.getDayOfMonth()), left - Ui.px(3), Ui.px(102), t);
         text(500, 16, 0xE6FFFFFF, Paint.Align.LEFT);
         c.drawText(now.format(DateTimeFormatter.ofPattern("MMMM", Locale.US)), left, Ui.px(130), t);
-        if (weather != null) {
-            text(400, 14, 0xBFFFFFFF, Paint.Align.LEFT);
-            c.drawText("Sunset " + weather.sunset, left, Ui.px(168), t);
-        }
+    }
+
+    /** Today's sunrise above its sunset, each with its sun on the horizon. */
+    private void drawSunSmall(Canvas c, float s) {
+        float left = Ui.px(18), mark = Ui.px(38), label = Ui.px(66);
+        caps(700, 12, 0xCCFFFFFF, Paint.Align.LEFT);
+        c.drawText("SUN", left, Ui.px(32), t);
+        String rise = weather == null ? "—" : weather.sunrise, set = weather == null ? "—" : weather.sunset;
+        drawSunMark(c, mark, Ui.px(78), true);
+        drawSunMark(c, mark, Ui.px(146), false);
+        text(500, 13, 0x99FFFFFF, Paint.Align.LEFT);
+        c.drawText("Sunrise", label, Ui.px(66), t);
+        c.drawText("Sunset", label, Ui.px(134), t);
+        text(600, 20, 0xFFFFFFFF, Paint.Align.LEFT);
+        c.drawText(rise, label, Ui.px(90), t);
+        c.drawText(set, label, Ui.px(158), t);
     }
 
     /** A small sun on a horizon line, with an arrow for rising or setting. */

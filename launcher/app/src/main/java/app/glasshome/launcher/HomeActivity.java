@@ -536,9 +536,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     showDetail(Sports.feature(g, installed, appNames(installed), true), Sports.CREDIT);
                 }
                 return;
-            case CONTINUE:
-                if (weather.watching() != null) resume(weather.watching());
-                return;
             default:
                 openDetail();
         }
@@ -567,34 +564,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 teamsFetching = false;
                 if (!stopped) main.postDelayed(teamsTick, next != null && next.live() ? SPORTS_LIVE_MS : SPORTS_IDLE_MS);
             });
-        });
-    }
-
-    /** The latest unfinished title watched here, for the Continue Watching widget (artwork found on TMDB once). */
-    private void refreshWatching() {
-        final String key = config.tmdbApiKey;
-        pagesNet.execute(() -> {
-            List<WatchHistory.Entry> all = WatchHistory.load(this);
-            WatchHistory.Entry latest = null;
-            for (WatchHistory.Entry e : all) {
-                if (!e.finished() && (latest == null || e.updatedAt > latest.updatedAt)) latest = e;
-            }
-            if (latest != null && !latest.matched && !key.isEmpty()) {
-                try {
-                    Tmdb.Title t = new Tmdb(this, key).search(latest.episode ? latest.series : latest.title, latest.episode, 0);
-                    if (t != null) {
-                        latest.tmdbId = t.id;
-                        latest.backdrop = t.backdrop;
-                        latest.tmdbName = t.name;
-                    }
-                    latest.matched = true;
-                    WatchHistory.save(this, all);
-                } catch (Exception ignored) {
-                    // artwork is looked up again next time
-                }
-            }
-            final WatchHistory.Entry show = latest;
-            main.post(() -> weather.setWatching(show));
         });
     }
 
@@ -629,9 +598,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (generation != appsGeneration) return;
                 boolean wasInGrid = zone() == Zone.GRID;
                 adapter.setApps(apps);
-                java.util.Map<String, Bitmap> art = new java.util.HashMap<>();
-                for (AppEntry a : apps) if (a.art != null) art.put(a.key, a.art);
-                for (int p = MOVIES; p <= SPORTS; p++) pages[p].setAppArt(art);
                 // If the remembered app is gone, or its row got shorter, land on the nearest one
                 int index = lastFocusedKey == null ? -1 : adapter.indexOf(lastFocusedKey);
                 lastFocused = index >= 0 ? index : Math.max(0, Math.min(lastFocused, apps.size() - 1));
@@ -815,7 +781,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     Sports.Game next = Sports.nextFor(all, config.favoriteTeams);
                     main.post(() -> weather.setGame(next));
                 } else {
-                    model = Catalog.page(this, new Tmdb(this, config.tmdbApiKey), p == TV, installed, WatchHistory.load(this));
+                    model = Catalog.page(new Tmdb(this, config.tmdbApiKey), p == TV, installed);
                 }
             } catch (Exception e) {
                 main.post(() -> {
@@ -882,7 +848,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         Tmdb.Title t = (Tmdb.Title) ref;
         if (AppLinks.lookedUp(t)) {
-            openLink(t, app, AppLinks.known(t, app));
+            openLink(app, AppLinks.known(t, app));
             return;
         }
         // Not looked up yet (it usually is, from when the title came on screen): wait a moment for it
@@ -905,7 +871,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (linkWait != wait[0]) return;
                 linkWait = null;
                 main.removeCallbacks(wait[0]);
-                if (resumed) openLink(t, app, found);   // not if Glass Home was left meanwhile
+                if (resumed) openLink(app, found);   // not if Glass Home was left meanwhile
             });
         })) {
             launch(app);
@@ -933,7 +899,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
     }
 
-    private void openLink(Tmdb.Title t, String app, String link) {
+    private void openLink(String app, String link) {
         Intent intent = link == null ? null : AppLinks.intent(this, app, link);
         if (intent == null) {
             launch(app);
@@ -942,7 +908,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         HomeButtonService.opening(app);
         try {
             startActivity(intent);
-            WatchHistory.opened(app, t);   // for Continue Watching, if the app does not say what it plays
         } catch (ActivityNotFoundException | SecurityException e) {
             launch(app);
         }
@@ -964,11 +929,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     public void onCard(ShelfPage source, PageModel.Shelf shelf, PageModel.Card card) {
-        if (card.ref instanceof WatchHistory.Entry) {
-            resume((WatchHistory.Entry) card.ref);
-        } else {
-            openDetails(source, card.ref);
-        }
+        openDetails(source, card.ref);
     }
 
     @Override
@@ -982,46 +943,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     public void onScrolled(ShelfPage source, boolean intoShelves) {
         if (source == currentPage()) setBarHidden(intoShelves);
-    }
-
-    /**
-     * Continue Watching: back into the app. The app's own "return to what was playing" link is
-     * used while its session is alive and this is the latest thing it played; otherwise the app
-     * opens at the title's page (its own Resume is there) when that is known, or else at its home.
-     */
-    private void resume(WatchHistory.Entry e) {
-        android.app.PendingIntent intent = MediaWatcher.RESUME.get(e.pkg);
-        boolean latest = true;
-        for (WatchHistory.Entry other : WatchHistory.load(this)) {
-            if (other.pkg.equals(e.pkg)) {
-                latest = other.key().equals(e.key());
-                break;
-            }
-        }
-        if (intent != null && latest) {
-            try {
-                HomeButtonService.opening(e.pkg);
-                intent.send();
-                // What plays next there is this title again, for apps that do not name it
-                if (e.tmdbId > 0) WatchHistory.opened(e.pkg, titleOf(e));
-                return;
-            } catch (android.app.PendingIntent.CanceledException ignored) {
-                MediaWatcher.RESUME.remove(e.pkg);
-            }
-        }
-        if (e.tmdbId > 0) {
-            open(titleOf(e), e.pkg);
-            return;
-        }
-        launch(e.pkg);
-    }
-
-    /** A Continue Watching entry known on TMDB, as the title "Open …" takes into its app. */
-    private static Tmdb.Title titleOf(WatchHistory.Entry e) {
-        Tmdb.Title t = new Tmdb.Title(e.tmdbId, e.episode, e.name(), "", e.backdrop, "", "", new int[0]);
-        t.streamingApps.add(e.pkg);
-        if (!e.episode) t.minutes = (int) (e.durationMs / 60_000);
-        return t;
     }
 
     /** Opens the detail page at once with what is known, then fills in where to watch. */
@@ -1774,9 +1695,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         // meanwhile: nothing is fetched again, and the scores' timer kept going
         main.removeCallbacks(resumeRefresh);
         if (back || (!teamsFetching && !main.hasCallbacks(teamsTick))) main.postDelayed(resumeRefresh, RESUME_REFRESH_MS);
-        // Continue Watching is read from the TV itself, quickly: it is up to date before Home shows
-        // (under the cover, after the Home button), rather than changing just after
-        if (back) refreshWatching();
         main.removeCallbacks(shownFallback);
         main.postDelayed(shownFallback, SHOWN_FALLBACK_MS);
         snapshotLater(SNAPSHOT_IDLE_MS);
