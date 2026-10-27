@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.ComposeShader;
@@ -210,13 +211,30 @@ final class FeaturePainter {
 
     /** As above; {@code clear} leaves the dark side transparent instead, for something to show through it. */
     static Shader[] teamShaders(int w, int h, Sports.Game g, boolean clear) {
-        int a = shade(g.away.color, 0.42f), b = shade(g.home.color, 0.42f);
+        int a = teamTone(g.away.color, HERO_TONE), b = teamTone(g.home.color, HERO_TONE);
         return new Shader[] {
                 new LinearGradient(0, 0, w, h * 0.3f, new int[] {clear ? withAlpha(a, 0) : 0xFF07080B, a, b},
                         new float[] {0f, 0.55f, 1f}, Shader.TileMode.CLAMP),
                 new RadialGradient(w * 0.573f, h * 0.39f, w * 0.24f, withAlpha(g.away.color, 0x70), withAlpha(g.away.color, 0), Shader.TileMode.CLAMP),
                 new RadialGradient(w * 0.88f, h * 0.39f, w * 0.24f, withAlpha(g.home.color, 0x70), withAlpha(g.home.color, 0), Shader.TileMode.CLAMP),
         };
+    }
+
+    /** How light a team's colour may be behind the hero's text, and behind a score card's. */
+    static final float HERO_TONE = 0.26f, CARD_TONE = 0.32f;
+
+    /**
+     * A team's colour behind white text: darkened only as far as {@code light} (luminance, 0-1)
+     * asks, so a bright colour keeps its hue and life (orange stays orange) and one already that
+     * dark (navy, maroon, black) is left as the team wears it. Gold may stay a little lighter,
+     * as darkened as far as the others it turns brown.
+     */
+    static int teamTone(int color, float light) {
+        float l = Sports.luminance(color);
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        if (hsv[0] >= 35f && hsv[0] <= 70f && hsv[1] > 0.4f) light *= 1.35f;
+        return l <= light ? color | 0xFF000000 : shade(color, light / l);
     }
 
     static int shade(int color, float f) {

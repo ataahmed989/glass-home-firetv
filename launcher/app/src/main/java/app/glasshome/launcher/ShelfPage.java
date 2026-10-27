@@ -1052,9 +1052,11 @@ final class ShelfPage extends ViewGroup {
             rightChipW = chip.measureText(rightChip) + Ui.px(18);
             awayLogo = Sports.logo(g.away.logo, 160);
             homeLogo = Sports.logo(g.home.logo, 160);
+            // Each team's own colour, a little deeper towards the split down the middle
+            int away = FeaturePainter.teamTone(g.away.color, FeaturePainter.CARD_TONE);
+            int home = FeaturePainter.teamTone(g.home.color, FeaturePainter.CARD_TONE);
             teams = new LinearGradient(0, 0, w, h,
-                    new int[] {FeaturePainter.shade(g.away.color, 0.55f), FeaturePainter.shade(g.away.color, 0.40f),
-                            FeaturePainter.shade(g.home.color, 0.40f), FeaturePainter.shade(g.home.color, 0.55f)},
+                    new int[] {away, FeaturePainter.shade(away, 0.88f), FeaturePainter.shade(home, 0.88f), home},
                     new float[] {0f, 0.48f, 0.52f, 1f}, Shader.TileMode.CLAMP);
         }
 
@@ -1065,7 +1067,8 @@ final class ShelfPage extends ViewGroup {
 
     private static final int SCORE_LOGO = 76;
     private final Map<Sports.Game, ScoreCard> scoreCards = new java.util.HashMap<>();
-    private Shader scoreShade;
+    private Shader scoreShade, logoHalo;
+    private final Paint halo = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF chipBox = new RectF(), logoBox = new RectF();
 
     /** A game: the teams' colours split down the card, both logos, the score or the start time, the channel. */
@@ -1075,8 +1078,9 @@ final class ShelfPage extends ViewGroup {
             card = new ScoreCard(g, w, h);   // not in the model's score shelves: worked out now, once
             scoreCards.put(g, card);
         }
-        if (scoreShade == null) scoreShade = new LinearGradient(0, 0, 0, h, 0x14FFFFFF, 0x59000000, Shader.TileMode.CLAMP);
+        if (scoreShade == null) scoreShade = new LinearGradient(0, 0, 0, h, 0x14FFFFFF, 0x40000000, Shader.TileMode.CLAMP);
         rect.set(0, 0, w, h);
+        fill.setColor(0xFF000000);   // opaque: the paint keeps the alpha of whatever it drew last, which would show through
         fill.setShader(card.teams);
         c.drawRoundRect(rect, radius, radius, fill);
         fill.setShader(scoreShade);
@@ -1085,6 +1089,17 @@ final class ShelfPage extends ViewGroup {
         RectF r = rect;
         float logo = Ui.px(SCORE_LOGO), ly = h * 0.42f;
         float ax = w * 0.17f, hx = w - w * 0.17f, mid = w / 2f;
+        // A soft shadow behind each logo, which is often in the very colour it stands on
+        if (logoHalo == null) {
+            logoHalo = new android.graphics.RadialGradient(0, 0, logo * 0.8f, 0x66000000, 0x00000000, Shader.TileMode.CLAMP);
+        }
+        halo.setShader(logoHalo);
+        for (float x : new float[] {ax, hx}) {
+            c.save();
+            c.translate(x, ly);
+            c.drawCircle(0, 0, logo * 0.8f, halo);
+            c.restore();
+        }
         drawLogo(c, card.awayLogo, ax, ly, logo);
         drawLogo(c, card.homeLogo, hx, ly, logo);
         c.drawText(g.away.abbr, ax, ly + logo / 2f + Ui.px(30), abbr);
