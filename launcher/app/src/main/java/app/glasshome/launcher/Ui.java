@@ -35,7 +35,7 @@ final class Ui {
     static final int CAPSULE_RIGHT = 57;
     static final int CAPSULE_H = 71;
 
-    static final float FOCUS_SCALE = 1.06f;
+    static final float FOCUS_SCALE = 1.12f;
     static final int FOCUS_LIFT = 16;
     static final int FOCUS_MS = 180;
     static final int HERO_DWELL_MS = 400;       // focus must rest this long before the hero changes
