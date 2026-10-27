@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -113,7 +114,7 @@ final class Weather {
         JSONArray chances = hourly.optJSONArray("precipitation_probability");
 
         // The next twelve whole hours after the current hour in Centerville
-        LocalDateTime hourNow = LocalDateTime.now(ZONE).withMinute(0).withSecond(0).withNano(0);
+        LocalDateTime hourNow = LocalDateTime.ofInstant(Instant.ofEpochMilli(now), ZONE).withMinute(0).withSecond(0).withNano(0);
         Hour[] next12 = new Hour[12];
         int filled = 0;
         for (int i = 0; i < times.length() && filled < next12.length; i++) {

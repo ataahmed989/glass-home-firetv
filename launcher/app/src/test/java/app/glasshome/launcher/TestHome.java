@@ -249,7 +249,7 @@ final class TestHome {
     /** Real Open-Meteo response saved from this session, so renders show genuine data offline. */
     void loadSampleWeather() throws Exception {
         String json = new String(Files.readAllBytes(new File("src/test/weather-sample.json").toPath()), StandardCharsets.UTF_8);
-        Weather.Data data = Weather.parse(new JSONObject(json), System.currentTimeMillis());
+        Weather.Data data = Weather.parse(new JSONObject(json), Fixtures.RECORDED_AT);
         weather.setData(data);
         detail.setData(data, false);
     }
