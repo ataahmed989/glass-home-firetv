@@ -169,9 +169,12 @@ final class FeaturePainter {
             s.setLocalMatrix(m);
             base = s;
         } else if (f != null && f.game != null) {
-            Shader[] layers = teamShaders(w, h, f.game);
-            base = layers[0];
-            for (int i = 1; i < layers.length; i++) base = new ComposeShader(base, layers[i], PorterDuff.Mode.SRC_OVER);
+            Shader shader = gamePicture(w, h, f.game);
+            slotWhat[slotNext] = what;
+            slotSize[slotNext] = size;
+            slotShader[slotNext] = shader;
+            slotNext = (slotNext + 1) % slotShader.length;
+            return shader;
         } else {
             base = new LinearGradient(0, 0, w, h, 0xFF101216, 0xFF262B34, Shader.TileMode.CLAMP);
         }
@@ -188,6 +191,30 @@ final class FeaturePainter {
         slotShader[slotNext] = shader;
         slotNext = (slotNext + 1) % slotShader.length;
         return shader;
+    }
+
+    /**
+     * A game's colours, glows and scrims, drawn once into a picture a quarter the size and scaled
+     * up: as shaders composed for every pixel of every frame (five gradients) they kept the TV's GPU
+     * at some 30 ms a frame while a game's page was up, and over 100 ms as it faded in. Gradients
+     * this smooth look the same scaled.
+     */
+    private Shader gamePicture(int w, int h, Sports.Game g) {
+        int sw = Math.max(1, w / 4), sh = Math.max(1, h / 4);
+        Bitmap small = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888);
+        Canvas sc = new Canvas(small);
+        Shader[] layers = teamShaders(sw, sh, g);
+        Shader base = layers[0];
+        for (int i = 1; i < layers.length; i++) base = new ComposeShader(base, layers[i], PorterDuff.Mode.SRC_OVER);
+        Shader[] s = scrims(sw, sh);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setShader(new ComposeShader(new ComposeShader(base, s[0], PorterDuff.Mode.MULTIPLY), s[1], PorterDuff.Mode.MULTIPLY));
+        sc.drawRect(0, 0, sw, sh, p);
+        BitmapShader picture = new BitmapShader(small, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+        Matrix m = new Matrix();
+        m.setScale(w / (float) sw, h / (float) sh);
+        picture.setLocalMatrix(m);
+        return picture;
     }
 
     /** Black at {@code alpha} over a picture leaves 1 - alpha of it: that as an opaque grey, to multiply by. */

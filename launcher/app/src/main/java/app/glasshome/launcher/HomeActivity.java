@@ -573,7 +573,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         detail.setData(weather.data(), weather.hasFailed());
         detail.setVisibility(View.VISIBLE);
         detail.setAlpha(Ui.reducedMotion ? 1f : 0f);
-        detail.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).start();
+        detail.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).withLayer().start();
         detail.requestFocus();
     }
 
@@ -993,7 +993,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (!titleDetail.isOpen()) {
             titleDetail.setVisibility(View.VISIBLE);
             titleDetail.setAlpha(Ui.reducedMotion ? 1f : 0f);
-            titleDetail.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).start();
+            titleDetail.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).withLayer().start();
         }
         setBarHidden(true);
         titleDetail.requestFocus();
@@ -1185,7 +1185,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         panel.setOptions(options, start);
         panel.setVisibility(View.VISIBLE);
         panel.setAlpha(Ui.reducedMotion ? 1f : 0f);
-        panel.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).start();
+        panel.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).withLayer().start();
         panel.requestFocus();
     }
 
@@ -1204,10 +1204,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         control.reset();
         control.setVisibility(View.VISIBLE);
         control.setAlpha(Ui.reducedMotion ? 1f : 0f);
-        control.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).start();
+        // Faded as one GPU layer, drawn once: faded as itself, its scrim and glass were drawn offscreen every frame
+        control.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).withLayer().start();
         capsule.setControlOpen(true);
         // The panel takes the widgets' place while it is open
-        weather.animate().alpha(0f).setDuration(Ui.reducedMotion ? 0 : 200).start();
+        weather.animate().alpha(0f).setDuration(Ui.reducedMotion ? 0 : 200).withLayer().start();
         control.requestFocus();
     }
 
@@ -1221,7 +1222,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         capsule.setControlOpen(false);
         weather.animate().cancel();
         if (atOnce || Ui.reducedMotion) weather.setAlpha(1f);
-        else weather.animate().alpha(1f).setDuration(200).start();
+        else weather.animate().alpha(1f).setDuration(200).withLayer().start();
     }
 
     private void closeControlCenter() {
