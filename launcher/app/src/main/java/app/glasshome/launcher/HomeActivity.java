@@ -108,21 +108,30 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private SourcesPanel sources;
     private Glass promptGlass;
     private UpdatePrompt prompt;
-    /** An update found while something else was open, offered once Home is free. */
-    private Updater.Release pendingUpdate;
     /**
      * Glass Home looks for an update when it starts and, should the TV stay on, when Home comes back
-     * at most every {@link #UPDATE_EVERY_MS}; a newer one is offered once (Home Screen settings can
-     * always look again). Static: one Glass Home process, however often its activity is made.
+     * at most every {@link #UPDATE_EVERY_MS} (a check that failed is tried again after
+     * {@link #UPDATE_RETRY_MS}); each newer release is offered once (Home Screen settings can always
+     * look again). Static: one Glass Home process, however often its activity is made.
      */
-    static boolean updateOffered;
-    static long updateCheckedAt;
+    static long offeredCode;
+    static long updateCheckedAt, updateTriedAt;
+    /** A release found while something else was open, offered once Home is free. */
+    static Updater.Release pendingUpdate;
+    /** A download under way: Update again shows its progress rather than starting another. */
+    static boolean downloading;
     /** How long after Home comes up it asks GitHub, out of the way of its first frames. */
     static final long UPDATE_CHECK_MS = 4000;
-    static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L;
+    static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L, UPDATE_RETRY_MS = 60 * 1000L;
     private final Runnable updateCheck = () -> checkForUpdate(false);
-    private final Runnable offerPending = () -> {
-        if (pendingUpdate != null && homeIsFree()) offerUpdate(pendingUpdate);
+    /** Offers {@link #pendingUpdate} as soon as Home is free, looking again every second till then. */
+    private final Runnable offerPending = new Runnable() {
+        @Override
+        public void run() {
+            if (pendingUpdate == null) return;
+            if (homeIsFree()) offerUpdate(pendingUpdate);
+            else main.postDelayed(this, 1000);
+        }
     };
     private int page = HOME;
     private boolean barHidden;
@@ -267,8 +276,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void checkForUpdate(boolean asked) {
         if (!asked) {
             long now = Clock.now();
-            if (updateOffered || (updateCheckedAt != 0 && now - updateCheckedAt < UPDATE_EVERY_MS)) return;
-            updateCheckedAt = now;
+            if (updateCheckedAt != 0 && now - updateCheckedAt < UPDATE_EVERY_MS) return;
+            if (updateTriedAt != 0 && now - updateTriedAt < UPDATE_RETRY_MS) return;
+            updateTriedAt = now;
         }
         if (asked) {
             prompt.ask("Checking for updates", "", new String[0], new Runnable[0], null);
@@ -283,11 +293,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             }
             Updater.Release release = found;
             main.post(() -> {
+                if (release != null) updateCheckedAt = Clock.now();
                 if (isDestroyed()) return;
-                if (Updater.isNewer(this, release)) {
-                    updateOffered = true;
+                if (Updater.isNewer(this, release) && (asked || release.versionCode > offeredCode)) {
+                    offeredCode = Math.max(offeredCode, release.versionCode);
                     if (asked || homeIsFree()) offerUpdate(release);
-                    else pendingUpdate = release;
+                    else {
+                        pendingUpdate = release;
+                        main.removeCallbacks(offerPending);
+                        main.postDelayed(offerPending, 1000);
+                    }
                 } else if (asked && prompt.isOpen()) {
                     if (release != null) {
                         prompt.ask("Glass Home is up to date", "You have version " + Updater.installedName(this) + ".",
@@ -319,6 +334,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     private void offerUpdate(Updater.Release release) {
         pendingUpdate = null;
+        if (downloading) {
+            prompt.showProgress("Downloading update", -1);
+            showPrompt();
+            return;
+        }
         prompt.ask("Update available", "Glass Home " + release.name + " is ready to install.",
                 new String[] {"Update", "Later"}, new Runnable[] {() -> startUpdate(release), this::hidePrompt}, null);
         showPrompt();
@@ -342,20 +362,29 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Downloads the release and hands it to Fire OS's installer, once Glass Home may install apps. */
     private void startUpdate(Updater.Release release) {
+        if (downloading) {
+            prompt.showProgress("Downloading update", -1);
+            return;
+        }
         if (!Updater.canInstall(this)) {
             prompt.ask("Allow updates", "Turn on Glass Home on the next screen, then choose Update again.",
                     new String[] {"Open settings", "Later"}, new Runnable[] {this::openInstallPermission, this::hidePrompt}, null);
             return;
         }
+        downloading = true;
         prompt.showProgress("Downloading update", -1);
         // Its own thread: the download takes a while, and the browse pages and weather share the network one
         new Thread(() -> {
             try {
                 java.io.File apk = Updater.download(this, release,
-                        pct -> main.post(() -> { if (prompt.isOpen() && prompt.buttons().length == 0) prompt.showProgress("Downloading update", pct); }));
-                main.post(() -> install(apk));
+                        pct -> main.post(() -> { if (prompt.isOpen() && prompt.showingProgress()) prompt.showProgress("Downloading update", pct); }));
+                main.post(() -> {
+                    downloading = false;
+                    install(apk);
+                });
             } catch (java.io.IOException e) {
                 main.post(() -> {
+                    downloading = false;
                     if (isDestroyed()) return;
                     prompt.ask("Update failed", "The update couldn't be downloaded. Try again later.",
                             new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
@@ -778,7 +807,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 lastFocused = index >= 0 ? index : Math.max(0, Math.min(lastFocused, apps.size() - 1));
                 lastDockColumn = Math.max(0, Math.min(lastDockColumn, Math.min(Ui.COLUMNS, apps.size()) - 1));
                 presentedKey = null;
-                if (wasInGrid || lastZone == Zone.GRID) {
+                if (prompt.isOpen()) {
+                    if (!apps.isEmpty()) present(adapter.get(lastFocused));
+                } else if (wasInGrid || lastZone == Zone.GRID) {
                     focusGrid(lastFocused);
                 } else if (!apps.isEmpty()) {
                     present(adapter.get(lastFocused));
@@ -1573,6 +1604,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Puts focus back where it was: the remembered app (and with it the scroll position), the hero or the weather card. */
     private void restoreFocus() {
         grid.post(() -> {
+            // An alert asking about an update keeps focus, whatever was focused before it
+            if (prompt.isOpen()) {
+                prompt.requestFocus();
+                return;
+            }
             switch (lastZone) {
                 case OVERLAY:
                     if (detail.isOpen()) detail.requestFocus();
@@ -2042,6 +2078,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (titleDetail.isOpen()) {
             titleDetail.animate().cancel();
             titleDetail.setVisibility(View.GONE);
+        }
+        if (prompt.isOpen()) {
+            prompt.animate().cancel();
+            prompt.setVisibility(View.GONE);
         }
         if (page != HOME) showHomeAtOnce();
         lastZone = Zone.GRID;

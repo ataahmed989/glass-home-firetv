@@ -34,6 +34,8 @@ final class Fixtures {
         };
         Net.fetcher = (url, bearer) -> {
             File f = new File(DIR, Net.sha1(url));
+            // Glass Home's own releases change with every push: never kept, so no test sees one by accident
+            if (url.equals(Updater.LATEST_URL)) throw new IOException("not recorded: " + url);
             if (f.isFile()) return Files.readAllBytes(f.toPath());
             if (!recording()) throw new IOException("not recorded: " + url);
             byte[] body = Net.http(url, bearer);

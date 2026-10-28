@@ -59,6 +59,11 @@ final class UpdatePrompt extends View {
         return getVisibility() == VISIBLE;
     }
 
+    /** Showing a download's progress (see {@link #showProgress}), rather than asking something. */
+    boolean showingProgress() {
+        return progress >= -1;
+    }
+
     /** Asks {@code heading}/{@code message}, with a button per label doing the matching action; {@code onBack} for Back. */
     void ask(String heading, String message, String[] labels, Runnable[] onChosen, Runnable onBack) {
         this.heading = heading;
