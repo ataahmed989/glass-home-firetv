@@ -38,11 +38,13 @@ public class HomeServiceRecoveryTest {
         HomeServiceRecovery.restore(app);
         assertNull(Settings.Secure.getString(app.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
     }
-    @Test public void respectsHomeButtonOff() {
+    /** The Home service holds more than the redirect (Menu for TiviMate, Sleep), so it comes back with the redirect off too. */
+    @Test public void restoresTheServiceWithTheRedirectOff() {
         shadowOf(app).grantPermissions(Manifest.permission.WRITE_SECURE_SETTINGS);
         new HomeSettings(app).setHomeButtonOpensGlassHome(false);
         HomeServiceRecovery.restore(app);
-        assertEquals(0, Settings.Secure.getInt(app.getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, 0));
+        assertEquals(own, Settings.Secure.getString(app.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
+        assertEquals(1, Settings.Secure.getInt(app.getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, 0));
     }
     @Test public void recognizesShortComponentAndDoesNotDuplicateIt() {
         ComponentName component = new ComponentName(app, HomeButtonService.class);

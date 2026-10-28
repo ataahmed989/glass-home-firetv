@@ -126,6 +126,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     // Remote input
     private boolean selectArmed;
+    // Menu went down here and is not yet up: acted on when it comes up, unless it was held (see dispatchKeyEvent)
+    private boolean menuArmed;
     private long lastStepTime;
 
     private int appsGeneration;
@@ -1238,15 +1240,23 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         options.add(SettingsPanel.Option.choice("SOURCES", "List",
                 "One panel, like this one", SourcesPanel.LIST, null,
                 SourcesPanel.LIST.equals(sourcesLook)));
-        // Sleep's permission can be given back here (it is granted once over ADB), so the launcher can always be uninstalled
-        boolean sleep = SystemControls.canSleep(this);
+        // Sleep can be turned off here, which gives its grant back (if it was given over ADB), so the launcher can always be uninstalled
+        boolean sleepAvailable = SystemControls.sleepAvailable(this);
         options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
-                sleep ? "Lets Control Center put the TV to sleep" : "Turned on during setup over ADB", sleep, sleep));
+                sleepAvailable ? "Lets Control Center put the TV to sleep" : "Needs the Home service, set up over ADB",
+                sleepAvailable, SystemControls.canSleep(this)));
         // Glass Home can turn its service back on itself when allowed to (see HomeServiceRecovery)
         boolean redirect = homeButtonServiceOn() || HomeServiceRecovery.allowed(this);
         options.add(SettingsPanel.Option.toggle("HOME BUTTON", "Opens Glass Home",
                 redirect ? "Off: the Home button shows Amazon's home" : "Turned on during setup over ADB",
                 redirect, redirect && settings.homeButtonOpensGlassHome()));
+        // Held Menu is seen by the Home service, so it needs that too (or the grant to turn it back on)
+        boolean tivimate = HomeButtonService.launchIntent(this, HomeButtonService.TIVIMATE) != null;
+        boolean hold = tivimate && (homeButtonServiceOn() || HomeServiceRecovery.allowed(this));
+        options.add(SettingsPanel.Option.toggle("REMOTE", "Hold Menu for TiviMate",
+                !tivimate ? "TiviMate isn't installed" : hold ? "From any app; a short press works as usual"
+                        : "Needs the Home service, set up over ADB",
+                hold, hold && settings.menuHoldOpensTiviMate()));
         panel.setOptions(options, start);
         panel.setVisibility(View.VISIBLE);
         panel.setAlpha(Ui.reducedMotion ? 1f : 0f);
@@ -1302,11 +1312,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         switch (item) {
             case SLEEP:
                 if (SystemControls.sleepNow(this)) closeControlCenter();
-                else Toast.makeText(this, "Sleep needs a one-time permission, set up over ADB", Toast.LENGTH_LONG).show();
+                else Toast.makeText(this, "Sleep is off, or needs the Home service (Home Screen settings)", Toast.LENGTH_LONG).show();
                 return;
             case TIMER:
                 if (!SystemControls.canSleep(this)) {
-                    Toast.makeText(this, "The sleep timer needs the same one-time permission as Sleep", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "The sleep timer needs Sleep (Home Screen settings)", Toast.LENGTH_LONG).show();
                     return;
                 }
                 // Off → 15 → 30 → 60 → 90 minutes → off
@@ -1362,8 +1372,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (option.checked) HomeServiceRecovery.restore(this);   // Fire OS may have turned the service off meanwhile
             return;
         }
+        if (option.toggle && option.section.equals("REMOTE")) {
+            settings.setMenuHoldOpensTiviMate(option.checked);
+            if (option.checked) HomeServiceRecovery.restore(this);   // Fire OS may have turned the service off meanwhile
+            return;
+        }
         if (option.toggle && option.section.equals("CONTROL CENTER")) {
-            if (!option.checked) {
+            if (option.checked) {
+                SystemControls.allowSleep(this);
+            } else {
                 SystemControls.releaseSleep(this);
                 SystemControls.setSleepTimer(this, 0);
             }
@@ -1462,8 +1479,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             return true;
         }
         if (code == KeyEvent.KEYCODE_MENU) {
-            // The remote's ☰ button: once per press, to the tab bar and back
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) onMenu();
+            // The remote's ☰ button: once per press, to the tab bar and back. On release, as holding it
+            // opens TiviMate (HomeButtonService), and nothing here should move first
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) menuArmed = true;
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                // Held, TiviMate is opening for it: whatever the Home service did, as only it opens TiviMate
+                boolean held = event.getDownTime() == HomeButtonService.menuHoldTaken;
+                boolean fire = menuArmed && !event.isCanceled() && !held;
+                menuArmed = false;
+                if (fire) onMenu();
+            }
             return true;
         }
         int step = stackStep(code);
@@ -1878,6 +1904,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         lastZone = zone();
         selectArmed = false;
+        menuArmed = false;
         // Nothing animates or polls while another app is in front
         main.removeCallbacks(advanceSlide);
         main.removeCallbacks(weatherTick);

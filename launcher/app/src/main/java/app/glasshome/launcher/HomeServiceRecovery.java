@@ -14,7 +14,9 @@ import java.util.Set;
 
 /**
  * Optional recovery after Fire OS clears accessibility on reboot.
- * Enabled only by an explicit ADB WRITE_SECURE_SETTINGS grant and the Home Button setting.
+ * Enabled only by an explicit ADB WRITE_SECURE_SETTINGS grant. The Home service is turned back on
+ * whatever the Home Button setting (which only governs the redirect, inside the service): it also
+ * holds Menu for TiviMate, Sleep without the device-admin grant, and FirePlayer's title server.
  * No polling, network access, or activity launch from this receiver.
  */
 public final class HomeServiceRecovery extends BroadcastReceiver {
@@ -46,7 +48,7 @@ public final class HomeServiceRecovery extends BroadcastReceiver {
     }
 
     static void restore(Context context) {
-        if (!new HomeSettings(context).homeButtonOpensGlassHome() || !allowed(context)) return;
+        if (!allowed(context)) return;
         try {
             String old = Settings.Secure.getString(context.getContentResolver(),
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);

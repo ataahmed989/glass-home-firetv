@@ -60,7 +60,8 @@ import java.util.concurrent.Executors;
  * a remote key is pressed (never consumed; Home never arrives); what it asks, at those moments
  * only: which screen is in front. It reads no screen content and keeps nothing. Turned on once over ADB; Home Screen settings can switch the redirect off.
  *
- * Always running, it also keeps FirePlayer's title server up for TiviMate ({@link FirePlayerTitles}).
+ * Always running, it also keeps FirePlayer's title server up for TiviMate ({@link FirePlayerTitles}),
+ * and opens TiviMate when the remote's Menu button is held, from any app ({@link #MENU_HOLD_MS}).
  */
 public final class HomeButtonService extends AccessibilityService {
     static final String AMAZON_LAUNCHER = "com.amazon.tv.launcher";
@@ -102,6 +103,16 @@ public final class HomeButtonService extends AccessibilityService {
     static final long SHOWN_HOLD_MS = 400;
     /** How long Home's cover takes to fade out over Glass Home, and in over a browse page. */
     static final long COVER_OUT_MS = 120, COVER_ACROSS_MS = 150;
+    /**
+     * Held this long, Menu (☰) opens TiviMate. A press is over in well under half that; Fire OS's own
+     * long press is 400 ms, and nothing on Fire TV is held Menu on its own.
+     */
+    static final long MENU_HOLD_MS = 700;
+    /** Back or Left counts as held with Menu for this long at most, should its release never be seen. */
+    static final long COMBO_MS = 5000;
+    static final String TIVIMATE = "ar.tvplayer.tv";
+    /** The press of Menu (its down time) that opened TiviMate, which Glass Home then leaves alone. */
+    static volatile long menuHoldTaken = -1;
 
     /**
      * Glass Home is started from here, so that the cover is drawn meanwhile: the start waits on the
@@ -121,6 +132,13 @@ public final class HomeButtonService extends AccessibilityService {
     private static long leftAt = -LEFT_MS;   // when Glass Home last went to the back without opening anything
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable lift = this::lift;
+    private final Runnable menuHeld = this::menuHeld;
+    // When Back and Left went down and are still held (-1: up): with Menu, Fire OS's own combinations
+    // (VoiceView; resetting the remote)
+    private long backDownAt = -1, leftDownAt = -1;
+    // The Menu press being timed, and the app in front when it went down
+    private long menuDownTime;
+    private String menuFront = "";
     private FirePlayerTitles titles;
     private String front = "";        // package whose window last came to the front
     /** The last window to come up, Glass Home's aside, was Amazon's home: nothing has come up over it. */
@@ -279,6 +297,7 @@ public final class HomeButtonService extends AccessibilityService {
         handler.removeCallbacks(readyCover);
         handler.removeCallbacks(readyHomeCover);
         handler.removeCallbacks(check);
+        handler.removeCallbacks(menuHeld);
         if (titles != null) titles.unwatch();
         if (connected == this) connected = null;
         return super.onUnbind(intent);
@@ -298,7 +317,78 @@ public final class HomeButtonService extends AccessibilityService {
         }
         // Left on Amazon's home after all: the next key brings Glass Home back
         if (event.getAction() == KeyEvent.ACTION_DOWN && strandedOnAmazonHome()) redirect();
+        watchMenuHold(event);
         return false;   // never consumed
+    }
+
+    /**
+     * Menu held opens TiviMate (Home Screen settings can turn this off). Each key is seen going down
+     * and coming up and none is consumed, so a press still reaches the app in front as before: the
+     * hold is timed from the key's own down time, and called off when it comes up first, when
+     * another key is pressed meanwhile, or when another app's window comes up (Home, say, whose key
+     * is never seen). Not with Back or Left held as well (Fire OS's own combinations).
+     */
+    private void watchMenuHold(KeyEvent event) {
+        int code = event.getKeyCode();
+        boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        long t = event.getEventTime();
+        if (code == KeyEvent.KEYCODE_BACK) backDownAt = down ? t : -1;
+        else if (code == KeyEvent.KEYCODE_DPAD_LEFT) leftDownAt = down ? t : -1;
+        if (code == KeyEvent.KEYCODE_MENU) {
+            if (down && event.getRepeatCount() == 0) {
+                handler.removeCallbacks(menuHeld);
+                if (!stillHeld(backDownAt, t) && !stillHeld(leftDownAt, t) && new HomeSettings(this).menuHoldOpensTiviMate()) {
+                    menuDownTime = event.getDownTime();
+                    menuFront = front;
+                    handler.postAtTime(menuHeld, menuDownTime + MENU_HOLD_MS);
+                }
+            } else if (!down) {
+                // Let go at or past the hold before its turn came (the main thread was busy): a hold all the same
+                boolean pending = handler.hasCallbacks(menuHeld);
+                handler.removeCallbacks(menuHeld);
+                if (pending && event.getDownTime() == menuDownTime && t - menuDownTime >= MENU_HOLD_MS) menuHeld();
+            }
+        } else if (down) {
+            handler.removeCallbacks(menuHeld);
+        }
+    }
+
+    /** A key that went down at {@code at} counts as still held at {@code now}; a release missed expires it. */
+    private static boolean stillHeld(long at, long now) {
+        return at >= 0 && now - at < COMBO_MS;
+    }
+
+    private void menuHeld() {
+        if (TIVIMATE.equals(front)) return;   // already there
+        Intent open = launchIntent(this, TIVIMATE);
+        if (open == null) return;
+        menuHoldTaken = menuDownTime;
+        // Glass Home going to the back for it is not the Home button
+        if (HomeActivity.inFront) opening(TIVIMATE);
+        try {
+            startActivity(open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (ActivityNotFoundException | SecurityException e) {
+            // gone since it was looked up
+        }
+    }
+
+    static boolean isConnected() {
+        return connected != null;
+    }
+
+    /**
+     * Asks Fire OS to lock the screen, which turns the TV off and lets the Fire TV sleep: Sleep
+     * without the device-admin grant. False when the service isn't running or Fire OS says no.
+     */
+    static boolean lockScreen() {
+        HomeButtonService s = connected;
+        return s != null && s.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN);
+    }
+
+    /** {@code pkg}'s TV launch screen, or its phone one; null when it isn't installed. */
+    static Intent launchIntent(Context c, String pkg) {
+        Intent i = c.getPackageManager().getLeanbackLaunchIntentForPackage(pkg);
+        return i != null ? i : c.getPackageManager().getLaunchIntentForPackage(pkg);
     }
 
     @Override
@@ -389,6 +479,7 @@ public final class HomeButtonService extends AccessibilityService {
     }
 
     private void onWindow(String pkg, AccessibilityEvent event) {
+        if (!pkg.equals(menuFront)) handler.removeCallbacks(menuHeld);
         String previous = front;
         front = pkg;
         CharSequence window = event.getClassName();

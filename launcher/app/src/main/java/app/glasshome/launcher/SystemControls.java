@@ -21,8 +21,10 @@ import java.util.List;
  * What the Control Center can do on a Fire TV from an ordinary app, and nothing more:
  *
  * - Sleep, and the sleep timer: Android's device-admin "lock now", which turns the screen off and
- *   lets the Fire TV sleep. It needs a one-time grant over ADB
- *   ({@code dpm set-active-admin app.glasshome.launcher/.SleepAdmin}); without it the tile says so.
+ *   lets the Fire TV sleep, with its one-time grant over ADB
+ *   ({@code dpm set-active-admin app.glasshome.launcher/.SleepAdmin}); without that grant, the Home
+ *   service asks Fire OS to lock the screen, as an accessibility service may (Fire TV has no screen
+ *   for the grant). Home Screen settings can turn Sleep off; without either, the tile says so.
  * - Wi-Fi and Bluetooth: their status, and Fire TV's own settings screens to change them.
  * - Shortcuts: Fire TV's mirroring, accessibility and display screens.
  */
@@ -37,25 +39,45 @@ final class SystemControls {
         return new ComponentName(c, SleepAdmin.class);
     }
 
-    static boolean canSleep(Context c) {
+    /** The one-time device-admin grant over ADB is in place. */
+    static boolean adminActive(Context c) {
         DevicePolicyManager dpm = c.getSystemService(DevicePolicyManager.class);
         return dpm != null && dpm.isAdminActive(admin(c));
     }
 
-    /** Puts the TV to sleep now; false when the one-time permission has not been granted. */
-    static boolean sleepNow(Context c) {
-        if (!canSleep(c)) return false;
-        try {
-            c.getSystemService(DevicePolicyManager.class).lockNow();
-            return true;
-        } catch (SecurityException e) {
-            return false;
-        }
+    /** Sleep could work here: with the grant, or through the Home service. */
+    static boolean sleepAvailable(Context c) {
+        return adminActive(c) || HomeButtonService.isConnected();
     }
 
-    /** Gives the sleep permission back, so the launcher can be uninstalled without ADB. */
+    /** Sleep works here and is on (Home Screen settings can turn it off). */
+    static boolean canSleep(Context c) {
+        return sleepAvailable(c) && !new HomeSettings(c).sleepOff();
+    }
+
+    /** Puts the TV to sleep now; false when Sleep is off or can't work here. */
+    static boolean sleepNow(Context c) {
+        if (!canSleep(c)) return false;
+        if (adminActive(c)) {
+            try {
+                c.getSystemService(DevicePolicyManager.class).lockNow();
+                return true;
+            } catch (SecurityException e) {
+                // the grant is gone: the Home service then
+            }
+        }
+        return HomeButtonService.lockScreen();
+    }
+
+    /** Turns Sleep off, giving the grant back, so the launcher can be uninstalled without ADB. */
     static void releaseSleep(Context c) {
-        if (canSleep(c)) c.getSystemService(DevicePolicyManager.class).removeActiveAdmin(admin(c));
+        new HomeSettings(c).setSleepOff(true);
+        if (adminActive(c)) c.getSystemService(DevicePolicyManager.class).removeActiveAdmin(admin(c));
+    }
+
+    /** Turns Sleep back on; the grant, once given back, only comes back over ADB, but the Home service will do. */
+    static void allowSleep(Context c) {
+        new HomeSettings(c).setSleepOff(false);
     }
 
     private static PendingIntent timerIntent(Context c) {

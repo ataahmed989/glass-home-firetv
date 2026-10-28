@@ -38,6 +38,24 @@ final class HomeSettings {
         prefs.edit().putString("widgets", layout).apply();
     }
 
+    /** Sleep turned off in Home Screen settings (it is on wherever it can work, unless turned off). */
+    boolean sleepOff() {
+        return prefs.getBoolean("sleep_off", false);
+    }
+
+    void setSleepOff(boolean off) {
+        prefs.edit().putBoolean("sleep_off", off).apply();
+    }
+
+    /** Holding the remote's Menu button opens TiviMate (see {@link HomeButtonService}); on unless turned off. */
+    boolean menuHoldOpensTiviMate() {
+        return prefs.getBoolean("menu_hold", true);
+    }
+
+    void setMenuHoldOpensTiviMate(boolean on) {
+        prefs.edit().putBoolean("menu_hold", on).apply();
+    }
+
     /** How the Sources menu looks: {@link SourcesPanel#TILES} (the default) or {@link SourcesPanel#LIST}. */
     String sourcesLook() {
         return prefs.getString("sources", SourcesPanel.TILES);
