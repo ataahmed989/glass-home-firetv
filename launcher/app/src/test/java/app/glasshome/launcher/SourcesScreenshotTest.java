@@ -7,7 +7,6 @@ import static android.view.KeyEvent.KEYCODE_DPAD_RIGHT;
 import static android.view.KeyEvent.KEYCODE_DPAD_UP;
 import static org.junit.Assert.*;
 
-import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -21,11 +20,6 @@ import org.robolectric.annotation.LooperMode;
 @LooperMode(LooperMode.Mode.PAUSED)
 @Config(sdk = 30, qualifiers = "w960dp-h540dp-land-xhdpi")
 public class SourcesScreenshotTest {
-    @After
-    public void restoreLook() {
-        SourcesPanel.look = SourcesPanel.Look.TILES;
-    }
-
     /** Up to the tab bar, then Left past Home onto the button. */
     private static void toButton(TestHome h) throws Exception {
         while (h.activity.zone() != HomeActivity.Zone.TABS) h.press(KEYCODE_DPAD_UP);
@@ -35,7 +29,6 @@ public class SourcesScreenshotTest {
 
     @Test
     public void captureTiles() throws Exception {
-        SourcesPanel.look = SourcesPanel.Look.TILES;
         TestHome h = new TestHome();
         h.loadSampleWeather();
         TestHome.settle();
@@ -46,6 +39,7 @@ public class SourcesScreenshotTest {
 
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals(HomeActivity.Zone.SOURCES, h.activity.zone());
+        assertEquals("the tiles by default", SourcesPanel.TILES, h.sources.look());
         h.capture("sources-3-tiles-fire-tv.png");
 
         h.press(KEYCODE_DPAD_RIGHT);
@@ -65,12 +59,29 @@ public class SourcesScreenshotTest {
 
     @Test
     public void captureList() throws Exception {
-        SourcesPanel.look = SourcesPanel.Look.LIST;
         TestHome h = new TestHome();
         h.loadSampleWeather();
         TestHome.settle();
+        // Chosen in Home Screen settings, under the widgets
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_RIGHT);   // from Control Center to the avatar
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals("Tiles", h.panel.option(8).title);
+        assertTrue("the tiles by default", h.panel.option(8).checked);
+        assertEquals("List", h.panel.option(9).title);
+        while (h.panel.focusedIndex() < 9) h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);
+        assertTrue(h.panel.option(9).checked);
+        assertFalse(h.panel.option(8).checked);
+        TestHome.settle();
+        h.capture("sources-settings.png");
+        h.back();
+        assertEquals("home", "list", h.activity.getSharedPreferences("home", 0).getString("sources", ""));
+
         toButton(h);
         h.press(KEYCODE_DPAD_CENTER);
+        assertEquals(SourcesPanel.LIST, h.sources.look());
         h.capture("sources-6-list-fire-tv.png");
 
         h.press(KEYCODE_DPAD_DOWN);

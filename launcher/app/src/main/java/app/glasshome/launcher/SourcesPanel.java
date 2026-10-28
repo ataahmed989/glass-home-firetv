@@ -15,19 +15,19 @@ import java.util.List;
 
 /**
  * The Sources menu, hung under the {@link SourceButton} in the top-left corner: the TV's inputs.
- * Two looks, to choose between:
+ * Two looks, chosen in Home Screen settings as the widgets' are:
  *
- * - {@link Look#TILES}, Control Center's: each input a Liquid Glass pill from the iOS 26 Control
+ * - {@link #TILES}, Control Center's: each input a Liquid Glass pill from the iOS 26 Control
  *   Center kit (a symbol well, a title and a detail), two by two on the kit's grid. The input on
  *   screen has the kit's "connected" blue well.
- * - {@link Look#LIST}, Home Screen settings': one glass panel with a heading and a row per input,
+ * - {@link #LIST}, Home Screen settings': one glass panel with a heading and a row per input,
  *   a check by the one on screen.
  *
  * Arrows move, Select switches to the focused input, Back closes. It is the only focus target
  * while open.
  */
 final class SourcesPanel extends View {
-    enum Look { TILES, LIST }
+    static final String TILES = "tiles", LIST = "list";
 
     enum Kind { FIRE_TV, HDMI, AV }
 
@@ -57,8 +57,6 @@ final class SourcesPanel extends View {
     // The plugs of a composite cable: video, left and right audio
     private static final int[] AV_COLOURS = {0xFFFFD60A, 0xFFF2F2F7, 0xFFFF453A};
 
-    static Look look = Look.TILES;
-
     private final Glass glass;
     private final List<Source> sources = new ArrayList<>();
     private final Paint scrim = new Paint();
@@ -69,10 +67,11 @@ final class SourcesPanel extends View {
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint title = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint detail = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-    private final TextPaint heading, rowTitle, rowDetail, hint;
+    private final TextPaint heading, rowTitle, rowDetail;
     private final RectF r = new RectF(), well = new RectF(), box = new RectF();
     private final Path path = new Path();
     private Listener listener;
+    private String look = TILES;
     private int focused;
     private float focusT = 1f;
     private ValueAnimator focusAnim;
@@ -90,7 +89,6 @@ final class SourcesPanel extends View {
         heading = text(context, 600, 34, 0xFFFFFFFF);
         rowTitle = text(context, 500, 24, 0xFFFFFFFF);
         rowDetail = text(context, 400, 17, 0xA6FFFFFF);
-        hint = text(context, 400, 16, 0x80FFFFFF);
         glyph.setStyle(Paint.Style.STROKE);
         glyph.setStrokeCap(Paint.Cap.ROUND);
         glyph.setStrokeJoin(Paint.Join.ROUND);
@@ -137,6 +135,16 @@ final class SourcesPanel extends View {
         return getVisibility() == VISIBLE;
     }
 
+    /** {@link #TILES} or {@link #LIST}; anything else is taken as the tiles. */
+    void setLook(String l) {
+        look = LIST.equals(l) ? LIST : TILES;
+        invalidate();
+    }
+
+    String look() {
+        return look;
+    }
+
     int focusedIndex() {
         return focused;
     }
@@ -144,7 +152,7 @@ final class SourcesPanel extends View {
     /** Moves focus; false when there is nothing that way (Up from the top closes the menu). */
     boolean move(int direction) {
         int n = sources.size(), to = focused;
-        if (look == Look.LIST) {
+        if (LIST.equals(look)) {
             if (direction == FOCUS_UP) to = focused - 1;
             else if (direction == FOCUS_DOWN) to = focused + 1;
             else return true;   // nothing beside a list row; the press is used up
@@ -188,7 +196,7 @@ final class SourcesPanel extends View {
 
     @Override
     protected void onDraw(Canvas c) {
-        if (look == Look.LIST) drawList(c);
+        if (LIST.equals(look)) drawList(c);
         else drawTiles(c);
     }
 
@@ -245,7 +253,7 @@ final class SourcesPanel extends View {
     private void drawList(Canvas c) {
         scrim.setColor(0x73000000);
         c.drawRect(0, 0, getWidth(), getHeight(), scrim);
-        float rowH = Ui.px(84), pad = Ui.px(32), header = Ui.px(92), footer = Ui.px(58);
+        float rowH = Ui.px(84), pad = Ui.px(32), header = Ui.px(92), footer = Ui.px(16);
         float top = Ui.px(138), left = Ui.px(56), right = left + Ui.px(560);
         float bottom = top + header + rowH * sources.size() + footer;
         r.set(left, top, right, bottom);
@@ -281,7 +289,6 @@ final class SourcesPanel extends View {
                 c.drawLine(cx - Ui.px(2), midY + Ui.px(8), cx + Ui.px(11), midY - Ui.px(9), mark);
             }
         }
-        c.drawText("Press Back to close", left + pad, bottom - Ui.px(24), hint);
     }
 
     /** Line icons drawn here, as Control Center's: each fits a square of {@code s} around (cx, cy). */

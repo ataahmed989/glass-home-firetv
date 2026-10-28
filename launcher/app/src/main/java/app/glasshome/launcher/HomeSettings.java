@@ -38,6 +38,15 @@ final class HomeSettings {
         prefs.edit().putString("widgets", layout).apply();
     }
 
+    /** How the Sources menu looks: {@link SourcesPanel#TILES} (the default) or {@link SourcesPanel#LIST}. */
+    String sourcesLook() {
+        return prefs.getString("sources", SourcesPanel.TILES);
+    }
+
+    void setSourcesLook(String look) {
+        prefs.edit().putString("sources", look).apply();
+    }
+
     /** The widget the Smart Stack was left on ({@link WidgetPanel.Kind} name), or null for the first. */
     String stackWidget() {
         return prefs.getString("stack_widget", null);

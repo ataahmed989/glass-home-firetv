@@ -61,7 +61,7 @@ final class SettingsPanel extends View {
     private final Paint thumbPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint thumbRim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final TextPaint heading, section, title, subtitle, hint;
+    private final TextPaint heading, section, title, subtitle;
     private final RectF rect = new RectF();
     private final Matrix matrix = new Matrix();
     private final List<Option> options = new ArrayList<>();
@@ -86,7 +86,6 @@ final class SettingsPanel extends View {
         section.setLetterSpacing(0.14f);
         title = text(context, 500, 24, 0xFFFFFFFF);
         subtitle = text(context, 400, 17, 0xA6FFFFFF);
-        hint = text(context, 400, 16, 0x80FFFFFF);
     }
 
     private static TextPaint text(Context c, int weight, int size, int color) {
@@ -151,7 +150,7 @@ final class SettingsPanel extends View {
     @Override
     protected void onDraw(Canvas c) {
         c.drawRect(0, 0, getWidth(), getHeight(), scrim);
-        float rowH = Ui.px(76), pad = Ui.px(32), sectionH = Ui.px(46), header = Ui.px(92), footer = Ui.px(58);
+        float rowH = Ui.px(76), pad = Ui.px(32), sectionH = Ui.px(46), header = Ui.px(92), footer = Ui.px(20);
         // Where each row sits in the list, with a heading wherever the section changes
         float[] rowY = new float[options.size()];
         boolean[] headed = new boolean[options.size()];
@@ -228,7 +227,6 @@ final class SettingsPanel extends View {
             c.drawRect(left, listBottom - fade, right, listBottom, mask);
         }
         c.restoreToCount(layer);
-        c.drawText("Press Back to close", left + pad, bottom - Ui.px(24), hint);
     }
 
     private float scroll;

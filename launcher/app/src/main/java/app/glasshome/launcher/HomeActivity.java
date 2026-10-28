@@ -1181,6 +1181,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     // ---- Sources ----------------------------------------------------------------------------
 
     private void openSources() {
+        sources.setLook(settings.sourcesLook());
         sources.setSources(SourcesPanel.sample());
         sources.setVisibility(View.VISIBLE);
         sources.setAlpha(Ui.reducedMotion ? 1f : 0f);
@@ -1230,6 +1231,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         options.add(SettingsPanel.Option.choice("WIDGETS", "Glances",
                 "Four small squares, all at once", WidgetPanel.GLANCES, null,
                 WidgetPanel.GLANCES.equals(layout)));
+        String sourcesLook = settings.sourcesLook();
+        options.add(SettingsPanel.Option.choice("SOURCES", "Tiles",
+                "Glass tiles, like Control Center", SourcesPanel.TILES, null,
+                !SourcesPanel.LIST.equals(sourcesLook)));
+        options.add(SettingsPanel.Option.choice("SOURCES", "List",
+                "One panel, like this one", SourcesPanel.LIST, null,
+                SourcesPanel.LIST.equals(sourcesLook)));
         // Sleep's permission can be given back here (it is granted once over ADB), so the launcher can always be uninstalled
         boolean sleep = SystemControls.canSleep(this);
         options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
@@ -1365,6 +1373,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         } else if (option.section.equals("WIDGETS")) {
             settings.setWidgetLayout(option.value);
             weather.setLayout(option.value);
+            return;
+        } else if (option.section.equals("SOURCES")) {
+            settings.setSourcesLook(option.value);
             return;
         } else {
             settings.setBackground(option.value);

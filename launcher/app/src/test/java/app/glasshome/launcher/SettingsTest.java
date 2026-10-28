@@ -74,9 +74,11 @@ public class SettingsTest {
         assertEquals("Smart Stack", h.panel.option(6).title);
         assertEquals("Glances", h.panel.option(7).title);
         assertTrue("Smart Stack is the default", h.panel.option(6).checked);
-        assertFalse("Sleep's permission is not granted here", h.panel.option(8).enabled);
-        for (int i = 0; i < 12; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option that can be used", 7, h.panel.focusedIndex());
+        assertEquals("Tiles", h.panel.option(8).title);
+        assertEquals("List", h.panel.option(9).title);
+        assertFalse("Sleep's permission is not granted here", h.panel.option(10).enabled);
+        for (int i = 0; i < 14; i++) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("stops at the last option that can be used", 9, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 
@@ -165,11 +167,11 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Opens Glass Home", h.panel.option(9).title);
-        assertTrue(h.panel.option(9).enabled);
-        assertFalse(h.panel.option(9).checked);
-        for (int i = 0; i < 12; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(9, h.panel.focusedIndex());
+        assertEquals("Opens Glass Home", h.panel.option(11).title);
+        assertTrue(h.panel.option(11).enabled);
+        assertFalse(h.panel.option(11).checked);
+        for (int i = 0; i < 14; i++) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(11, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
 
         assertTrue(new HomeSettings(app).homeButtonOpensGlassHome());
