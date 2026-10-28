@@ -239,6 +239,16 @@ public class UpdaterTest {
         assertEquals(HomeActivity.Zone.UPDATE, h.zone());
         assertEquals("Select from before isn't Update", "Update available", prompt.heading());
 
+        // Pressed before the alert, but reaching Glass Home after it (a busy main thread): no answer either
+        long late = t;   // went down before the alert came up
+        for (int code : new int[] {KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_MENU}) {
+            h.activity.dispatchKeyEvent(new KeyEvent(late, late, KeyEvent.ACTION_DOWN, code, 0));
+            h.activity.dispatchKeyEvent(new KeyEvent(late, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0));
+            TestHome.settle();
+            assertEquals(HomeActivity.Zone.UPDATE, h.zone());
+            assertEquals("Update available", prompt.heading());
+        }
+
         h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_CENTER);   // Later
         assertEquals(HomeActivity.Zone.GRID, h.zone());
@@ -311,5 +321,38 @@ public class UpdaterTest {
         TestHome.settle();
         assertEquals(HomeActivity.Zone.PAGE, h.zone());
         assertTrue("the page has focus", h.page(HomeActivity.MOVIES).hasFocus());
+    }
+
+    /** Asked twice from settings while GitHub is slow: offered once, and Later puts it away. */
+    @Test
+    public void askingTwiceOffersOnce() throws Exception {
+        TestHome h = new TestHome();
+        HomeActivity.updateCheckedAt = Clock.now();   // no check of its own meanwhile
+        github(7);
+        gate = new CountDownLatch(1);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_RIGHT);
+        for (int ask = 0; ask < 2; ask++) {
+            h.press(KEYCODE_DPAD_CENTER);
+            assertEquals(HomeActivity.Zone.SETTINGS, h.zone());
+            while (h.panel.focusedIndex() < 13) h.press(KEYCODE_DPAD_DOWN);
+            h.press(KEYCODE_DPAD_CENTER);
+            TestHome.settle();
+            if (ask == 0) {
+                h.press(KeyEvent.KEYCODE_BACK);   // put away; asked again
+                assertEquals(HomeActivity.Zone.CAPSULE, h.zone());
+            }
+        }
+        gate.countDown();
+        for (int i = 0; i < 5; i++) TestHome.settle();
+        assertEquals(2, checks.get());
+        UpdatePrompt prompt = TestHome.find(h.activity.getWindow().getDecorView(), UpdatePrompt.class);
+        assertEquals("Update available", prompt.heading());
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);   // Later
+        TestHome.advance(1100);
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        assertNotEquals("not offered again", HomeActivity.Zone.UPDATE, h.zone());
     }
 }

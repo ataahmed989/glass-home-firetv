@@ -10,9 +10,10 @@ on:
 permissions:
   contents: write
 
-# One release at a time, so the newest push always publishes last and stays the latest
+# One release at a time, so the newest push always publishes last and stays the latest. Runs started
+# by hand (which never publish) queue apart, so they can't take a waiting release's place
 concurrency:
-  group: release
+  group: release-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:

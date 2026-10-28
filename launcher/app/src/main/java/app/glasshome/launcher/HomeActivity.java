@@ -128,6 +128,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** When the update alert last came up (uptime): a press that began before it is no answer to it. */
     private long promptShownAt;
     private static final String CHECKING = "Checking for updates";
+    /** Checks asked for from settings: an answer whose ask a later one took over counts as unasked. */
+    private int asks;
     /** How long after Home comes up it asks GitHub, out of the way of its first frames. */
     static final long UPDATE_CHECK_MS = 4000;
     static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L, UPDATE_RETRY_MS = 60 * 1000L;
@@ -288,6 +290,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (updateTriedAt != 0 && now - updateTriedAt < UPDATE_RETRY_MS) return;
             updateTriedAt = now;
         }
+        int ask = asked ? ++asks : 0;
         if (asked) {
             prompt.ask(CHECKING, "", new String[0], new Runnable[0], null);
             showPrompt();
@@ -304,8 +307,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (release != null) updateCheckedAt = Clock.now();
                 if (isDestroyed()) return;
                 // Asked from settings, the answer comes up at once, but only while "Checking for updates" is still there
-                boolean waiting = asked && prompt.isOpen() && CHECKING.equals(prompt.heading());
-                if (Updater.isNewer(this, release) && (asked || release.versionCode > offeredCode)) {
+                boolean mine = asked && ask == asks;
+                boolean waiting = mine && prompt.isOpen() && CHECKING.equals(prompt.heading());
+                if (Updater.isNewer(this, release) && (mine || release.versionCode > offeredCode)) {
                     offeredCode = Math.max(offeredCode, release.versionCode);
                     if (waiting || homeIsFree()) offerUpdate(release);
                     else {
@@ -1701,6 +1705,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             }
             return true;
         }
+        // A press begun before the update alert came up (Select, Menu, Back) is no answer to it, whenever it reaches here
+        if (zone() == Zone.UPDATE && event.getDownTime() < promptShownAt
+                && (isSelect(code) || code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_BACK)) {
+            return true;
+        }
         if (isSelect(code)) {
             // Activate on release, once per press; holding Select does not repeat it
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
@@ -1732,8 +1741,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) weather.turn(step);
             return true;
         }
-        // Back pressed before the update alert came up doesn't close it unread
-        if (code == KeyEvent.KEYCODE_BACK && zone() == Zone.UPDATE && event.getDownTime() < promptShownAt) return true;
         return super.dispatchKeyEvent(event);   // Back reaches onBackPressed; Home is never handled here
     }
 
