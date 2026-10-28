@@ -6,8 +6,6 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -92,15 +90,7 @@ final class Weather {
     private Weather() {}
 
     static Data fetch() throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(URL).openConnection();
-        c.setConnectTimeout(10000);
-        c.setReadTimeout(15000);
-        try (InputStream in = c.getInputStream()) {
-            if (c.getResponseCode() != 200) throw new IOException("HTTP " + c.getResponseCode());
-            return parse(new JSONObject(read(in)), System.currentTimeMillis());
-        } finally {
-            c.disconnect();
-        }
+        return parse(new JSONObject(new String(Net.get(URL, null), StandardCharsets.UTF_8)), System.currentTimeMillis());
     }
 
     static Data parse(JSONObject json, long now) throws Exception {

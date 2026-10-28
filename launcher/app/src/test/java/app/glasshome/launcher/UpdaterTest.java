@@ -8,8 +8,11 @@ import static android.view.KeyEvent.KEYCODE_DPAD_UP;
 import static org.junit.Assert.*;
 
 import android.app.Application;
+import android.os.SystemClock;
+import android.view.KeyEvent;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONException;
 import org.junit.After;
@@ -35,6 +38,8 @@ public class UpdaterTest {
     private Net.Fetcher fixtures;
     private Long clock;
     private final AtomicInteger checks = new AtomicInteger();
+    /** While set, GitHub takes its time: the answer comes once it is counted down. */
+    private static volatile CountDownLatch gate;
 
     @Before
     public void reset() {
@@ -57,7 +62,9 @@ public class UpdaterTest {
         HomeActivity.updateTriedAt = 0;
         HomeActivity.pendingUpdate = null;
         HomeActivity.downloading = false;
+        HomeActivity.readyApk = null;
         Updater.latest = null;
+        gate = null;
     }
 
     /** GitHub answers with release {@code build} (no answer at all for 0); everything else as recorded. */
@@ -67,6 +74,14 @@ public class UpdaterTest {
         Net.fetcher = (url, bearer) -> {
             if (!url.equals(Updater.LATEST_URL)) return recorded.get(url, bearer);
             checks.incrementAndGet();
+            CountDownLatch g = gate;
+            if (g != null) {
+                try {
+                    g.await();
+                } catch (InterruptedException e) {
+                    throw new IOException(e);
+                }
+            }
             if (build == 0) throw new IOException("offline");
             return String.format(RELEASE, build, build).getBytes(StandardCharsets.UTF_8);
         };
@@ -202,5 +217,99 @@ public class UpdaterTest {
         h.capture("update-up-to-date.png");
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals("OK goes back where it was", HomeActivity.Zone.CAPSULE, h.zone());
+    }
+
+    /**
+     * Select (or Back) already on its way down as the offer comes up belongs to what was in front:
+     * it neither chooses Update nor closes the offer unread.
+     */
+    @Test
+    public void aPressUnderWayIsNoAnswer() throws Exception {
+        TestHome h = new TestHome();
+        github(7);
+        h.controller.pause().resume();
+        TestHome.advance(HomeActivity.UPDATE_CHECK_MS - 200);
+        long t = SystemClock.uptimeMillis();
+        h.activity.dispatchKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KEYCODE_DPAD_CENTER, 0));
+        waitForCheck();
+        assertEquals(HomeActivity.Zone.UPDATE, h.zone());
+        h.activity.dispatchKeyEvent(new KeyEvent(t, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KEYCODE_DPAD_CENTER, 0));
+        TestHome.settle();
+        UpdatePrompt prompt = TestHome.find(h.activity.getWindow().getDecorView(), UpdatePrompt.class);
+        assertEquals(HomeActivity.Zone.UPDATE, h.zone());
+        assertEquals("Select from before isn't Update", "Update available", prompt.heading());
+
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);   // Later
+        assertEquals(HomeActivity.Zone.GRID, h.zone());
+
+        // Back, the same way, with a newer release
+        github(8);
+        Clock.fixedMillis = Clock.now() + HomeActivity.UPDATE_EVERY_MS;
+        h.controller.pause().resume();
+        TestHome.advance(HomeActivity.UPDATE_CHECK_MS - 200);
+        long b = SystemClock.uptimeMillis();
+        h.activity.dispatchKeyEvent(new KeyEvent(b, b, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0));
+        waitForCheck();
+        assertEquals(HomeActivity.Zone.UPDATE, h.zone());
+        h.activity.dispatchKeyEvent(new KeyEvent(b, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0));
+        TestHome.settle();
+        assertEquals("Back from before doesn't close it", HomeActivity.Zone.UPDATE, h.zone());
+        h.press(KeyEvent.KEYCODE_BACK);
+        assertEquals("a Back of its own does", HomeActivity.Zone.GRID, h.zone());
+    }
+
+    /** "Checking for updates" put away, and a menu opened: the answer waits for the menu to close. */
+    @Test
+    public void aCheckPutAwayAnswersOnceMenusClose() throws Exception {
+        TestHome h = new TestHome();
+        github(7);
+        gate = new CountDownLatch(1);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_CENTER);
+        while (h.panel.focusedIndex() < 13) h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);
+        TestHome.settle();
+        UpdatePrompt prompt = TestHome.find(h.activity.getWindow().getDecorView(), UpdatePrompt.class);
+        assertEquals("Checking for updates", prompt.heading());
+        h.press(KeyEvent.KEYCODE_BACK);
+        assertEquals(HomeActivity.Zone.CAPSULE, h.zone());
+        h.press(KEYCODE_DPAD_CENTER);
+        HomeActivity.Zone menu = h.zone();
+        assertTrue(menu == HomeActivity.Zone.SETTINGS || menu == HomeActivity.Zone.CONTROL);
+
+        gate.countDown();
+        for (int i = 0; i < 5; i++) TestHome.settle();
+        assertEquals("not over the menu", menu, h.zone());
+        h.press(KeyEvent.KEYCODE_BACK);
+        TestHome.advance(1100);
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        assertEquals(HomeActivity.Zone.UPDATE, h.zone());
+        assertEquals("Update available", prompt.heading());
+    }
+
+    /** Offered on the Movies page, Glass Home paused and back, then Later: the page has focus again. */
+    @Test
+    public void laterGoesBackToThePageAfterAPause() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.waitForPage(HomeActivity.MOVIES);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(HomeActivity.Zone.PAGE, h.zone());
+        // A minute on (the check made as Home came up found nothing), a release turns up
+        github(7);
+        later(h, HomeActivity.UPDATE_RETRY_MS);
+        assertEquals(HomeActivity.Zone.UPDATE, h.zone());
+        h.controller.pause().resume();
+        TestHome.settle();
+        assertEquals(HomeActivity.Zone.UPDATE, h.zone());
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);   // Later
+        TestHome.settle();
+        assertEquals(HomeActivity.Zone.PAGE, h.zone());
+        assertTrue("the page has focus", h.page(HomeActivity.MOVIES).hasFocus());
     }
 }

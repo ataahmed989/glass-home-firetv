@@ -33,7 +33,7 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 $adb = "$env:LOCALAPPDATA\AndroidTools\platform-tools\adb.exe"
 $tv = "<tv-address>:5555"
 & $adb connect $tv
-& $adb -s $tv install -r ".\app\build\outputs\apk\debug\app-debug.apk"
+& $adb -s $tv install -r -d ".\app\build\outputs\apk\debug\app-debug.apk"
 & $adb -s $tv shell pm grant app.glasshome.launcher android.permission.WRITE_SECURE_SETTINGS
 & $adb -s $tv shell am start -n app.glasshome.launcher/.HomeActivity
 ```

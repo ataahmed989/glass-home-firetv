@@ -16,6 +16,7 @@ import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -120,6 +121,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     static Updater.Release pendingUpdate;
     /** A download under way: Update again shows its progress rather than starting another. */
     static boolean downloading;
+    /** The Home activity there is now (main thread only): a download reports to it, whichever one started it. */
+    private static HomeActivity current;
+    /** A finished download no Home in front was there to hand over: handed over when Home comes back. */
+    static java.io.File readyApk;
+    /** When the update alert last came up (uptime): a press that began before it is no answer to it. */
+    private long promptShownAt;
+    private static final String CHECKING = "Checking for updates";
     /** How long after Home comes up it asks GitHub, out of the way of its first frames. */
     static final long UPDATE_CHECK_MS = 4000;
     static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L, UPDATE_RETRY_MS = 60 * 1000L;
@@ -130,7 +138,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         public void run() {
             if (pendingUpdate == null) return;
             if (homeIsFree()) offerUpdate(pendingUpdate);
-            else main.postDelayed(this, 1000);
+            else if (resumed) main.postDelayed(this, 1000);   // in the background, onResume looks again
         }
     };
     private int page = HOME;
@@ -281,7 +289,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             updateTriedAt = now;
         }
         if (asked) {
-            prompt.ask("Checking for updates", "", new String[0], new Runnable[0], null);
+            prompt.ask(CHECKING, "", new String[0], new Runnable[0], null);
             showPrompt();
         }
         network.execute(() -> {
@@ -295,15 +303,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             main.post(() -> {
                 if (release != null) updateCheckedAt = Clock.now();
                 if (isDestroyed()) return;
+                // Asked from settings, the answer comes up at once, but only while "Checking for updates" is still there
+                boolean waiting = asked && prompt.isOpen() && CHECKING.equals(prompt.heading());
                 if (Updater.isNewer(this, release) && (asked || release.versionCode > offeredCode)) {
                     offeredCode = Math.max(offeredCode, release.versionCode);
-                    if (asked || homeIsFree()) offerUpdate(release);
+                    if (waiting || homeIsFree()) offerUpdate(release);
                     else {
                         pendingUpdate = release;
                         main.removeCallbacks(offerPending);
                         main.postDelayed(offerPending, 1000);
                     }
-                } else if (asked && prompt.isOpen()) {
+                } else if (waiting) {
                     if (release != null) {
                         prompt.ask("Glass Home is up to date", "You have version " + Updater.installedName(this) + ".",
                                 new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
@@ -345,6 +355,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void showPrompt() {
+        // A press already under way (Select on a tile, Back) belongs to what was in front before
+        selectArmed = false;
+        menuArmed = false;
+        promptShownAt = SystemClock.uptimeMillis();
         if (!prompt.isOpen()) {
             if (zone() != Zone.UPDATE) lastZone = zone();
             prompt.setVisibility(View.VISIBLE);
@@ -373,22 +387,31 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         downloading = true;
         prompt.showProgress("Downloading update", -1);
-        // Its own thread: the download takes a while, and the browse pages and weather share the network one
+        // Its own thread: the download takes a while, and the browse pages and weather share the network one.
+        // It reports to the Home activity there is then, not this one, which may be gone by the time it ends
+        Context app = getApplicationContext();
+        Handler ui = new Handler(Looper.getMainLooper());
         new Thread(() -> {
             try {
-                java.io.File apk = Updater.download(this, release,
-                        pct -> main.post(() -> { if (prompt.isOpen() && prompt.showingProgress()) prompt.showProgress("Downloading update", pct); }));
-                main.post(() -> {
+                java.io.File apk = Updater.download(app, release, pct -> ui.post(() -> {
+                    HomeActivity a = current;
+                    if (a != null && a.prompt.isOpen() && a.prompt.showingProgress()) a.prompt.showProgress("Downloading update", pct);
+                }));
+                ui.post(() -> {
                     downloading = false;
-                    install(apk);
+                    HomeActivity a = current;
+                    // Not over another app: the installer waits for Home to come back
+                    if (a != null && a.resumed) a.install(apk);
+                    else readyApk = apk;
                 });
             } catch (java.io.IOException e) {
-                main.post(() -> {
+                ui.post(() -> {
                     downloading = false;
-                    if (isDestroyed()) return;
-                    prompt.ask("Update failed", "The update couldn't be downloaded. Try again later.",
-                            new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
-                    showPrompt();
+                    HomeActivity a = current;
+                    if (a == null || a.isDestroyed()) return;
+                    a.prompt.ask("Update failed", "The update couldn't be downloaded. Try again later.",
+                            new String[] {"OK"}, new Runnable[] {a::hidePrompt}, null);
+                    a.showPrompt();
                 });
             }
         }, "Glass Home update").start();
@@ -516,6 +539,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         promptGlass = new Glass(config.blurGlass, 0xE62A2E36);
         prompt = new UpdatePrompt(this, promptGlass);
         root.addView(prompt, match());
+        current = this;
         return root;
     }
 
@@ -1630,6 +1654,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     break;
                 case UPDATE:
                     if (prompt.isOpen()) prompt.requestFocus();
+                    else if (page != HOME) focusPage();
                     else focusGrid(lastFocused);
                     break;
                 case TABS:
@@ -1707,6 +1732,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) weather.turn(step);
             return true;
         }
+        // Back pressed before the update alert came up doesn't close it unread
+        if (code == KeyEvent.KEYCODE_BACK && zone() == Zone.UPDATE && event.getDownTime() < promptShownAt) return true;
         return super.dispatchKeyEvent(event);   // Back reaches onBackPressed; Home is never handled here
     }
 
@@ -2032,8 +2059,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         capsule.updateTime();
         restoreFocus();
         // A newer Glass Home on GitHub: looked for once Home is up, and offered when nothing is open
+        current = this;
         main.postDelayed(updateCheck, UPDATE_CHECK_MS);
+        main.removeCallbacks(offerPending);
         if (pendingUpdate != null) main.postDelayed(offerPending, UPDATE_CHECK_MS / 4);
+        if (readyApk != null && !downloading && readyApk.isFile()) {
+            // Downloaded while Home was away: Fire OS's installer now
+            java.io.File apk = readyApk;
+            readyApk = null;
+            main.post(() -> { if (resumed) install(apk); else readyApk = apk; });
+        }
         scheduleSlides();
         main.removeCallbacks(weatherTick);
         long age = System.currentTimeMillis() - weather.lastUpdated();
@@ -2132,7 +2167,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             HomeSnapshot.capture(this);
             snapshotDue = false;
         }
-        lastZone = zone();
+        if (zone() != Zone.UPDATE) lastZone = zone();   // showPrompt kept the zone under the alert
         selectArmed = false;
         menuArmed = false;
         // Nothing animates or polls while another app is in front
@@ -2188,6 +2223,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     protected void onDestroy() {
+        if (current == this) current = null;
         main.removeCallbacks(collect);
         main.removeCallbacks(resumeRefresh);
         unregisterReceiver(packageReceiver);

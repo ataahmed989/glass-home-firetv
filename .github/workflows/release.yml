@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# One release at a time, so the newest push always publishes last and stays the latest
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -35,11 +40,22 @@ jobs:
           echo "$KEYSTORE" | base64 -d > launcher/app/glasshome-release.jks
       - name: Install SDK 35
         run: ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      # Every release reaches the TVs on its own: nothing goes out that fails a test. (The tests expect a
+      # build made elsewhere, numbered 1.)
+      - name: Test
+        working-directory: launcher
+        run: env -u BUILD_NUMBER bash gradlew testDebugUnitTest --no-daemon
       - name: Build release APK
         working-directory: launcher
         run: bash gradlew assembleRelease --no-daemon
       - name: Rename APK
         run: cp launcher/app/build/outputs/apk/release/app-release.apk GlassHome.apk
+      # The TVs install only an update signed like the Glass Home they have: a wrong secret stops here
+      - name: Check signature
+        run: |
+          ${ANDROID_HOME}/build-tools/35.0.0/apksigner verify --print-certs GlassHome.apk | tee certs.txt
+          grep -q "SHA-256 digest: 65e2f2f1fe359d8b3c419a89b603c5cbd897cccfab3b749d8d59f7394c893475" certs.txt \
+            || { echo "::error::GlassHome.apk is not signed with the TVs' key"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: GlassHome-${{ env.BUILD_NUMBER }}
@@ -49,6 +65,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ env.BUILD_NUMBER }}
+          target_commitish: ${{ github.sha }}
           name: Glass Home 1.0.${{ env.BUILD_NUMBER }}
           files: GlassHome.apk
           make_latest: true

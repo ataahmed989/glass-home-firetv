@@ -70,7 +70,8 @@ With ADB debugging on and the TV reachable at `<tv-address>`, once:
 
 ```sh
 adb connect <tv-address>:5555
-adb install -r GlassHome.apk    # from the latest release, or app-debug.apk
+adb install -r -d GlassHome.apk    # from the latest release, or app-debug.apk
+# (-d: a build made here is numbered 1, lower than any release; allowed because the builds are debuggable)
 
 # Updates: lets Glass Home hand its updates to Fire OS's installer (see Updates below). The same as
 # Settings > My Fire TV > Developer options > Install unknown apps > Glass Home.
