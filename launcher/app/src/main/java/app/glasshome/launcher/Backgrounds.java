@@ -73,13 +73,16 @@ final class Backgrounds {
         return decode(context, e, o);
     }
 
-    /** Decoded once per choice; RGB_565 halves memory for an opaque full-screen image. */
+    /**
+     * Decoded once per choice, in full colour: in RGB_565 (half the memory) the night skies' smooth
+     * dark gradients broke into visible bands. One full-screen picture, 8 MB.
+     */
     static Bitmap decode(Context context, Entry e, int screenWidth) {
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
         decode(context, e, bounds);
         BitmapFactory.Options o = new BitmapFactory.Options();
-        o.inPreferredConfig = Bitmap.Config.RGB_565;
+        o.inPreferredConfig = Bitmap.Config.ARGB_8888;
         o.inSampleSize = 1;
         while (bounds.outWidth / (o.inSampleSize * 2) >= screenWidth) o.inSampleSize *= 2;
         return decode(context, e, o);
