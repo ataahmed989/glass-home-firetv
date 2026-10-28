@@ -70,7 +70,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
     private static final long RESUME_REFRESH_MS = 600;
 
-    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL }
+    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES }
 
     static final int HOME = 0, MOVIES = 1, TV = 2, SPORTS = 3;
 
@@ -103,7 +103,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final int[] pageGeneration = new int[4];
     private DetailView titleDetail;
     private ControlCenter control;
-    private Glass controlGlass, panelGlass;
+    private Glass controlGlass, panelGlass, sourceGlass, sourcesGlass;
+    private SourceButton sourceButton;
+    private SourcesPanel sources;
     private int page = HOME;
     private boolean barHidden;
 
@@ -296,6 +298,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         root.addView(capsule, cl);
         capsule.updateTime();
 
+        // The Sources button mirrors the capsule in the top-left corner
+        sourceGlass = new Glass(config.blurGlass, 0xB31C1E23);
+        sourceButton = new SourceButton(this, sourceGlass);
+        FrameLayout.LayoutParams sl = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.px(Ui.CAPSULE_H), Gravity.TOP | Gravity.START);
+        sl.topMargin = Ui.px(Ui.CAPSULE_TOP);
+        sl.leftMargin = Ui.px(Ui.CAPSULE_RIGHT);
+        root.addView(sourceButton, sl);
+
         tabGlass = new Glass(config.blurGlass, 0xB31C1E23);
         tabs = new TabBar(this, tabGlass);
         FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(
@@ -316,6 +327,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         panel = new SettingsPanel(this, panelGlass);
         panel.setListener(this::onSettingChosen);
         root.addView(panel, match());
+        sourcesGlass = new Glass(config.blurGlass, 0xE62A2E36);
+        sources = new SourcesPanel(this, sourcesGlass);
+        sources.setListener(this::onSource);
+        root.addView(sources, match());
         return root;
     }
 
@@ -502,7 +517,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         tabGlass.setBackdrop(small, screenW, screenH);
         controlGlass.setBackdrop(small, screenW, screenH);
         panelGlass.setBackdrop(small, screenW, screenH);
+        sourceGlass.setBackdrop(small, screenW, screenH);
+        sourcesGlass.setBackdrop(small, screenW, screenH);
         capsule.invalidate();
+        sourceButton.invalidate();
         tabs.invalidate();
     }
 
@@ -823,7 +841,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         barHidden = hidden;
         float y = hidden ? -Ui.px(Ui.BAR_HIDE_Y) : 0f;
         long ms = Ui.reducedMotion || atOnce ? 0 : Ui.SCROLL_MS;
-        for (View v : new View[] {tabs, capsule}) {
+        for (View v : new View[] {tabs, capsule, sourceButton}) {
             v.animate().cancel();
             if (ms == 0) {
                 v.setTranslationY(y);
@@ -1050,6 +1068,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case CONTROL:
                 hideControlCenter();
                 break;
+            case SOURCES:
+                hideSources();
+                break;
             case PAGE_DETAIL:
                 cancelLinkWait();
                 titleDetail.animate().cancel();
@@ -1085,11 +1106,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     Zone zone() {
         if (panel.isOpen()) return Zone.SETTINGS;
+        if (sources.isOpen()) return Zone.SOURCES;
         if (control.isOpen()) return Zone.CONTROL;
         if (detail.isOpen()) return Zone.OVERLAY;
         if (titleDetail.isOpen()) return Zone.PAGE_DETAIL;
         if (tabs.isFocused()) return Zone.TABS;
         if (capsule.isFocused()) return Zone.CAPSULE;
+        if (sourceButton.isFocused()) return Zone.SOURCE;
         if (page != HOME) return Zone.PAGE;
         if (stage.isFocused()) return Zone.HERO;
         if (weather.isFocused()) return Zone.WEATHER;
@@ -1147,6 +1170,40 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void focusCapsule() {
         capsule.requestFocus();
         lastZone = Zone.CAPSULE;
+    }
+
+    private void focusSource() {
+        setBarHidden(false);
+        sourceButton.requestFocus();
+        lastZone = Zone.SOURCE;
+    }
+
+    // ---- Sources ----------------------------------------------------------------------------
+
+    private void openSources() {
+        sources.setSources(SourcesPanel.sample());
+        sources.setVisibility(View.VISIBLE);
+        sources.setAlpha(Ui.reducedMotion ? 1f : 0f);
+        sources.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).withLayer().start();
+        sourceButton.setOpen(true);
+        sources.requestFocus();
+    }
+
+    private void hideSources() {
+        sources.animate().cancel();
+        sources.setVisibility(View.GONE);
+        sourceButton.setOpen(false);
+    }
+
+    private void closeSources() {
+        hideSources();
+        focusSource();
+    }
+
+    /** Switching the TV's input waits on how the TV can be told (see SourcesPanel); for now the menu closes. */
+    private void onSource(SourcesPanel.Source source) {
+        closeSources();
+        if (!source.current) Toast.makeText(this, "Switching to " + source.title + " isn't set up yet", Toast.LENGTH_SHORT).show();
     }
 
     // ---- Settings ---------------------------------------------------------------------------
@@ -1331,6 +1388,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 case CAPSULE:
                     focusCapsule();
                     break;
+                case SOURCE:
+                    focusSource();
+                    break;
+                case SOURCES:
+                    if (sources.isOpen()) sources.requestFocus();
+                    else focusSource();
+                    break;
                 case TABS:
                     focusTabs();
                     break;
@@ -1473,6 +1537,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 // Moving along the tabs selects them; the page follows once the selection rests
                 if (direction == View.FOCUS_LEFT && tabs.selected() > 0) {
                     selectTab(tabs.selected() - 1, true);
+                } else if (direction == View.FOCUS_LEFT) {
+                    flushTab();
+                    focusSource();
                 } else if (direction == View.FOCUS_RIGHT) {
                     if (tabs.selected() < tabs.count() - 1) {
                         selectTab(tabs.selected() + 1, true);
@@ -1524,6 +1591,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case CONTROL:
                 if (!control.move(direction) && direction == View.FOCUS_UP) closeControlCenter();
+                return;
+            case SOURCE:
+                // The button sits at the left end of the top bar: Right goes along to the tabs
+                if (direction == View.FOCUS_RIGHT || direction == View.FOCUS_UP) focusTabs();
+                else if (direction == View.FOCUS_DOWN) focusPage();
+                return;
+            case SOURCES:
+                if (!sources.move(direction)) closeSources();
                 return;
             default:
                 moveInGrid(direction);
@@ -1581,6 +1656,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (capsule.item() == ClockCapsule.CONTROL) openControlCenter();
                 else openSettings();
                 return;
+            case SOURCE:
+                openSources();
+                return;
+            case SOURCES:
+                sources.choose();
+                return;
             case CONTROL:
                 control.select();
                 return;
@@ -1625,6 +1706,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case CONTROL:
                 closeControlCenter();
                 return;
+            case SOURCES:
+                closeSources();
+                return;
             case PAGE_DETAIL:
                 closeDetailPage();
                 return;
@@ -1640,6 +1724,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 }
                 return;
             case CAPSULE:
+            case SOURCE:
                 if (page == HOME) focusGrid(lastFocused);
                 else focusTabs();
                 return;

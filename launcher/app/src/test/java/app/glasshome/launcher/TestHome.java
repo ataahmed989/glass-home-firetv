@@ -51,6 +51,8 @@ final class TestHome {
     final WeatherDetail detail;
     final ClockCapsule capsule;
     final SettingsPanel panel;
+    final SourceButton sourceButton;
+    final SourcesPanel sources;
     final TabBar tabs;
     final DetailView titleDetail;
     final ShadowPackageManager pm;
@@ -109,6 +111,8 @@ final class TestHome {
         detail = find(root, WeatherDetail.class);
         capsule = find(root, ClockCapsule.class);
         panel = find(root, SettingsPanel.class);
+        sourceButton = find(root, SourceButton.class);
+        sources = find(root, SourcesPanel.class);
         tabs = find(root, TabBar.class);
         titleDetail = find(root, DetailView.class);
         for (int i = 0; i < 200 && (grid.getAdapter().getItemCount() == 0 || grid.getChildCount() == 0); i++) {
