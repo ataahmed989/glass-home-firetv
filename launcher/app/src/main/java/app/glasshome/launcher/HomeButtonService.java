@@ -59,6 +59,8 @@ import java.util.concurrent.Executors;
  * What it is told: which app's window comes to the front, that Amazon's launcher redrew, and when
  * a remote key is pressed (never consumed; Home never arrives); what it asks, at those moments
  * only: which screen is in front. It reads no screen content and keeps nothing. Turned on once over ADB; Home Screen settings can switch the redirect off.
+ *
+ * Always running, it also keeps FirePlayer's title server up for TiviMate ({@link FirePlayerTitles}).
  */
 public final class HomeButtonService extends AccessibilityService {
     static final String AMAZON_LAUNCHER = "com.amazon.tv.launcher";
@@ -119,6 +121,7 @@ public final class HomeButtonService extends AccessibilityService {
     private static long leftAt = -LEFT_MS;   // when Glass Home last went to the back without opening anything
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable lift = this::lift;
+    private FirePlayerTitles titles;
     private String front = "";        // package whose window last came to the front
     /** The last window to come up, Glass Home's aside, was Amazon's home: nothing has come up over it. */
     private boolean amazonHome;
@@ -261,6 +264,8 @@ public final class HomeButtonService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         connected = this;
+        titles = new FirePlayerTitles(this);
+        titles.watch();
         // The TV has just started, on Amazon's home, which may have come up before this did
         Boolean amazon = amazonHomeInFront();
         if (amazon != null ? amazon : SystemClock.elapsedRealtime() < BOOT_MS) redirect();
@@ -274,6 +279,7 @@ public final class HomeButtonService extends AccessibilityService {
         handler.removeCallbacks(readyCover);
         handler.removeCallbacks(readyHomeCover);
         handler.removeCallbacks(check);
+        if (titles != null) titles.unwatch();
         if (connected == this) connected = null;
         return super.onUnbind(intent);
     }
