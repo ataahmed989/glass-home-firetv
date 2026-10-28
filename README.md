@@ -66,14 +66,19 @@ To record anything missing: `./gradlew testDebugUnitTest -PnetRecord=true -Ptmdb
 
 ## Install on the TV
 
-With ADB debugging on and the TV reachable at `<tv-address>`:
+With ADB debugging on and the TV reachable at `<tv-address>`, once:
 
 ```sh
 adb connect <tv-address>:5555
-adb install -r app-debug.apk
+adb install -r GlassHome.apk    # from the latest release, or app-debug.apk
 
-# Control Center Sleep and Sleep Timer: allows turning the screen off, nothing else.
-# Home Screen settings > Allow Sleep gives it back, so the launcher can always be uninstalled.
+# Updates: lets Glass Home hand its updates to Fire OS's installer (see Updates below). The same as
+# Settings > My Fire TV > Developer options > Install unknown apps > Glass Home.
+adb shell cmd appops set app.glasshome.launcher REQUEST_INSTALL_PACKAGES allow
+
+# Control Center Sleep and Sleep Timer: allows turning the screen off, nothing else. Optional: without
+# it the Home service (below) asks Fire OS to lock the screen instead, which also turns the TV off.
+# Home Screen settings > Allow Sleep turns Sleep off and gives this back, so the launcher can always be uninstalled.
 adb shell dpm set-active-admin app.glasshome.launcher/.SleepAdmin
 
 # Home button: Fire OS always sends Home to Amazon's home screen, whatever the default home app is.
@@ -95,10 +100,20 @@ adb shell cmd appops set app.glasshome.launcher GET_USAGE_STATS allow
 adb shell pm grant app.glasshome.launcher android.permission.WRITE_SECURE_SETTINGS
 ```
 
+## Updates
+
+Every push to `main` publishes a GitHub release, `v1.0.<build>` with `GlassHome.apk`
+(`.github/workflows/release.yml`), signed with the key the TVs' Glass Home carries, so each release
+installs over it, settings and permissions kept. The key is not in the repository: the workflow takes
+it from the repository secret `GLASSHOME_KEYSTORE` (the keystore, base64-encoded), and builds made
+without it are signed with the machine's debug key. Glass Home looks for a newer release when it starts, and when Home comes back at
+most every 6 hours, and offers it once; Home Screen settings > Updates looks again. Update downloads
+it and opens Fire OS's installer, which asks before installing.
+
 **TMDB token** (for Movies, TV Shows and featured titles): copy
 `launcher/app/src/main/assets/apps.json`, put the token in `tmdb_api_key`, and write it into the
-launcher's private files (Fire OS lets ADB into no other folder of the app; this works because it is
-a debug build):
+launcher's private files (Fire OS lets ADB into no other folder of the app; this works because its
+builds are debuggable):
 
 ```sh
 adb shell "run-as app.glasshome.launcher sh -c 'mkdir -p files && cat > files/apps.json && chmod 600 files/apps.json'" < apps.json
@@ -113,7 +128,7 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 | --- | --- |
 | Arrows | Move focus. Held, they step at a steady rate. |
 | Select | Opens the focused app, title, game or widget (once per press). |
-| ☰ Menu | To the tab bar, closing anything open; again to go back down. |
+| ☰ Menu | To the tab bar, closing anything open; again to go back down (on release). Held, from any app: opens TiviMate (Home Screen settings > Remote). |
 | Back | Closes what is open, then steps back toward Home. |
 | Play/Pause | On the Smart Stack, turns to the next widget (Rewind goes back). |
 | Home | Glass Home's Home page, closing anything open, however often it is pressed. Fire OS sends Home to Amazon's home first, so from another app the screen goes dark for a moment on the way (0.04-0.5 s measured on the Fire TV Stick 4K Plus) and Home then fades in; Amazon's home is never seen. Held: Fire TV's quick menu. |

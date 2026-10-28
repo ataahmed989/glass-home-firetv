@@ -8,6 +8,9 @@ launcher/local.properties
 # Rendered by the tests (see docs/screenshots for the ones worth keeping)
 launcher/screenshots/
 
-# Credentials never belong here: the TMDB token lives only on the TV, in apps.json
+# Credentials never belong here: the TMDB token lives only on the TV, in apps.json; the signing key
+# only in the GLASSHOME_KEYSTORE secret
 secrets/
 *.token
+*.jks
+*.keystore

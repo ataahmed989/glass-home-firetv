@@ -1,0 +1,54 @@
+name: Release
+
+# Every push to main publishes a release, "v1.0.<build>" with GlassHome.apk, which Glass Home on the
+# TVs offers to install (see launcher/app/src/main/java/app/glasshome/launcher/Updater.java)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      # The release's versionCode: past the 1 that builds made elsewhere carry, so each installs over them
+      - name: Build number
+        run: echo "BUILD_NUMBER=$(( ${{ github.run_number }} + 1 ))" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      # The key the TVs' Glass Home carries, from the repository's secret (base64 of the keystore)
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.GLASSHOME_KEYSTORE }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then
+            echo "::error::The GLASSHOME_KEYSTORE secret is missing (see README, Updates)"
+            exit 1
+          fi
+          echo "$KEYSTORE" | base64 -d > launcher/app/glasshome-release.jks
+      - name: Install SDK 35
+        run: ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Build release APK
+        working-directory: launcher
+        run: bash gradlew assembleRelease --no-daemon
+      - name: Rename APK
+        run: cp launcher/app/build/outputs/apk/release/app-release.apk GlassHome.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlassHome-${{ env.BUILD_NUMBER }}
+          path: GlassHome.apk
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ env.BUILD_NUMBER }}
+          name: Glass Home 1.0.${{ env.BUILD_NUMBER }}
+          files: GlassHome.apk
+          make_latest: true

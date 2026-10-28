@@ -70,7 +70,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
     private static final long RESUME_REFRESH_MS = 600;
 
-    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES }
+    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE }
 
     static final int HOME = 0, MOVIES = 1, TV = 2, SPORTS = 3;
 
@@ -106,6 +106,24 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private Glass controlGlass, panelGlass, sourceGlass, sourcesGlass;
     private SourceButton sourceButton;
     private SourcesPanel sources;
+    private Glass promptGlass;
+    private UpdatePrompt prompt;
+    /** An update found while something else was open, offered once Home is free. */
+    private Updater.Release pendingUpdate;
+    /**
+     * Glass Home looks for an update when it starts and, should the TV stay on, when Home comes back
+     * at most every {@link #UPDATE_EVERY_MS}; a newer one is offered once (Home Screen settings can
+     * always look again). Static: one Glass Home process, however often its activity is made.
+     */
+    static boolean updateOffered;
+    static long updateCheckedAt;
+    /** How long after Home comes up it asks GitHub, out of the way of its first frames. */
+    static final long UPDATE_CHECK_MS = 4000;
+    static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L;
+    private final Runnable updateCheck = () -> checkForUpdate(false);
+    private final Runnable offerPending = () -> {
+        if (pendingUpdate != null && homeIsFree()) offerUpdate(pendingUpdate);
+    };
     private int page = HOME;
     private boolean barHidden;
 
@@ -240,6 +258,139 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         registerReceiver(timeReceiver, time);
     }
 
+    // ---- Updates ----------------------------------------------------------------------------
+
+    /**
+     * Asks GitHub for the newest release. On its own (at start) only a newer one is shown, and only
+     * once; asked from Home Screen settings ({@code asked}), it says what it found either way.
+     */
+    private void checkForUpdate(boolean asked) {
+        if (!asked) {
+            long now = Clock.now();
+            if (updateOffered || (updateCheckedAt != 0 && now - updateCheckedAt < UPDATE_EVERY_MS)) return;
+            updateCheckedAt = now;
+        }
+        if (asked) {
+            prompt.ask("Checking for updates", "", new String[0], new Runnable[0], null);
+            showPrompt();
+        }
+        network.execute(() -> {
+            Updater.Release found = null;
+            try {
+                found = Updater.fetchLatest();
+            } catch (java.io.IOException e) {
+                // said below, when asked
+            }
+            Updater.Release release = found;
+            main.post(() -> {
+                if (isDestroyed()) return;
+                if (Updater.isNewer(this, release)) {
+                    updateOffered = true;
+                    if (asked || homeIsFree()) offerUpdate(release);
+                    else pendingUpdate = release;
+                } else if (asked && prompt.isOpen()) {
+                    if (release != null) {
+                        prompt.ask("Glass Home is up to date", "You have version " + Updater.installedName(this) + ".",
+                                new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
+                    } else {
+                        prompt.ask("Couldn't check for updates", "Check the TV's internet connection, then try again.",
+                                new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
+                    }
+                }
+            });
+        });
+    }
+
+    /** Nothing open over Home, and Home in front: an update may be offered now. */
+    private boolean homeIsFree() {
+        if (!resumed) return false;
+        switch (zone()) {
+            case OVERLAY:
+            case SETTINGS:
+            case CONTROL:
+            case SOURCES:
+            case PAGE_DETAIL:
+            case UPDATE:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    private void offerUpdate(Updater.Release release) {
+        pendingUpdate = null;
+        prompt.ask("Update available", "Glass Home " + release.name + " is ready to install.",
+                new String[] {"Update", "Later"}, new Runnable[] {() -> startUpdate(release), this::hidePrompt}, null);
+        showPrompt();
+    }
+
+    private void showPrompt() {
+        if (!prompt.isOpen()) {
+            if (zone() != Zone.UPDATE) lastZone = zone();
+            prompt.setVisibility(View.VISIBLE);
+            prompt.setAlpha(Ui.reducedMotion ? 1f : 0f);
+            prompt.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).withLayer().start();
+        }
+        prompt.requestFocus();
+    }
+
+    private void hidePrompt() {
+        prompt.animate().cancel();
+        prompt.setVisibility(View.GONE);
+        restoreFocus();
+    }
+
+    /** Downloads the release and hands it to Fire OS's installer, once Glass Home may install apps. */
+    private void startUpdate(Updater.Release release) {
+        if (!Updater.canInstall(this)) {
+            prompt.ask("Allow updates", "Turn on Glass Home on the next screen, then choose Update again.",
+                    new String[] {"Open settings", "Later"}, new Runnable[] {this::openInstallPermission, this::hidePrompt}, null);
+            return;
+        }
+        prompt.showProgress("Downloading update", -1);
+        // Its own thread: the download takes a while, and the browse pages and weather share the network one
+        new Thread(() -> {
+            try {
+                java.io.File apk = Updater.download(this, release,
+                        pct -> main.post(() -> { if (prompt.isOpen() && prompt.buttons().length == 0) prompt.showProgress("Downloading update", pct); }));
+                main.post(() -> install(apk));
+            } catch (java.io.IOException e) {
+                main.post(() -> {
+                    if (isDestroyed()) return;
+                    prompt.ask("Update failed", "The update couldn't be downloaded. Try again later.",
+                            new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
+                    showPrompt();
+                });
+            }
+        }, "Glass Home update").start();
+    }
+
+    private void install(java.io.File apk) {
+        if (isDestroyed()) return;
+        if (prompt.isOpen()) hidePrompt();
+        // Fire OS's installer comes up over Home: that is no Home press
+        HomeButtonService.opening("installer");
+        try {
+            startActivity(Updater.installIntent(this, apk));
+        } catch (ActivityNotFoundException | SecurityException | IllegalArgumentException e) {
+            prompt.ask("Update failed", "Fire OS couldn't open its installer.", new String[] {"OK"},
+                    new Runnable[] {this::hidePrompt}, null);
+            showPrompt();
+        }
+    }
+
+    private void openInstallPermission() {
+        hidePrompt();
+        HomeButtonService.opening("settings");
+        try {
+            startActivity(Updater.installPermissionSettings(this));
+        } catch (ActivityNotFoundException | SecurityException e) {
+            prompt.ask("Allow updates", "On the Fire TV, open Settings, My Fire TV, Developer options, Install unknown apps, "
+                    + "and turn on Glass Home. Then choose Update again.", new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
+            showPrompt();
+        }
+    }
+
     private View buildViews() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(0xFF000000);
@@ -333,6 +484,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         sources = new SourcesPanel(this, sourcesGlass);
         sources.setListener(this::onSource);
         root.addView(sources, match());
+        promptGlass = new Glass(config.blurGlass, 0xE62A2E36);
+        prompt = new UpdatePrompt(this, promptGlass);
+        root.addView(prompt, match());
         return root;
     }
 
@@ -521,6 +675,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         panelGlass.setBackdrop(small, screenW, screenH);
         sourceGlass.setBackdrop(small, screenW, screenH);
         sourcesGlass.setBackdrop(small, screenW, screenH);
+        promptGlass.setBackdrop(small, screenW, screenH);
         capsule.invalidate();
         sourceButton.invalidate();
         tabs.invalidate();
@@ -1073,6 +1228,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case SOURCES:
                 hideSources();
                 break;
+            case UPDATE:
+                prompt.animate().cancel();
+                prompt.setVisibility(View.GONE);
+                break;
             case PAGE_DETAIL:
                 cancelLinkWait();
                 titleDetail.animate().cancel();
@@ -1107,6 +1266,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     // ---- Focus zones ------------------------------------------------------------------------
 
     Zone zone() {
+        if (prompt.isOpen()) return Zone.UPDATE;
         if (panel.isOpen()) return Zone.SETTINGS;
         if (sources.isOpen()) return Zone.SOURCES;
         if (control.isOpen()) return Zone.CONTROL;
@@ -1257,6 +1417,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 !tivimate ? "TiviMate isn't installed" : hold ? "From any app; a short press works as usual"
                         : "Needs the Home service, set up over ADB",
                 hold, hold && settings.menuHoldOpensTiviMate()));
+        Updater.Release known = Updater.latest;
+        options.add(SettingsPanel.Option.action("UPDATES", "Glass Home " + Updater.installedName(this),
+                Updater.isNewer(this, known) ? known.name + " is ready to install"
+                        : known != null ? "Up to date: select to check again" : "Select to check for an update"));
         panel.setOptions(options, start);
         panel.setVisibility(View.VISIBLE);
         panel.setAlpha(Ui.reducedMotion ? 1f : 0f);
@@ -1367,6 +1531,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void onSettingChosen(SettingsPanel.Option option) {
+        if (option.action && option.section.equals("UPDATES")) {
+            closeSettings();
+            checkForUpdate(true);
+            return;
+        }
         if (option.toggle && option.section.equals("HOME BUTTON")) {
             settings.setHomeButtonOpensGlassHome(option.checked);
             if (option.checked) HomeServiceRecovery.restore(this);   // Fire OS may have turned the service off meanwhile
@@ -1422,6 +1591,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 case SOURCES:
                     if (sources.isOpen()) sources.requestFocus();
                     else focusSource();
+                    break;
+                case UPDATE:
+                    if (prompt.isOpen()) prompt.requestFocus();
+                    else focusGrid(lastFocused);
                     break;
                 case TABS:
                     focusTabs();
@@ -1637,6 +1810,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case SOURCES:
                 if (!sources.move(direction)) closeSources();
                 return;
+            case UPDATE:
+                if (direction == View.FOCUS_UP) prompt.move(-1);
+                else if (direction == View.FOCUS_DOWN) prompt.move(1);
+                return;
             default:
                 moveInGrid(direction);
         }
@@ -1699,6 +1876,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case SOURCES:
                 sources.choose();
                 return;
+            case UPDATE:
+                prompt.choose();
+                return;
             case CONTROL:
                 control.select();
                 return;
@@ -1745,6 +1925,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case SOURCES:
                 closeSources();
+                return;
+            case UPDATE:
+                Runnable then = prompt.backAction();
+                hidePrompt();
+                if (then != null) then.run();
                 return;
             case PAGE_DETAIL:
                 closeDetailPage();
@@ -1810,6 +1995,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         HomeButtonService.glassHomeResumed();
         capsule.updateTime();
         restoreFocus();
+        // A newer Glass Home on GitHub: looked for once Home is up, and offered when nothing is open
+        main.postDelayed(updateCheck, UPDATE_CHECK_MS);
+        if (pendingUpdate != null) main.postDelayed(offerPending, UPDATE_CHECK_MS / 4);
         scheduleSlides();
         main.removeCallbacks(weatherTick);
         long age = System.currentTimeMillis() - weather.lastUpdated();
@@ -1888,6 +2076,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onPause() {
         main.removeCallbacks(resumeRefresh);
+        main.removeCallbacks(updateCheck);
+        main.removeCallbacks(offerPending);
         resumed = false;
         inFront = false;
         lostTop = false;

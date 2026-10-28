@@ -77,8 +77,9 @@ public class SettingsTest {
         assertEquals("Tiles", h.panel.option(8).title);
         assertEquals("List", h.panel.option(9).title);
         assertFalse("Sleep's permission is not granted here", h.panel.option(10).enabled);
-        for (int i = 0; i < 14; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option that can be used", 9, h.panel.focusedIndex());
+        assertTrue("Updates, last", h.panel.option(13).action);
+        for (int i = 0; i < 16; i++) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("stops at the last option, Updates, past those that can't be used", 13, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 
@@ -170,7 +171,7 @@ public class SettingsTest {
         assertEquals("Opens Glass Home", h.panel.option(11).title);
         assertTrue(h.panel.option(11).enabled);
         assertFalse(h.panel.option(11).checked);
-        for (int i = 0; i < 14; i++) h.press(KEYCODE_DPAD_DOWN);
+        while (h.panel.focusedIndex() < 11) h.press(KEYCODE_DPAD_DOWN);
         assertEquals(11, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
 

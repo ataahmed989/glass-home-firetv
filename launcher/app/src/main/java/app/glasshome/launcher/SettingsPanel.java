@@ -24,6 +24,7 @@ import java.util.List;
 final class SettingsPanel extends View {
     static final class Option {
         final boolean toggle;      // a switch, rather than one choice of several
+        final boolean action;      // a row that does something when chosen (checks for updates), neither
         final String section, title, subtitle, value;
         final Bitmap thumb;
         final boolean enabled;
@@ -31,7 +32,13 @@ final class SettingsPanel extends View {
 
         private Option(boolean toggle, String section, String title, String subtitle, String value, Bitmap thumb,
                        boolean enabled, boolean checked) {
+            this(toggle, false, section, title, subtitle, value, thumb, enabled, checked);
+        }
+
+        private Option(boolean toggle, boolean action, String section, String title, String subtitle, String value,
+                       Bitmap thumb, boolean enabled, boolean checked) {
             this.toggle = toggle;
+            this.action = action;
             this.section = section;
             this.title = title;
             this.subtitle = subtitle;
@@ -43,6 +50,10 @@ final class SettingsPanel extends View {
 
         static Option toggle(String section, String title, String subtitle, boolean enabled, boolean on) {
             return new Option(true, section, title, subtitle, null, null, enabled, on);
+        }
+
+        static Option action(String section, String title, String subtitle) {
+            return new Option(false, true, section, title, subtitle, null, null, true, false);
         }
 
         static Option choice(String section, String title, String subtitle, String value, Bitmap thumb, boolean chosen) {
@@ -139,7 +150,7 @@ final class SettingsPanel extends View {
         Option o = options.get(focused);
         if (o.toggle) {
             o.checked = !o.checked;
-        } else {
+        } else if (!o.action) {
             // One choice per section: picking a background leaves the widget layout alone, and so on
             for (Option other : options) if (!other.toggle && other.section.equals(o.section)) other.checked = other == o;
         }
