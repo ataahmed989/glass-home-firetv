@@ -36,7 +36,7 @@ import java.util.Locale;
  */
 final class HomeClock extends View {
     /** Where it sits, in design px: centred on the screen, the date's baseline and the numerals' top and height. */
-    static final int CENTER_X = 960, DATE_BASELINE = 176, DIGITS_TOP = 192, DIGITS_H = 156, WIDTH = 760, HEIGHT = 420;
+    static final int CENTER_X = 960, DATE_BASELINE = 176, DIGITS_TOP = 190, DIGITS_H = 150, WIDTH = 760, HEIGHT = 420;
     /** Inter Display's numerals drawn this much taller, to the kit's proportions (the 9 is 1.33 times as tall as wide). */
     private static final float STRETCH = 1.06f;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("EEE MMM d", Locale.US);
@@ -229,6 +229,8 @@ final class HomeClock extends View {
         p.setTextSize(size);
 
         float top = Ui.px(DIGITS_TOP), baseline = top + h;
+        Paint corners = new Paint();
+        corners.setPathEffect(new android.graphics.CornerPathEffect(size * 0.035f));
         // Even-odd, as the merged outlines are: their holes (the 4's, the 0's) keep no winding of their own
         Path out = new Path();
         out.setFillType(Path.FillType.EVEN_ODD);
@@ -253,6 +255,11 @@ final class HomeClock extends View {
             // overlapping pieces, whose hidden edges the rim would otherwise trace
             Path merged = new Path();
             if (merged.op(glyph, new Path(), Path.Op.UNION)) glyph.set(merged);
+            // Corners softened a touch, as the Lock Screen's numerals have them
+            Path rounded = new Path();
+            corners.getFillPath(glyph, rounded);
+            rounded.setFillType(Path.FillType.EVEN_ODD);
+            glyph.set(rounded);
             m.setScale(1f, STRETCH);
             glyph.transform(m);
             glyph.computeBounds(r, true);
