@@ -29,7 +29,7 @@ import java.util.Locale;
  * glass numerals, centred under the tab bar. The numerals are clear glass: the background shows
  * through them, lifted, with light along their rims and a soft shadow behind. A background that
  * comes with a depth mask (see {@link Backgrounds#depth}) stands in front of them, as the Night
- * Dunes' dune does, cut from the same picture so the two meet exactly.
+ * Dunes' dune does: the glass is cut away there, so the dune is the stage's own picture.
  *
  * Drawn once a minute into a bitmap the size of the clock, and only that bitmap is drawn after
  * that. It fades away while a featured title is on Home, which has its own text there.
@@ -292,29 +292,23 @@ final class HomeClock extends View {
     }
 
     /**
-     * What stands in front of the clock: the background where its mask is white, drawn exactly as
-     * the stage draws it beneath, over the numerals.
+     * What stands in front of the clock: the glass is cut away wherever the mask is white, so the
+     * stage's own picture (the dune) shows there, fading with it whenever the background changes.
      */
     private void drawInFront(Canvas c, RectF frame, int w, int h) {
-        Bitmap front = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Canvas fc = new Canvas(front);
-        fc.translate(-frame.left, -frame.top);
-        HeroLayer.drawBackground(fc, screenW, screenH, slide, new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG));
         // The mask covers the picture as the picture covers the screen
         float scale = Math.max(screenW / (float) depth.getWidth(), screenH / (float) depth.getHeight());
         Matrix m = new Matrix();
         m.setScale(scale, scale);
-        m.postTranslate((screenW - depth.getWidth() * scale) / 2f, (screenH - depth.getHeight() * scale) / 2f);
-        Paint keep = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        // The mask's grey becomes alpha: white keeps the picture, black clears it
-        keep.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[] {
+        m.postTranslate((screenW - depth.getWidth() * scale) / 2f - frame.left, (screenH - depth.getHeight() * scale) / 2f - frame.top);
+        Paint cut = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        // The mask's grey becomes alpha: white erases the glass, black keeps it
+        cut.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[] {
                 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0,
                 1, 0, 0, 0, 0})));
-        keep.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
-        fc.drawBitmap(depth, m, keep);
-        c.drawBitmap(front, 0, 0, null);
-        front.recycle();
+        cut.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));
+        c.drawBitmap(depth, m, cut);
     }
 }
