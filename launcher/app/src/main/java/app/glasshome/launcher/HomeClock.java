@@ -230,7 +230,7 @@ final class HomeClock extends View {
 
         float top = Ui.px(DIGITS_TOP), baseline = top + h;
         Paint corners = new Paint();
-        corners.setPathEffect(new android.graphics.CornerPathEffect(size * 0.035f));
+        corners.setPathEffect(new android.graphics.CornerPathEffect(size * 0.014f));
         // Even-odd, as the merged outlines are: their holes (the 4's, the 0's) keep no winding of their own
         Path out = new Path();
         out.setFillType(Path.FillType.EVEN_ODD);
