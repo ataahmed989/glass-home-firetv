@@ -86,7 +86,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private HomeSettings settings;
     private List<Backgrounds.Entry> backgrounds = new ArrayList<>();
     private Bitmap background;
+    /** The background's depth mask, for the ones whose picture stands in front of the clock; else null. */
+    private Bitmap backgroundDepth;
     private String backgroundName;
+    private HomeClock clock;
     private final java.util.Map<String, Bitmap> thumbnails = new java.util.HashMap<>();
     private SettingsPanel panel;
     private int screenW, screenH;
@@ -236,6 +239,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         @Override
         public void onReceive(Context context, Intent intent) {
             capsule.updateTime();
+            clock.timeChanged();
             weather.invalidate();   // re-checks staleness
         }
     };
@@ -455,6 +459,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         stage = new HeroStage(this);
         root.addView(stage, match());
 
+        // The Lock Screen's clock, over the background and under everything else
+        clock = new HomeClock(this);
+        clock.setScreen(screenW, screenH);
+        android.graphics.RectF clockFrame = HomeClock.frame();
+        FrameLayout.LayoutParams clockLp = new FrameLayout.LayoutParams(Math.round(clockFrame.width()), Math.round(clockFrame.height()));
+        clockLp.leftMargin = Math.round(clockFrame.left);
+        clockLp.topMargin = Math.round(clockFrame.top);
+        root.addView(clock, clockLp);
+
         weatherGlass = new Glass(config.blurGlass, 0xDB1E2636);
         weather = new WidgetPanel(this, weatherGlass);
         weather.setLayout(settings.widgetLayout());
@@ -620,10 +633,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (entry == null) return;
         worker.execute(() -> {
             Bitmap b = Backgrounds.decode(this, entry, screenW);
+            Bitmap depthMask = Backgrounds.depth(this, entry);
             main.post(() -> {
                 Backgrounds.Entry chosen = Backgrounds.find(backgrounds, settings.backgroundName());
                 if (b == null || chosen == null || !chosen.name.equals(entry.name)) return;
                 background = b;
+                backgroundDepth = depthMask;
                 backgroundName = entry.name;
                 // The browse pages settle on the same picture once their banner scrolls away
                 for (int p = MOVIES; p <= SPORTS; p++) pages[p].setHomeBackground(b);
@@ -692,6 +707,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Crossfades only the content; the glass picks up the new background once its blur is ready. */
     private void showSlide(HeroSlide slide, long fadeMs) {
         stage.show(slide, Ui.reducedMotion ? 0 : fadeMs);
+        clock.setSlide(slide, slide.background != null && slide.background == background ? backgroundDepth : null);
         refreshHomeBackdrop();
         // Home's snapshot follows the slideshow once the new slide has settled
         snapshotLater(fadeMs + SNAPSHOT_IDLE_MS);
@@ -983,7 +999,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** What page {@code p} is on screen: Home's hero, widgets and apps, or a browse page. */
     private View[] pageViews(int p) {
-        return p == HOME ? new View[] {stage, weather, grid} : new View[] {pages[p]};
+        return p == HOME ? new View[] {stage, clock, weather, grid} : new View[] {pages[p]};
     }
 
     /** Loads (or refreshes) a browse page off the main thread; a page keeps its old content if this fails. */
@@ -2064,6 +2080,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         inFront = true;
         HomeButtonService.glassHomeResumed();
         capsule.updateTime();
+        clock.start();
         restoreFocus();
         // A newer Glass Home on GitHub: looked for once Home is up, and offered when nothing is open
         current = this;
@@ -2157,6 +2174,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     protected void onPause() {
+        clock.stop();
         main.removeCallbacks(resumeRefresh);
         main.removeCallbacks(updateCheck);
         main.removeCallbacks(offerPending);

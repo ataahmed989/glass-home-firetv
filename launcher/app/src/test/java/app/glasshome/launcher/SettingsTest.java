@@ -65,21 +65,21 @@ public class SettingsTest {
         // Row 0 is the featured switch (no token here, so unavailable); rows 1-5 are the backgrounds
         assertFalse(h.panel.option(0).enabled);
         assertEquals("Night Dunes", h.panel.option(1).title);
-        assertEquals("Lake at Dusk", h.panel.option(2).title);
-        assertEquals("Blue Apple", h.panel.option(5).title);
+        assertEquals("Glow", h.panel.option(2).title);
+        assertEquals("Blue Apple", h.panel.option(4).title);
         assertEquals("starts on the chosen background", 1, h.panel.focusedIndex());
         assertTrue(h.panel.option(1).checked);
         h.press(KEYCODE_DPAD_UP);
         assertEquals("the unavailable switch is skipped", 1, h.panel.focusedIndex());
-        assertEquals("Smart Stack", h.panel.option(6).title);
-        assertEquals("Glances", h.panel.option(7).title);
-        assertTrue("Smart Stack is the default", h.panel.option(6).checked);
-        assertEquals("Tiles", h.panel.option(8).title);
-        assertEquals("List", h.panel.option(9).title);
-        assertFalse("Sleep's permission is not granted here", h.panel.option(10).enabled);
-        assertTrue("Updates, last", h.panel.option(13).action);
+        assertEquals("Smart Stack", h.panel.option(5).title);
+        assertEquals("Glances", h.panel.option(6).title);
+        assertTrue("Smart Stack is the default", h.panel.option(5).checked);
+        assertEquals("Tiles", h.panel.option(7).title);
+        assertEquals("List", h.panel.option(8).title);
+        assertFalse("Sleep's permission is not granted here", h.panel.option(9).enabled);
+        assertTrue("Updates, last", h.panel.option(12).action);
         for (int i = 0; i < 16; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option, Updates, past those that can't be used", 13, h.panel.focusedIndex());
+        assertEquals("stops at the last option, Updates, past those that can't be used", 12, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 
@@ -103,11 +103,10 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
         h.press(KEYCODE_DPAD_DOWN);
-        h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("Glow", h.panel.option(3).title);
+        assertEquals("Glow", h.panel.option(2).title);
         h.press(KEYCODE_DPAD_CENTER);
         TestHome.settle();
-        assertTrue(h.panel.option(3).checked);
+        assertTrue(h.panel.option(2).checked);
         assertFalse(h.panel.option(1).checked);
         Bitmap glow = h.stage.current().background;
         assertNotNull(glow);
@@ -168,10 +167,10 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Opens Glass Home", h.panel.option(11).title);
-        assertTrue(h.panel.option(11).enabled);
-        assertFalse(h.panel.option(11).checked);
-        while (h.panel.focusedIndex() < 11) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("Opens Glass Home", h.panel.option(10).title);
+        assertTrue(h.panel.option(10).enabled);
+        assertFalse(h.panel.option(10).checked);
+        while (h.panel.focusedIndex() < 10) h.press(KEYCODE_DPAD_DOWN);
         assertEquals(11, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
 

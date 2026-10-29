@@ -30,7 +30,7 @@ final class Backgrounds {
         }
     }
 
-    /** Kept lowercase inside a title: "Lake at Dusk". */
+    /** Kept lowercase inside a title: "Waves at Night". */
     private static final java.util.Set<String> SMALL_WORDS = new java.util.HashSet<>(
             java.util.Arrays.asList("a", "an", "and", "at", "by", "for", "in", "of", "on", "or", "the", "to"));
 
@@ -86,6 +86,21 @@ final class Backgrounds {
         o.inSampleSize = 1;
         while (bounds.outWidth / (o.inSampleSize * 2) >= screenWidth) o.inSampleSize *= 2;
         return decode(context, e, o);
+    }
+
+    /**
+     * The picture's depth mask, for the ones that come with one (assets/depth/, the background's
+     * name as a PNG): white over what stands in front, the sky black, so Home's clock can stand
+     * behind the dunes. Null for the others, which keep the clock in front.
+     */
+    static Bitmap depth(Context context, Entry e) {
+        if (e == null || e.file != null) return null;
+        String name = "depth/" + e.name.substring(0, e.name.lastIndexOf('.')) + ".png";
+        try (InputStream in = context.getAssets().open(name)) {
+            return BitmapFactory.decodeStream(in);
+        } catch (IOException ex) {
+            return null;
+        }
     }
 
     private static Bitmap decode(Context context, Entry e, BitmapFactory.Options o) {

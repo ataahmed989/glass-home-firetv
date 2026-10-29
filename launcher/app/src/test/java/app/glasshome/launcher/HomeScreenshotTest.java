@@ -63,7 +63,7 @@ public class HomeScreenshotTest {
         TestHome h = new TestHome();
         h.loadSampleWeather();
         TestHome.settle();
-        for (int i = 1; i <= 5; i++) {
+        for (int i = 1; i <= 4; i++) {
             h.press(KEYCODE_DPAD_UP);
             h.press(KEYCODE_DPAD_UP);
             h.press(KEYCODE_DPAD_RIGHT);   // from Control Center to the avatar
@@ -72,7 +72,7 @@ public class HomeScreenshotTest {
             while (h.panel.focusedIndex() > i) h.press(KEYCODE_DPAD_UP);
             h.press(KEYCODE_DPAD_CENTER);
             TestHome.settle();
-            if (i == 5) h.capture("settings-panel.png");
+            if (i == 4) h.capture("settings-panel.png");
             h.back();
             h.back();
             TestHome.settle();

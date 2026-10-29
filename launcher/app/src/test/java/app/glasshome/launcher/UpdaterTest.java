@@ -205,7 +205,7 @@ public class UpdaterTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);   // from Control Center to the avatar
         h.press(KEYCODE_DPAD_CENTER);
-        int last = 13;
+        int last = 12;
         assertTrue(h.panel.option(last).action);
         assertEquals("Glass Home 1.0.1", h.panel.option(last).title);
         while (h.panel.focusedIndex() < last) h.press(KEYCODE_DPAD_DOWN);
@@ -279,7 +279,7 @@ public class UpdaterTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        while (h.panel.focusedIndex() < 13) h.press(KEYCODE_DPAD_DOWN);
+        while (h.panel.focusedIndex() < 12) h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_CENTER);
         TestHome.settle();
         UpdatePrompt prompt = TestHome.find(h.activity.getWindow().getDecorView(), UpdatePrompt.class);
@@ -336,7 +336,7 @@ public class UpdaterTest {
         for (int ask = 0; ask < 2; ask++) {
             h.press(KEYCODE_DPAD_CENTER);
             assertEquals(HomeActivity.Zone.SETTINGS, h.zone());
-            while (h.panel.focusedIndex() < 13) h.press(KEYCODE_DPAD_DOWN);
+            while (h.panel.focusedIndex() < 12) h.press(KEYCODE_DPAD_DOWN);
             h.press(KEYCODE_DPAD_CENTER);
             TestHome.settle();
             if (ask == 0) {
