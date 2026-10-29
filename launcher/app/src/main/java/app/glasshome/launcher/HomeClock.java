@@ -37,8 +37,8 @@ import java.util.Locale;
 final class HomeClock extends View {
     /** Where it sits, in design px: centred on the screen, the date's baseline and the numerals' top and height. */
     static final int CENTER_X = 960, DATE_BASELINE = 176, DIGITS_TOP = 194, DIGITS_H = 176, WIDTH = 760, HEIGHT = 420;
-    /** The numerals are Inter Display drawn this much taller than wide, as the Lock Screen's are. */
-    private static final float STRETCH = 1.38f;
+    /** Inter Display's numerals drawn this much taller, to the kit's proportions (the 9 is 1.33 times as tall as wide). */
+    private static final float STRETCH = 1.06f;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("EEE MMM d", Locale.US);
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -46,6 +46,8 @@ final class HomeClock extends View {
     private final Runnable tick = this::tickNow;
     private HeroSlide slide;
     private Bitmap depth;
+    /** The slide, small and blurred hard: what the frosted numerals show of the scene behind. */
+    private Bitmap frost;
     private Bitmap drawn;
     private String time = "", date = "";
     private float presence = 1f;
@@ -79,6 +81,7 @@ final class HomeClock extends View {
         show(!featured);
         if (featured) return;
         if (s == slide && depthMask == depth) return;
+        if (s != slide) frost = s != null && s.background != null ? frosted(s) : null;
         slide = s;
         depth = depthMask;
         dirty = true;
@@ -100,6 +103,13 @@ final class HomeClock extends View {
 
     boolean hasDepth() {
         return depth != null;
+    }
+
+    /** The kit blurs the scene by 80 pt under the numerals: about 100 px here, 25 at the backdrop's quarter size. */
+    private static Bitmap frosted(HeroSlide s) {
+        Bitmap small = Backdrop.render(s);
+        Backdrop.blur(small, 8);
+        return small;
     }
 
     /** Keeps the time while Home is in front: redrawn on the minute. */
@@ -189,7 +199,7 @@ final class HomeClock extends View {
     private void drawDate(Canvas c, float cx) {
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setTypeface(Fonts.interDisplay(getContext(), 600));
-        paint.setTextSize(Ui.px(31));
+        paint.setTextSize(Ui.px(33));
         paint.setTextAlign(Paint.Align.CENTER);
         paint.setColor(0x59000000);
         paint.setMaskFilter(new BlurMaskFilter(Ui.px(6), BlurMaskFilter.Blur.NORMAL));
@@ -200,92 +210,117 @@ final class HomeClock extends View {
     }
 
     /**
-     * The time as one outline: each numeral stretched upward from its baseline, the colon's dots
-     * kept round and centred on the numerals' height.
+     * The time as one outline, laid out as Apple's Lock Screen kit has "9:41": bold numerals a
+     * little taller than wide (102 high, the 9 77 wide), and a colon of two round dots a fifth of
+     * their height, at a quarter and three quarters of it, set 0.08 of the height from each side.
      */
     private Path numerals(String t, float cx) {
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setTypeface(Fonts.interDisplay(getContext(), 680));
-        p.setLetterSpacing(-0.01f);
+        p.setTypeface(Fonts.interDisplay(getContext(), 700));
+        p.setLetterSpacing(-0.02f);
         // The size at which a numeral, stretched, stands DIGITS_H tall
         p.setTextSize(100f);
         RectF probe = new RectF();
         Path zero = new Path();
         p.getTextPath("0", 0, 1, 0, 0, zero);
         zero.computeBounds(probe, true);
-        float size = 100f * Ui.px(DIGITS_H) / (probe.height() * STRETCH);
+        float h = Ui.px(DIGITS_H);
+        float size = 100f * h / (probe.height() * STRETCH);
         p.setTextSize(size);
-        float gap = size * 0.035f;
 
-        float baseline = Ui.px(DIGITS_TOP) + Ui.px(DIGITS_H);
+        float top = Ui.px(DIGITS_TOP), baseline = top + h;
         Path out = new Path();
         Path glyph = new Path();
         Matrix m = new Matrix();
-        float x = 0f;
+        RectF r = new RectF();
+        float x = 0f, right = 0f;
+        boolean afterColon = false;
         for (int i = 0; i < t.length(); i++) {
             String ch = t.substring(i, i + 1);
-            glyph.reset();
-            p.getTextPath(ch, 0, 1, x, 0, glyph);
-            m.reset();
             if (ch.equals(":")) {
-                RectF r = new RectF();
-                glyph.computeBounds(r, true);
-                // Round dots, their middle at the numerals' middle
-                m.setTranslate(0, -Ui.px(DIGITS_H) / 2f - r.centerY());
-            } else {
-                m.setScale(1f, STRETCH);
+                float d = h * 0.204f, left = right + h * 0.087f;
+                out.addCircle(left + d / 2f, -h * 0.745f, d / 2f, Path.Direction.CW);
+                out.addCircle(left + d / 2f, -h * 0.258f, d / 2f, Path.Direction.CW);
+                right = left + d;
+                afterColon = true;
+                continue;
             }
+            glyph.reset();
+            p.getTextPath(ch, 0, 1, 0, 0, glyph);
+            m.setScale(1f, STRETCH);
             glyph.transform(m);
+            glyph.computeBounds(r, true);
+            // Numerals run on by their advance; after the colon, the next starts its gap from the dot
+            float shift = afterColon ? right + h * 0.075f - r.left : x;
+            m.setTranslate(shift, 0);
+            glyph.transform(m);
+            glyph.computeBounds(r, true);
             out.addPath(glyph);
-            x += p.measureText(ch) + gap;
+            right = r.right;
+            x = shift + p.measureText(ch);
+            afterColon = false;
         }
-        RectF r = new RectF();
         out.computeBounds(r, true);
-        m.reset();
         m.setTranslate(cx - r.centerX(), baseline);
         out.transform(m);
         return out;
     }
 
     /**
-     * Clear glass: the background through the numerals, lifted toward white, a soft brighter band
-     * just inside their edges for the glass's thickness, a fine rim lit from the top left and the
-     * bottom right, and a shadow outside them only.
+     * Frosted glass, after the kit's "9:41": the scene behind blurred heavily and lifted (the kit's
+     * Linear Dodge is +64 on a light wallpaper; over these night skies the iPhone lifts more, about +90), light gathered along the top and bottom inner edges (its
+     * inner shadows, +40), a fine rim lit from the top left and the bottom right (its glass), and a
+     * faint shadow outside.
      */
     private void drawGlass(Canvas c, Path digits) {
         RectF b = new RectF();
         digits.computeBounds(b, true);
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        RectF frame = frame();
 
-        // Shadow, outside the glass (inside, it would darken what shows through)
+        // Shadow, outside the glass only
         c.save();
         c.clipOutPath(digits);
-        p.setColor(0x66000814);
-        p.setMaskFilter(new BlurMaskFilter(Ui.px(14), BlurMaskFilter.Blur.NORMAL));
-        c.translate(0, Ui.px(4));
+        p.setColor(0x40000814);
+        p.setMaskFilter(new BlurMaskFilter(Ui.px(12), BlurMaskFilter.Blur.NORMAL));
+        c.translate(0, Ui.px(3));
         c.drawPath(digits, p);
         c.restore();
         p.setMaskFilter(null);
+        p.setColor(0xFF000000);
 
-        // The lift: a pale blue-white wash, lighter toward the top
-        p.setShader(new LinearGradient(0, b.top, 0, b.bottom, 0xA3E6ECFF, 0x85D2DDFF, Shader.TileMode.CLAMP));
-        c.drawPath(digits, p);
-        p.setShader(null);
-
-        // Thickness: light gathering just inside the edges
+        // The frost: the blurred scene where the glass is, +64
         c.save();
         c.clipPath(digits);
+        if (frost != null) {
+            Matrix m = new Matrix();
+            m.setScale(screenW / (float) frost.getWidth(), screenH / (float) frost.getHeight());
+            m.postTranslate(-frame.left, -frame.top);
+            p.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[] {
+                    0.9f, 0, 0, 0, 88,
+                    0, 0.9f, 0, 0, 90,
+                    0, 0, 0.9f, 0, 96,
+                    0, 0, 0, 1, 0})));
+            c.drawBitmap(frost, m, p);
+            p.setColorFilter(null);
+        } else {
+            p.setColor(0xFF52565E);
+            c.drawPath(digits, p);
+        }
+
+        // Light just inside the top and bottom edges
         p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(Ui.px(12));
-        p.setColor(0x47FFFFFF);
-        p.setMaskFilter(new BlurMaskFilter(Ui.px(5), BlurMaskFilter.Blur.NORMAL));
+        p.setStrokeWidth(Ui.px(8));
+        p.setShader(new LinearGradient(0, b.top, 0, b.bottom, new int[] {0x52FFFFFF, 0x0AFFFFFF, 0x0AFFFFFF, 0x3DFFFFFF},
+                new float[] {0f, 0.3f, 0.7f, 1f}, Shader.TileMode.CLAMP));
+        p.setMaskFilter(new BlurMaskFilter(Ui.px(3), BlurMaskFilter.Blur.NORMAL));
         c.drawPath(digits, p);
         p.setMaskFilter(null);
 
         // The rim, brightest where the edge faces the top left or the bottom right
-        p.setStrokeWidth(Math.max(2f, Ui.px(3)));
+        p.setStrokeWidth(Math.max(2f, Ui.px(2.5f)));
         p.setShader(new LinearGradient(b.left, b.top, b.right, b.bottom,
-                new int[] {0xFFFFFFFF, 0x59FFFFFF, 0x4DFFFFFF, 0xD9FFFFFF}, new float[] {0f, 0.4f, 0.6f, 1f}, Shader.TileMode.CLAMP));
+                new int[] {0xF2FFFFFF, 0x40FFFFFF, 0x33FFFFFF, 0xBFFFFFFF}, new float[] {0f, 0.4f, 0.6f, 1f}, Shader.TileMode.CLAMP));
         c.drawPath(digits, p);
         p.setShader(null);
         c.restore();

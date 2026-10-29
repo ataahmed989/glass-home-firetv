@@ -12,7 +12,8 @@ no ads and no sponsored rows.
 - **Clock**: the date and the time in tall glass numerals under the tab bar, as on the iOS 26
   Lock Screen. Night Dunes' dune stands in front of it (its depth mask is
   `assets/depth/1-night-dunes.png`); over the other backgrounds it stands in front. It steps
-  aside for a featured title.
+  aside for a featured title. The numerals follow the "9:41" of Apple's iPadOS 26 Lock Screen kit: their
+  proportions, the frost (the scene blurred and lifted) and the light along their edges.
   The order: TiviMate, Netflix, Prime Video, HBO Max, Apple TV, Disney+; then FirePlayer,
   YouTube, Spotify, Game Pass, Settings, the Appstore; then Live TV, Downloader, Tailscale.
   Tiles are layered icons: on focus the layers sway a little and settle, a soft light moves
