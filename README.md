@@ -7,8 +7,12 @@ no ads and no sponsored rows.
 
 ## What it has
 
-- **Home**: a constant background (five included), or a featured title when a streaming app
+- **Home**: a constant background (four included), or a featured title when a streaming app
   is focused, behind a glass dock of 5:3 app tiles six to a row, and the widgets on the right.
+- **Clock**: the date and the time in tall glass numerals under the tab bar, as on the iOS 26
+  Lock Screen. Night Dunes' dune stands in front of it (its depth mask is
+  `assets/depth/1-night-dunes.png`); over the other backgrounds it stands in front. It steps
+  aside for a featured title.
   The order: TiviMate, Netflix, Prime Video, HBO Max, Apple TV, Disney+; then FirePlayer,
   YouTube, Spotify, Game Pass, Settings, the Appstore; then Live TV, Downloader, Tailscale.
   Tiles are layered icons: on focus the layers sway a little and settle, a soft light moves
@@ -20,12 +24,14 @@ no ads and no sponsored rows.
 - **Movies and TV Shows** (TMDB): a hero carousel with title logos, Top 10, new arrivals, "Popular on …" for each streaming app installed, In Theaters and Coming Soon,
   Top Rated. Select opens a details page with where it streams; its "Open …" buttons go
   straight to the title's own page in that app (or to the app, where it has no link for it).
-- **Sports** (ESPN): Live Now, My Teams, and a row per league (NFL, college football, NBA,
-  NHL, MLB, MLS, Premier League), with live scores, start times and the channel or app.
+- **Sports** (ESPN): Live Now, My Teams, and a row per league (NBA, MLS, Premier League, NFL,
+  college football, NHL, MLB), with live scores, start times and the channel or app.
 - **Widgets**: a Smart Stack (one card with weather, your next game and the date) or Glances
   (four small squares: the date, weather, next game, sunrise and sunset), chosen in Home Screen
   settings. The stack turns only
   when asked, with Play/Pause while it has focus, and stays where it was left.
+- **Home Screen settings** (from the avatar): background, widgets, Sources look, Sleep, Home
+  button, Hold Menu for TiviMate, Clear Cache (Glass Home's own cache) and updates.
 - **Control Center** from the status capsule: Sleep, Sleep Timer, Wi-Fi, Bluetooth, and
   shortcuts to screen mirroring, accessibility, display settings and Home Screen settings,
   laid out on the grid of a Figma Community kit of the iOS 26 Control Center.

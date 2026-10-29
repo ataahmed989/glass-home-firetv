@@ -1492,6 +1492,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 !tivimate ? "TiviMate isn't installed" : hold ? "From any app; a short press works as usual"
                         : "Needs the Home service, set up over ADB",
                 hold, hold && settings.menuHoldOpensTiviMate()));
+        options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache",
+                "Glass Home's saved pictures, pages and scores"));
         Updater.Release known = Updater.latest;
         options.add(SettingsPanel.Option.action("UPDATES", "Glass Home " + Updater.installedName(this),
                 Updater.isNewer(this, known) ? known.name + " is ready to install"
@@ -1501,6 +1503,20 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         panel.setAlpha(Ui.reducedMotion ? 1f : 0f);
         panel.animate().alpha(1f).setDuration(Ui.reducedMotion ? 0 : 200).setInterpolator(Ui.EASE).withLayer().start();
         panel.requestFocus();
+    }
+
+    /** Clears Glass Home's cache off the main thread; settings stay open and say how much went. */
+    private void clearCache() {
+        boolean keepUpdates = downloading;
+        worker.execute(() -> {
+            long freed = CacheCleaner.clear(this, keepUpdates);
+            main.post(() -> {
+                ImageCache.get(this).clearMemory();
+                if (isDestroyed()) return;
+                Toast.makeText(this, freed > 0 ? "Cache cleared: " + CacheCleaner.size(freed) + " freed" : "The cache was already empty",
+                        Toast.LENGTH_SHORT).show();
+            });
+        });
     }
 
     private void closeSettings() {
@@ -1606,6 +1622,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void onSettingChosen(SettingsPanel.Option option) {
+        if (option.action && option.section.equals("STORAGE")) {
+            clearCache();
+            return;
+        }
         if (option.action && option.section.equals("UPDATES")) {
             closeSettings();
             checkForUpdate(true);

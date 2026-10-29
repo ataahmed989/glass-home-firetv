@@ -42,14 +42,15 @@ final class Sports {
         }
     }
 
+    /** In the Sports page's order, after Live Now and My Teams: NBA, the soccer leagues, NFL, then the rest. */
     static final League[] LEAGUES = {
-            new League("nfl", "football/nfl", "NFL", true),
-            new League("college-football", "football/college-football", "College Football", true),
             new League("nba", "basketball/nba", "NBA", false),
-            new League("nhl", "hockey/nhl", "NHL", false),
-            new League("mlb", "baseball/mlb", "MLB", false),
             new League("mls", "soccer/usa.1", "MLS", false),
             new League("epl", "soccer/eng.1", "Premier League", false),
+            new League("nfl", "football/nfl", "NFL", true),
+            new League("college-football", "football/college-football", "College Football", true),
+            new League("nhl", "hockey/nhl", "NHL", false),
+            new League("mlb", "baseball/mlb", "MLB", false),
     };
 
     /** Cincinnati and Ohio teams, for a TV in Centerville; "favorite_teams" in apps.json replaces them. */

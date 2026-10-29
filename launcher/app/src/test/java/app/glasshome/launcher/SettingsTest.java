@@ -77,9 +77,9 @@ public class SettingsTest {
         assertEquals("Tiles", h.panel.option(7).title);
         assertEquals("List", h.panel.option(8).title);
         assertFalse("Sleep's permission is not granted here", h.panel.option(9).enabled);
-        assertTrue("Updates, last", h.panel.option(12).action);
+        assertTrue("Updates, last", h.panel.option(13).action);
         for (int i = 0; i < 16; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option, Updates, past those that can't be used", 12, h.panel.focusedIndex());
+        assertEquals("stops at the last option, Updates, past those that can't be used", 13, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 
@@ -171,11 +171,33 @@ public class SettingsTest {
         assertTrue(h.panel.option(10).enabled);
         assertFalse(h.panel.option(10).checked);
         while (h.panel.focusedIndex() < 10) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(11, h.panel.focusedIndex());
+        assertEquals(10, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
 
         assertTrue(new HomeSettings(app).homeButtonOpensGlassHome());
         assertEquals(new ComponentName(app, HomeButtonService.class).flattenToString(),
                 Settings.Secure.getString(app.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
+    }
+
+    /** Clear Cache empties Glass Home's own cache and says how much it freed. */
+    @Test
+    public void clearCacheEmptiesTheCache() throws Exception {
+        TestHome h = new TestHome();
+        java.io.File junk = new java.io.File(new java.io.File(h.activity.getCacheDir(), "img"), "old-artwork");
+        junk.getParentFile().mkdirs();
+        java.nio.file.Files.write(junk.toPath(), new byte[300 * 1024]);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals("Clear Cache", h.panel.option(12).title);
+        while (h.panel.focusedIndex() < 12) h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);
+        for (int i = 0; i < 5; i++) TestHome.settle();
+        assertFalse(junk.exists());
+        assertTrue("the folder stays", junk.getParentFile().isDirectory());
+        assertEquals("settings stay open", Zone.SETTINGS, h.zone());
+        String said = org.robolectric.shadows.ShadowToast.getTextOfLatestToast();
+        assertTrue(said, said.startsWith("Cache cleared: "));
     }
 }

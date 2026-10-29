@@ -52,6 +52,12 @@ final class ImageCache {
         return instance;
     }
 
+    /** Lets go of the decoded artwork kept in memory (Clear Cache); what's on screen keeps its own. Main thread. */
+    void clearMemory() {
+        memory.evictAll();
+        failedAt.clear();
+    }
+
     /** Tests start each case with a fresh app sandbox, so the cache must not outlive it. */
     static synchronized void reset() {
         if (instance != null) instance.pool.shutdownNow();

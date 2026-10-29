@@ -205,7 +205,7 @@ final class HomeClock extends View {
      */
     private Path numerals(String t, float cx) {
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setTypeface(Fonts.interDisplay(getContext(), 560));
+        p.setTypeface(Fonts.interDisplay(getContext(), 680));
         p.setLetterSpacing(-0.01f);
         // The size at which a numeral, stretched, stands DIGITS_H tall
         p.setTextSize(100f);
@@ -260,7 +260,7 @@ final class HomeClock extends View {
         // Shadow, outside the glass (inside, it would darken what shows through)
         c.save();
         c.clipOutPath(digits);
-        p.setColor(0x4D000814);
+        p.setColor(0x66000814);
         p.setMaskFilter(new BlurMaskFilter(Ui.px(14), BlurMaskFilter.Blur.NORMAL));
         c.translate(0, Ui.px(4));
         c.drawPath(digits, p);
@@ -268,7 +268,7 @@ final class HomeClock extends View {
         p.setMaskFilter(null);
 
         // The lift: a pale blue-white wash, lighter toward the top
-        p.setShader(new LinearGradient(0, b.top, 0, b.bottom, 0x7AE8EEFF, 0x5CD8E2FF, Shader.TileMode.CLAMP));
+        p.setShader(new LinearGradient(0, b.top, 0, b.bottom, 0xA3E6ECFF, 0x85D2DDFF, Shader.TileMode.CLAMP));
         c.drawPath(digits, p);
         p.setShader(null);
 
@@ -276,8 +276,8 @@ final class HomeClock extends View {
         c.save();
         c.clipPath(digits);
         p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(Ui.px(10));
-        p.setColor(0x38FFFFFF);
+        p.setStrokeWidth(Ui.px(12));
+        p.setColor(0x47FFFFFF);
         p.setMaskFilter(new BlurMaskFilter(Ui.px(5), BlurMaskFilter.Blur.NORMAL));
         c.drawPath(digits, p);
         p.setMaskFilter(null);
@@ -285,7 +285,7 @@ final class HomeClock extends View {
         // The rim, brightest where the edge faces the top left or the bottom right
         p.setStrokeWidth(Math.max(2f, Ui.px(3)));
         p.setShader(new LinearGradient(b.left, b.top, b.right, b.bottom,
-                new int[] {0xE6FFFFFF, 0x40FFFFFF, 0x33FFFFFF, 0xB3FFFFFF}, new float[] {0f, 0.4f, 0.6f, 1f}, Shader.TileMode.CLAMP));
+                new int[] {0xFFFFFFFF, 0x59FFFFFF, 0x4DFFFFFF, 0xD9FFFFFF}, new float[] {0f, 0.4f, 0.6f, 1f}, Shader.TileMode.CLAMP));
         c.drawPath(digits, p);
         p.setShader(null);
         c.restore();
