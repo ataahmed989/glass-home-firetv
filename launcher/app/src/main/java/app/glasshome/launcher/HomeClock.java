@@ -36,7 +36,7 @@ import java.util.Locale;
  */
 final class HomeClock extends View {
     /** Where it sits, in design px: centred on the screen, the date's baseline and the numerals' top and height. */
-    static final int CENTER_X = 960, DATE_BASELINE = 176, DIGITS_TOP = 194, DIGITS_H = 176, WIDTH = 760, HEIGHT = 420;
+    static final int CENTER_X = 960, DATE_BASELINE = 176, DIGITS_TOP = 192, DIGITS_H = 164, WIDTH = 760, HEIGHT = 420;
     /** Inter Display's numerals drawn this much taller, to the kit's proportions (the 9 is 1.33 times as tall as wide). */
     private static final float STRETCH = 1.06f;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("EEE MMM d", Locale.US);
@@ -308,20 +308,21 @@ final class HomeClock extends View {
             c.drawPath(digits, p);
         }
 
+        // The light is drawn from the numerals' filled shape, never by tracing their outlines: the
+        // font builds some (the 4's crossbar over its stem) from overlapping pieces, whose hidden
+        // edges a traced rim would show
         // Light just inside the top and bottom edges
-        p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(Ui.px(8));
-        p.setShader(new LinearGradient(0, b.top, 0, b.bottom, new int[] {0x52FFFFFF, 0x0AFFFFFF, 0x0AFFFFFF, 0x3DFFFFFF},
+        p.setShader(new LinearGradient(0, b.top, 0, b.bottom, new int[] {0x33FFFFFF, 0x05FFFFFF, 0x05FFFFFF, 0x24FFFFFF},
                 new float[] {0f, 0.3f, 0.7f, 1f}, Shader.TileMode.CLAMP));
-        p.setMaskFilter(new BlurMaskFilter(Ui.px(3), BlurMaskFilter.Blur.NORMAL));
+        p.setMaskFilter(new BlurMaskFilter(Ui.px(4), BlurMaskFilter.Blur.INNER));
         c.drawPath(digits, p);
-        p.setMaskFilter(null);
 
         // The rim, brightest where the edge faces the top left or the bottom right
-        p.setStrokeWidth(Math.max(2f, Ui.px(2.5f)));
         p.setShader(new LinearGradient(b.left, b.top, b.right, b.bottom,
-                new int[] {0xF2FFFFFF, 0x40FFFFFF, 0x33FFFFFF, 0xBFFFFFFF}, new float[] {0f, 0.4f, 0.6f, 1f}, Shader.TileMode.CLAMP));
+                new int[] {0xE6FFFFFF, 0x33FFFFFF, 0x26FFFFFF, 0xB3FFFFFF}, new float[] {0f, 0.4f, 0.6f, 1f}, Shader.TileMode.CLAMP));
+        p.setMaskFilter(new BlurMaskFilter(Math.max(0.8f, Ui.px(1.1f)), BlurMaskFilter.Blur.INNER));
         c.drawPath(digits, p);
+        p.setMaskFilter(null);
         p.setShader(null);
         c.restore();
     }

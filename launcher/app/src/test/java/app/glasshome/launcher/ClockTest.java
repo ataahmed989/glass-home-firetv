@@ -61,4 +61,23 @@ public class ClockTest {
         TestHome.advance(Ui.PAGE_FADE_MS + 100);
         assertEquals(View.GONE, clock.getVisibility());
     }
+
+    /** Every numeral, behind the dune: three times that use 0 to 9 between them. */
+    @Test
+    public void everyNumeral() throws Exception {
+        TestHome h = new TestHome();
+        h.loadSampleWeather();
+        TestHome.settle();
+        HomeClock clock = TestHome.find(h.activity.getWindow().getDecorView(), HomeClock.class);
+        java.time.ZonedDateTime day = Clock.at(Fixtures.RECORDED_AT);
+        String[] times = {"10:28", "4:57", "6:39"};
+        for (String t : times) {
+            String[] hm = t.split(":");
+            Clock.fixedMillis = day.withHour(Integer.parseInt(hm[0])).withMinute(Integer.parseInt(hm[1])).toInstant().toEpochMilli();
+            clock.timeChanged();
+            TestHome.settle();
+            assertEquals(t, clock.time());
+            h.capture("clock-numerals-" + t.replace(':', '-') + ".png");
+        }
+    }
 }
