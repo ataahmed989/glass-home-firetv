@@ -25,8 +25,13 @@ no ads and no sponsored rows.
 - **Movies and TV Shows** (TMDB): a hero carousel with title logos, Top 10, new arrivals, "Popular on …" for each streaming app installed, In Theaters and Coming Soon,
   Top Rated. Select opens a details page with where it streams; its "Open …" buttons go
   straight to the title's own page in that app (or to the app, where it has no link for it).
-- **Sports** (ESPN): Live Now, My Teams, and a row per league (NBA, MLS, Premier League, NFL,
-  college football, NHL, MLB), with live scores, start times and the channel or app.
+- **Sports** (ESPN): Live Now, My Teams, and a row per league: NBA; the Premier League, La Liga,
+  the Champions League, Ligue 1, the Bundesliga and MLS; the NFL, college football and basketball,
+  men's tennis (ATP singles), NHL and MLB. Live scores, start times and the channel or app.
+  Your teams (Sports.DEFAULT_TEAMS, or "favorite_teams" in apps.json): Real Madrid, Manchester
+  United, Chelsea, Liverpool, PSG, Bayern, the Cavaliers, Lakers, Knicks and 76ers, Ohio State
+  football and basketball, Columbus Crew, FC Cincinnati, the Bengals, Browns and Ravens, and any
+  men's tennis match on now.
 - **Widgets**: a Smart Stack (one card with weather, your next game and the date) or Glances
   (four small squares: the date, weather, next game, sunrise and sunset), chosen in Home Screen
   settings. The stack turns only

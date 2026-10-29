@@ -40,22 +40,44 @@ final class Sports {
             this.name = name;
             this.weekly = weekly;
         }
+
+        /** Soccer: its feed without a date is the next matchday, however far off. */
+        boolean soccer() {
+            return path.startsWith("soccer/");
+        }
+
+        /** Tennis: tournaments of matches between players, not games between teams. */
+        boolean tennis() {
+            return path.startsWith("tennis/");
+        }
     }
 
     /** In the Sports page's order, after Live Now and My Teams: NBA, the soccer leagues, NFL, then the rest. */
     static final League[] LEAGUES = {
             new League("nba", "basketball/nba", "NBA", false),
-            new League("mls", "soccer/usa.1", "MLS", false),
             new League("epl", "soccer/eng.1", "Premier League", false),
+            new League("laliga", "soccer/esp.1", "La Liga", false),
+            new League("ucl", "soccer/uefa.champions", "Champions League", false),
+            new League("ligue1", "soccer/fra.1", "Ligue 1", false),
+            new League("bundesliga", "soccer/ger.1", "Bundesliga", false),
+            new League("mls", "soccer/usa.1", "MLS", false),
             new League("nfl", "football/nfl", "NFL", true),
             new League("college-football", "football/college-football", "College Football", true),
+            new League("college-basketball", "basketball/mens-college-basketball", "College Basketball", false),
+            new League("atp", "tennis/atp", "Men's Tennis", false),
             new League("nhl", "hockey/nhl", "NHL", false),
             new League("mlb", "baseball/mlb", "MLB", false),
     };
 
-    /** Cincinnati and Ohio teams, for a TV in Centerville; "favorite_teams" in apps.json replaces them. */
+    /**
+     * Your teams, by league and ESPN's abbreviation; "favorite_teams" in apps.json replaces them.
+     * "atp:*" is men's tennis: any match on now.
+     */
     static final List<String> DEFAULT_TEAMS = Collections.unmodifiableList(java.util.Arrays.asList(
-            "nfl:CIN", "college-football:OSU", "mlb:CIN", "nba:CLE", "nhl:CBJ", "mls:CIN"));
+            "laliga:RMA", "epl:MAN", "epl:CHE", "nba:CLE", "nba:LAL", "nba:NY", "nba:PHI",
+            "college-football:OSU", "college-basketball:OSU", "ligue1:PSG", "epl:LIV", "bundesliga:MUN",
+            "ucl:RMA", "ucl:MAN", "ucl:CHE", "ucl:PSG", "ucl:LIV", "ucl:MUN",
+            "atp:*", "mls:CLB", "mls:CIN", "nfl:CIN", "nfl:CLE", "nfl:BAL"));
 
     static final class Team {
         String abbr = "", name = "", shortName = "", logo = "", record = "", score = "";
@@ -88,7 +110,7 @@ final class Sports {
         }
 
         String matchup() {
-            return away.shortName + " at " + home.shortName;
+            return away.shortName + (league != null && league.tennis() ? " vs " : " at ") + home.shortName;
         }
 
         String network() {
@@ -119,6 +141,10 @@ final class Sports {
 
     static List<Game> fetch(Context context, League league) throws Exception {
         List<Game> games = new ArrayList<>();
+        if (league.tennis()) {
+            // The tournaments under way, every match of them
+            return parseTennis(board(context, league, null, LIVE_AGE), league);
+        }
         if (league.weekly) {
             JSONObject board = board(context, league, null, LIVE_AGE);
             games.addAll(parse(board, league));
@@ -149,8 +175,32 @@ final class Sports {
                     if (d == 0) throw e;
                 }
             }
+            if (league.soccer()) {
+                // Soccer plays a few days a week: the next matchday too, however far off, and the
+                // three days after it (a round runs Friday to Monday)
+                try {
+                    JSONObject next = board(context, league, null, LATER_AGE);
+                    games.addAll(parse(next, league));
+                    JSONObject day = next.optJSONObject("day");
+                    LocalDate first = day == null ? null : LocalDate.parse(day.optString("date"));
+                    for (int d = 1; first != null && d <= 3; d++) {
+                        LocalDate date = first.plusDays(d);
+                        if (!date.isAfter(today.plusDays(2))) continue;   // fetched above
+                        try {
+                            games.addAll(parse(board(context, league, "dates=" + date.format(DAY), LATER_AGE), league));
+                        } catch (Exception e) {
+                            // that day is left out
+                        }
+                    }
+                } catch (Exception e) {
+                    // the days above still show
+                }
+            }
         }
-        return games;
+        // A game can come in twice (last night's board and today's, the next matchday and a day)
+        Map<String, Game> byId = new LinkedHashMap<>();
+        for (Game g : games) if (g.id.isEmpty() || !byId.containsKey(g.id)) byId.put(g.id.isEmpty() ? "#" + byId.size() : g.id, g);
+        return new ArrayList<>(byId.values());
     }
 
     private static JSONObject board(Context context, League league, String query, long maxAge) throws Exception {
@@ -201,6 +251,95 @@ final class Sports {
             }
         }
         return out;
+    }
+
+    /**
+     * A tennis board: its tournaments' men's singles matches (the main draw; qualifying left out),
+     * each as a game between two players: the flag for a logo, sets won for the score and the
+     * games of each set for the record. Finished matches older than a day are left out.
+     */
+    static List<Game> parseTennis(JSONObject board, League league) {
+        List<Game> out = new ArrayList<>();
+        JSONArray events = board.optJSONArray("events");
+        long now = Clock.now();
+        for (int i = 0; events != null && i < events.length(); i++) {
+            JSONObject e = events.optJSONObject(i);
+            JSONArray groupings = e == null ? null : e.optJSONArray("groupings");
+            for (int gi = 0; groupings != null && gi < groupings.length(); gi++) {
+                JSONObject grouping = groupings.optJSONObject(gi);
+                String kind = grouping == null ? "" : grouping.optJSONObject("grouping") == null ? "" : grouping.optJSONObject("grouping").optString("displayName", "");
+                if (!kind.toLowerCase(Locale.US).contains("singles")) continue;
+                JSONArray matches = grouping.optJSONArray("competitions");
+                for (int k = 0; matches != null && k < matches.length(); k++) {
+                    try {
+                        JSONObject c = matches.getJSONObject(k);
+                        String round = c.optJSONObject("round") == null ? "" : c.optJSONObject("round").optString("displayName", "");
+                        if (round.toLowerCase(Locale.US).contains("qualif")) continue;
+                        JSONArray players = c.getJSONArray("competitors");
+                        if (players.length() != 2) continue;
+                        Game g = new Game();
+                        g.id = c.optString("id");
+                        g.league = league;
+                        g.start = OffsetDateTime.parse(c.optString("date")).toInstant().toEpochMilli();
+                        JSONObject type = c.getJSONObject("status").getJSONObject("type");
+                        g.state = type.optString("state", "pre");
+                        g.status = type.optString("shortDetail", "");
+                        if (g.over() && now - g.start > 24 * 3600_000L) continue;
+                        g.note = e.optString("shortName", e.optString("name", "")) + (round.isEmpty() ? "" : "  ·  " + round);
+                        JSONObject venue = e.optJSONObject("venue");
+                        if (venue != null) g.venue = venue.optString("fullName", "");
+                        Team a = player(players.getJSONObject(0)), b = player(players.getJSONObject(1));
+                        if (a.name.isEmpty() || b.name.isEmpty()) continue;
+                        // Sets won, from the games of each set
+                        JSONArray sa = players.getJSONObject(0).optJSONArray("linescores"), sb = players.getJSONObject(1).optJSONArray("linescores");
+                        int wa = 0, wb = 0;
+                        StringBuilder ra = new StringBuilder(), rb = new StringBuilder();
+                        for (int s2 = 0; sa != null && sb != null && s2 < Math.min(sa.length(), sb.length()); s2++) {
+                            int x = (int) sa.getJSONObject(s2).optDouble("value", 0), y = (int) sb.getJSONObject(s2).optDouble("value", 0);
+                            ra.append(ra.length() > 0 ? " " : "").append(x);
+                            rb.append(rb.length() > 0 ? " " : "").append(y);
+                            boolean setDone = g.over() || s2 < Math.min(sa.length(), sb.length()) - 1;
+                            if (setDone && x > y) wa++;
+                            else if (setDone && y > x) wb++;
+                        }
+                        if (!g.state.equals("pre")) {
+                            a.score = String.valueOf(wa);
+                            b.score = String.valueOf(wb);
+                            a.record = ra.toString();
+                            b.record = rb.toString();
+                        }
+                        g.away = a;
+                        g.home = b;
+                        JSONArray broadcasts = c.optJSONArray("broadcasts");
+                        for (int n = 0; broadcasts != null && n < broadcasts.length(); n++) {
+                            JSONArray names = broadcasts.getJSONObject(n).optJSONArray("names");
+                            for (int m = 0; names != null && m < names.length(); m++) {
+                                String name = names.optString(m);
+                                if (!name.isEmpty() && !g.networks.contains(name)) g.networks.add(name);
+                            }
+                        }
+                        out.add(g);
+                    } catch (Exception ignored) {
+                        // a malformed match is skipped
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** A tennis player as a "team": the name, the short name, the country's flag. */
+    private static Team player(JSONObject t) {
+        Team team = new Team();
+        JSONObject athlete = t.optJSONObject("athlete");
+        if (athlete == null) return team;
+        team.name = athlete.optString("displayName", "");
+        team.shortName = athlete.optString("shortName", team.name);
+        team.abbr = athlete.optString("id", team.shortName);
+        JSONObject flag = athlete.optJSONObject("flag");
+        if (flag != null) team.logo = flag.optString("href", "");
+        team.winner = t.optBoolean("winner");
+        return team;
     }
 
     private static Team team(JSONObject t) {
@@ -303,7 +442,13 @@ final class Sports {
             int colon = f.indexOf(':');
             if (colon <= 0) continue;
             String league = f.substring(0, colon), abbr = f.substring(colon + 1);
-            if (league.equalsIgnoreCase(g.league.key) && (abbr.equalsIgnoreCase(g.away.abbr) || abbr.equalsIgnoreCase(g.home.abbr))) return true;
+            if (!league.equalsIgnoreCase(g.league.key)) continue;
+            // "atp:*": the whole league, while a match is on (else every scheduled match would be "yours")
+            if (abbr.equals("*")) {
+                if (g.live()) return true;
+            } else if (abbr.equalsIgnoreCase(g.away.abbr) || abbr.equalsIgnoreCase(g.home.abbr)) {
+                return true;
+            }
         }
         return false;
     }
@@ -365,7 +510,9 @@ final class Sports {
         mine.sort(Sports::order);
         for (Game g : mine) {
             if (g.over() && Clock.now() - g.start > 36 * 3600_000L) continue;
-            String team = g.league.key + (isFavourite(g, Collections.singletonList(g.league.key + ":" + g.away.abbr)) ? g.away.abbr : g.home.abbr);
+            // One hero card per team; men's tennis counts as one "team"
+            String team = g.league.tennis() ? g.league.key
+                    : g.league.key + (isFavourite(g, Collections.singletonList(g.league.key + ":" + g.away.abbr)) ? g.away.abbr : g.home.abbr);
             if (heroTeams.add(team) && hero.size() < 4) hero.add(g);
         }
         List<Game> live = new ArrayList<>();
