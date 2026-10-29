@@ -211,4 +211,41 @@ public class WidgetsTest {
         assertEquals("☰ closes it on the way to the tabs", Zone.TABS, h.zone());
         assertFalse(cc.isOpen());
     }
+
+    /** A live score and a final one, three digits a side, on the stack's card and in Glances. */
+    @Test
+    public void scoresStayClearOfTheLogos() throws Exception {
+        TestHome h = home();
+        Sports.Game g = h.weather.game();
+        g.state = "in";
+        g.status = "Q4 2:31";
+        g.away.score = "112";
+        g.home.score = "108";
+        h.weather.setGame(g);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_MEDIA_PLAY_PAUSE);
+        TestHome.settle();
+        assertEquals(WidgetPanel.Kind.GAME, h.weather.focusedKind());
+        h.capture("widgets-stack-4-live.png");
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals("the game's page", Zone.PAGE_DETAIL, h.zone());
+        TestHome.settleImages();
+        h.capture("game-page-live.png");
+        h.back();
+        assertEquals(Zone.WEATHER, h.zone());
+
+        g.state = "post";
+        g.status = "Final/OT";
+        g.away.winner = true;
+        h.weather.setGame(g);
+        h.capture("widgets-stack-5-final.png");
+
+        h.weather.setLayout(WidgetPanel.GLANCES);
+        g.state = "in";
+        g.status = "Q4 2:31";
+        g.away.winner = false;
+        h.weather.setGame(g);
+        TestHome.settle();
+        h.capture("widgets-glances-live.png");
+    }
 }

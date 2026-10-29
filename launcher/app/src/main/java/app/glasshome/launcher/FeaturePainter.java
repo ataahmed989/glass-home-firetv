@@ -287,12 +287,18 @@ final class FeaturePainter {
         float baseline = centreY - (fm.ascent + fm.descent) / 2f;
         if (g.live() || g.over()) {
             float gap = Ui.px(58);
+            // Three-digit scores (basketball) shrink to fit between the logos, both alike, still centred on them
+            float room = mid - gap - (ax + size / 2f + Ui.px(20));
+            float widest = Math.max(score.measureText(g.away.score), score.measureText(g.home.score));
+            if (widest > room) score.setTextSize(score.getTextSize() * room / widest);
+            Paint.FontMetrics sm = score.getFontMetrics();
+            float scoreBaseline = centreY - (sm.ascent + sm.descent) / 2f;
             score.setAlpha(g.over() && !g.away.winner && g.home.winner ? 140 : 255);
             score.setTextAlign(Paint.Align.RIGHT);
-            c.drawText(g.away.score, mid - gap, baseline, score);
+            c.drawText(g.away.score, mid - gap, scoreBaseline, score);
             score.setAlpha(g.over() && !g.home.winner && g.away.winner ? 140 : 255);
             score.setTextAlign(Paint.Align.LEFT);
-            c.drawText(g.home.score, mid + gap, baseline, score);
+            c.drawText(g.home.score, mid + gap, scoreBaseline, score);
             score.setAlpha(255);
             score.setTextAlign(Paint.Align.CENTER);
             score.setTextSize(Ui.px(60));

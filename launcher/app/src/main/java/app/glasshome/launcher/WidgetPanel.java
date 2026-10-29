@@ -585,23 +585,32 @@ final class WidgetPanel extends View {
         }
         caps(600, 13, 0x99FFFFFF, Paint.Align.RIGHT);
         draw(c, (game.league.name + (game.week.isEmpty() ? "" : "  ·  " + game.week)).toUpperCase(), w - pad, Ui.px(44), w * 0.5f);
-        float ax = w * 0.27f, hx = w * 0.73f, ly = Ui.px(150), logo = Ui.px(108);
-        teamGlow(c, ax, hx, ly, Ui.px(120));
-        drawLogo(c, game.away.logo, ax, ly, logo);
-        drawLogo(c, game.home.logo, hx, ly, logo);
+        float ax = w * 0.27f, hx = w * 0.73f, column = w * 0.44f;
         if (game.live() || game.over()) {
-            text(700, 44, 0xFFFFFFFF, Paint.Align.CENTER);
-            c.drawText(game.away.score + "–" + game.home.score, w / 2f, ly + Ui.px(16), t);
+            // A scoreboard: each team's logo, name and score in its own column, so no score can reach a logo
+            float ly = Ui.px(132), logo = Ui.px(96);
+            teamGlow(c, ax, hx, ly, Ui.px(112));
+            drawLogo(c, game.away.logo, ax, ly, logo);
+            drawLogo(c, game.home.logo, hx, ly, logo);
+            text(600, 23, 0xFFFFFFFF, Paint.Align.CENTER);
+            draw(c, game.away.label(), ax, Ui.px(222), column);
+            draw(c, game.home.label(), hx, Ui.px(222), column);
+            drawScore(c, game.away, 48, ax, Ui.px(278), column);
+            drawScore(c, game.home, 48, hx, Ui.px(278), column);
         } else {
+            float ly = Ui.px(150), logo = Ui.px(108);
+            teamGlow(c, ax, hx, ly, Ui.px(120));
+            drawLogo(c, game.away.logo, ax, ly, logo);
+            drawLogo(c, game.home.logo, hx, ly, logo);
             text(400, 30, 0x99FFFFFF, Paint.Align.CENTER);
             c.drawText("@", w / 2f, ly + Ui.px(10), t);
+            text(600, 23, 0xFFFFFFFF, Paint.Align.CENTER);
+            draw(c, game.away.label(), ax, Ui.px(248), column);
+            draw(c, game.home.label(), hx, Ui.px(248), column);
+            text(400, 17, 0xA6FFFFFF, Paint.Align.CENTER);
+            if (!game.away.record.isEmpty()) c.drawText(game.away.record, ax, Ui.px(274), t);
+            if (!game.home.record.isEmpty()) c.drawText(game.home.record, hx, Ui.px(274), t);
         }
-        text(600, 23, 0xFFFFFFFF, Paint.Align.CENTER);
-        draw(c, game.away.label(), ax, Ui.px(248), w * 0.44f);
-        draw(c, game.home.label(), hx, Ui.px(248), w * 0.44f);
-        text(400, 17, 0xA6FFFFFF, Paint.Align.CENTER);
-        if (!game.away.record.isEmpty()) c.drawText(game.away.record, ax, Ui.px(274), t);
-        if (!game.home.record.isEmpty()) c.drawText(game.home.record, hx, Ui.px(274), t);
 
         String when = game.live() || game.over() ? game.status : shortStart(game.start);
         text(600, 23, 0xFFFFFFFF, Paint.Align.CENTER);
@@ -631,14 +640,20 @@ final class WidgetPanel extends View {
         }
         caps(600, 10, 0x99FFFFFF, Paint.Align.RIGHT);
         c.drawText(game.league.name.length() <= 4 ? game.league.name : "", s - pad, Ui.px(30), t);
-        float ax = s * 0.27f, hx = s * 0.73f, ly = Ui.px(84), logo = Ui.px(56);
-        teamGlow(c, ax, hx, ly, Ui.px(64));
-        drawLogo(c, game.away.logo, ax, ly, logo);
-        drawLogo(c, game.home.logo, hx, ly, logo);
+        float ax = s * 0.27f, hx = s * 0.73f;
         if (game.live() || game.over()) {
-            text(700, 20, 0xFFFFFFFF, Paint.Align.CENTER);
-            c.drawText(game.away.score + "–" + game.home.score, s / 2f, ly + Ui.px(7), t);
+            // Each score under its team's logo: between them there is no room for one
+            float ly = Ui.px(64), logo = Ui.px(44);
+            teamGlow(c, ax, hx, ly, Ui.px(56));
+            drawLogo(c, game.away.logo, ax, ly, logo);
+            drawLogo(c, game.home.logo, hx, ly, logo);
+            drawScore(c, game.away, 26, ax, Ui.px(118), s * 0.44f);
+            drawScore(c, game.home, 26, hx, Ui.px(118), s * 0.44f);
         } else {
+            float ly = Ui.px(84), logo = Ui.px(56);
+            teamGlow(c, ax, hx, ly, Ui.px(64));
+            drawLogo(c, game.away.logo, ax, ly, logo);
+            drawLogo(c, game.home.logo, hx, ly, logo);
             text(400, 16, 0x99FFFFFF, Paint.Align.CENTER);
             c.drawText("@", s / 2f, ly + Ui.px(6), t);
         }
@@ -658,6 +673,15 @@ final class WidgetPanel extends View {
         c.drawRoundRect(box, Ui.px(7), Ui.px(7), fill);
         Paint.FontMetrics fm = t.getFontMetrics();
         c.drawText(text, cx, cy - (fm.ascent + fm.descent) / 2f, t);
+    }
+
+    /** A team's score, centred in its column (smaller, should it ever be too wide); the loser's dimmed once it's over. */
+    private void drawScore(Canvas c, Sports.Team team, float size, float cx, float y, float maxWidth) {
+        boolean lost = game.over() && !team.winner && (game.away.winner || game.home.winner);
+        text(700, size, lost ? 0x8CFFFFFF : 0xFFFFFFFF, Paint.Align.CENTER);
+        float width = t.measureText(team.score);
+        if (width > maxWidth) t.setTextSize(t.getTextSize() * maxWidth / width);
+        c.drawText(team.score, cx, y, t);
     }
 
     private void drawLogo(Canvas c, String url, float cx, float cy, float size) {
