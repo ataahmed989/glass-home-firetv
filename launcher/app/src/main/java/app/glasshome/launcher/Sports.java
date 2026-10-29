@@ -114,6 +114,9 @@ final class Sports {
 
     // ---- Fetching ---------------------------------------------------------------------------
 
+    /** Until this hour, last night's games are fetched too (see {@link #fetch}). */
+    static final int LATE_NIGHT_UNTIL = 6;
+
     static List<Game> fetch(Context context, League league) throws Exception {
         List<Game> games = new ArrayList<>();
         if (league.weekly) {
@@ -130,6 +133,15 @@ final class Sports {
             }
         } else {
             LocalDate today = Clock.today();
+            // ESPN files a game under the day it starts: after midnight, last night's late games
+            // (still on, or just over) are yesterday's, so they're looked for there until morning
+            if (Clock.at(Clock.now()).getHour() < LATE_NIGHT_UNTIL) {
+                try {
+                    games.addAll(parse(board(context, league, "dates=" + today.minusDays(1).format(DAY), LIVE_AGE), league));
+                } catch (Exception e) {
+                    // today's games still show
+                }
+            }
             for (int d = 0; d < 3; d++) {
                 try {
                     games.addAll(parse(board(context, league, "dates=" + today.plusDays(d).format(DAY), d == 0 ? LIVE_AGE : LATER_AGE), league));
