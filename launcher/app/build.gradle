@@ -65,6 +65,8 @@ android {
                 systemProperty "tmdb.token.file", project.findProperty("tmdbTokenFile") ?: ""
                 // -PnetRecord=true records missing TMDB/ESPN responses into src/test/fixtures (see Fixtures)
                 systemProperty "net.record", project.findProperty("netRecord") ?: "false"
+                // -Pclip=true records the frames of a tile being moved (TileMenuTest.recordAMove)
+                systemProperty "clip", project.findProperty("clip") ?: "false"
                 maxHeapSize = "3g"
             }
         }

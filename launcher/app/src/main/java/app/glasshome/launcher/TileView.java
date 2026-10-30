@@ -384,6 +384,13 @@ final class TileView extends View {
         if (swayAnimator != null) swayAnimator.cancel();
     }
 
+    /** Back in the grid while still being moved, it takes up its jiggle again. */
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (role == LIFTED && jiggle == null) startJiggle();
+    }
+
     @Override
     protected void onDetachedFromWindow() {
         stopAnimators();

@@ -217,28 +217,57 @@ public class TileMenuTest {
     @Test
     public void theMovingTileJiggles() throws Exception {
         TestHome h = new TestHome();
-        h.loadSampleWeather();
+        // A jiggling tile redraws Home every frame, which is slow here: fewer frames
+        org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(100));
         TileView.jiggleEnabled = true;
         try {
             menu(h, "Move");
             assertTrue(tile(h).isJiggling());
             float most = 0f;
-            for (int i = 0; i < 20; i++) {
-                TestHome.advance(16);
+            for (int i = 0; i < 8; i++) {
+                TestHome.advance(100);
                 most = Math.max(most, Math.abs(tile(h).getRotation()));
             }
             assertTrue("it rocks: " + most, most > 1f && most <= 1.7f);
             h.press(KEYCODE_DPAD_CENTER);
-            assertFalse(tile(h).isJiggling());
-            assertEquals(0f, tile(h).getRotation(), 0.01f);
+            assertStill(h);
+            // However it is put down: Back, ☰, the Home button, or another app coming in front
+            menu(h, "Move");
+            assertTrue(tile(h).isJiggling());
+            h.back();
+            assertStill(h);
+            menu(h, "Move");
+            h.menu();
+            assertStill(h);
+            h.back();
+            menu(h, "Move");
+            h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
+            TestHome.settle();
+            assertStill(h);
+            menu(h, "Move");
+            h.controller.pause();
+            TestHome.settle();
+            assertStill(h);
+            h.controller.resume();
         } finally {
             TileView.jiggleEnabled = false;
+        }
+    }
+
+    /** Put down: no tile jiggles any more, and every one is level. */
+    private static void assertStill(TestHome h) {
+        assertFalse(h.activity.isMovingTile());
+        for (int i = 0; i < h.grid.getChildCount(); i++) {
+            TileView t = ((AppAdapter.Holder) h.grid.getChildViewHolder(h.grid.getChildAt(i))).tile;
+            assertFalse(t.isJiggling());
+            assertEquals(0f, t.getRotation(), 0.01f);
         }
     }
 
     /** Frames of a move, for a clip: jiggling, one step right, then down a row. */
     @Test
     public void recordAMove() throws Exception {
+        org.junit.Assume.assumeTrue("only with -Pclip=true", Boolean.getBoolean("clip"));
         TestHome h = new TestHome();
         h.loadSampleWeather();
         TileView.jiggleEnabled = true;
