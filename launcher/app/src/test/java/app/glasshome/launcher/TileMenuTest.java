@@ -40,6 +40,12 @@ import org.robolectric.annotation.LooperMode;
 @LooperMode(LooperMode.Mode.PAUSED)
 @Config(sdk = 30, qualifiers = "w960dp-h540dp-land-xhdpi")
 public class TileMenuTest {
+    /** Frames as often as the TV draws them (Robolectric's default is one a millisecond, each drawn in full). */
+    @org.junit.Before
+    public void tvFrameRate() {
+        org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(16));
+    }
+
     private static UpdatePrompt prompt(TestHome h) {
         return TestHome.find(h.activity.getWindow().getDecorView(), UpdatePrompt.class);
     }
