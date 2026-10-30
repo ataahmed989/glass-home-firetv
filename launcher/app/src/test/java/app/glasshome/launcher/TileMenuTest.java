@@ -175,9 +175,6 @@ public class TileMenuTest {
         assertTrue(h.activity.isMovingTile());
         assertEquals(HomeActivity.Zone.GRID, h.zone());
         assertEquals(Ui.LIFT_SCALE, tile(h).getScaleX(), 0.001f);
-        assertTrue(h.activity.moveIndicator().isShowing());
-        assertArrayEquals("nowhere left or up from the first tile", new boolean[] {false, false, true, true},
-                h.activity.moveIndicator().directions());
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_RIGHT);
         assertEquals("the tile went along", 2, apps(h).indexOf(key));
@@ -185,7 +182,6 @@ public class TileMenuTest {
         assertEquals(key, h.focusedKey());
         assertEquals("still in the dock", Ui.px(Ui.DOCK_ROW_TOP), cell(h).getTop());
         assertAtRest(h);
-        assertArrayEquals(new boolean[] {true, false, true, true}, h.activity.moveIndicator().directions());
         h.capture("tile-moving.png");
 
         // In the middle of a step: everything on its way
@@ -205,7 +201,7 @@ public class TileMenuTest {
 
         h.press(KEYCODE_DPAD_CENTER);
         assertFalse(h.activity.isMovingTile());
-        assertFalse(h.activity.moveIndicator().isShowing());
+        assertEquals("still once put down", 0f, tile(h).getRotation(), 0.01f);
         assertEquals(Ui.FOCUS_SCALE, tile(h).getScaleX(), 0.001f);
         assertNull("putting it down opened nothing", shadowOf(h.activity).getNextStartedActivity());
         List<String> saved = new HomeSettings(h.activity).appOrder();
@@ -215,6 +211,52 @@ public class TileMenuTest {
         h.controller.pause().stop().destroy();
         TestHome again = new TestHome();
         assertEquals(3, apps(again).indexOf(key));
+    }
+
+    /** The tile being moved jiggles, as in iOS's jiggle mode, and stops once put down. */
+    @Test
+    public void theMovingTileJiggles() throws Exception {
+        TestHome h = new TestHome();
+        h.loadSampleWeather();
+        TileView.jiggleEnabled = true;
+        try {
+            menu(h, "Move");
+            assertTrue(tile(h).isJiggling());
+            float most = 0f;
+            for (int i = 0; i < 20; i++) {
+                TestHome.advance(16);
+                most = Math.max(most, Math.abs(tile(h).getRotation()));
+            }
+            assertTrue("it rocks", most > 1f && most <= 1.7f);
+            h.press(KEYCODE_DPAD_CENTER);
+            assertFalse(tile(h).isJiggling());
+            assertEquals(0f, tile(h).getRotation(), 0.01f);
+        } finally {
+            TileView.jiggleEnabled = false;
+        }
+    }
+
+    /** Frames of a move, for a clip: jiggling, one step right, then down a row. */
+    @Test
+    public void recordAMove() throws Exception {
+        TestHome h = new TestHome();
+        h.loadSampleWeather();
+        TileView.jiggleEnabled = true;
+        try {
+            menu(h, "Move");
+            int frame = 0;
+            for (int step = 0; step < 4; step++) {
+                if (step == 1) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
+                if (step == 2) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
+                if (step == 3) pressAndWait(h, KEYCODE_DPAD_DOWN, 0);
+                for (int i = 0; i < 24; i++) {
+                    TestHome.advance(33);
+                    h.capture(String.format("clip/move-%03d.png", frame++));
+                }
+            }
+        } finally {
+            TileView.jiggleEnabled = false;
+        }
     }
 
     @Test

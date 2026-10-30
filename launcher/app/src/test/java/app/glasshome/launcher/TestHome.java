@@ -76,6 +76,7 @@ final class TestHome {
      */
     TestHome(boolean withBackground, boolean withTmdb) throws Exception {
         TileView.swayEnabled = false;   // every render shows the focused tile at rest
+        TileView.jiggleEnabled = false;
         ImageCache.reset();
         Fixtures.install();
         Application app = RuntimeEnvironment.getApplication();
@@ -274,6 +275,7 @@ final class TestHome {
         root.draw(new Canvas(bitmap));
         File dir = new File(System.getProperty("screenshot.dir", "screenshots"));
         dir.mkdirs();
+        new File(dir, name).getParentFile().mkdirs();
         try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
         }

@@ -42,6 +42,10 @@ final class TileView extends View {
 
     /** Tests switch the sway off, so every render shows the tile at rest. */
     static boolean swayEnabled = true;
+    /** Likewise the jiggle of a tile being moved. */
+    static boolean jiggleEnabled = true;
+    private static final float JIGGLE_DEG = 1.6f;   // iOS's jiggle, at the TV's distance
+    private static final long JIGGLE_MS = 260;      // one full wobble
 
     private final Paint flatPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint emptyPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -69,6 +73,7 @@ final class TileView extends View {
     private int role = NONE;
     private boolean menuRaised, menuDimmed, pressing;
     private android.animation.ObjectAnimator alphaAnim;
+    private ValueAnimator jiggle;
 
     TileView(Context context) {
         super(context);
@@ -125,6 +130,8 @@ final class TileView extends View {
         animate().cancel();
         stopAnimators();
         if (alphaAnim != null) alphaAnim.cancel();
+        stopJiggle();
+        setRotation(0f);
         role = NONE;
         menuRaised = menuDimmed = pressing = false;
         boolean f = isFocused();
@@ -292,10 +299,13 @@ final class TileView extends View {
             setScaleY(targetScale());
             setTranslationZ(targetZ());
             setTranslationY(targetY());
+            if (role != LIFTED) setRotation(0f);
             return;
         }
-        animate().scaleX(targetScale()).scaleY(targetScale()).translationZ(targetZ()).translationY(targetY())
-                .setInterpolator(curve).setDuration(ms).start();
+        android.view.ViewPropertyAnimator a = animate().scaleX(targetScale()).scaleY(targetScale())
+                .translationZ(targetZ()).translationY(targetY());
+        if (role != LIFTED) a.rotation(0f);
+        a.setInterpolator(curve).setDuration(ms).start();
     }
 
     /** Lifted to be moved, receded to make room, or back to normal ({@link #NONE}). */
@@ -303,11 +313,41 @@ final class TileView extends View {
         if (role == r) return;
         Spring spring = r == LIFTED || role == LIFTED ? Spring.LIFT : Spring.REORDER;
         role = r;
+        if (r == LIFTED) startJiggle();
+        else stopJiggle();
         apply(animate, spring.interpolator(), spring.settleMs());
     }
 
     int role() {
         return role;
+    }
+
+    /**
+     * The tile being moved wobbles as icons do in iOS's jiggle mode: a quick, small rock about its
+     * centre, easing in over the first wobble. Only its rotation changes, so nothing is redrawn.
+     */
+    private void startJiggle() {
+        stopJiggle();
+        if (Ui.reducedMotion || !jiggleEnabled) return;
+        jiggle = ValueAnimator.ofFloat(0f, 1f);
+        jiggle.setDuration(JIGGLE_MS);
+        jiggle.setRepeatCount(ValueAnimator.INFINITE);
+        jiggle.setInterpolator(new LinearInterpolator());
+        final long start = android.view.animation.AnimationUtils.currentAnimationTimeMillis();
+        jiggle.addUpdateListener(a -> {
+            float ramp = Math.min(1f, (android.view.animation.AnimationUtils.currentAnimationTimeMillis() - start) / (float) JIGGLE_MS);
+            setRotation(JIGGLE_DEG * ramp * (float) Math.sin(2 * Math.PI * (float) a.getAnimatedValue()));
+        });
+        jiggle.start();
+    }
+
+    private void stopJiggle() {
+        if (jiggle != null) jiggle.cancel();
+        jiggle = null;
+    }
+
+    boolean isJiggling() {
+        return jiggle != null;
     }
 
     /** The held tile rises for its menu ({@code raised}); the others dim while it is open. */
@@ -352,6 +392,7 @@ final class TileView extends View {
     protected void onDetachedFromWindow() {
         stopAnimators();
         if (alphaAnim != null) alphaAnim.cancel();
+        stopJiggle();
         super.onDetachedFromWindow();
     }
 }

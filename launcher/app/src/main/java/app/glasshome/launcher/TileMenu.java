@@ -8,7 +8,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.RectF;
 import android.text.TextPaint;
 import android.view.View;
@@ -17,8 +16,8 @@ import android.view.animation.PathInterpolator;
 
 /**
  * What holding Select on a tile brings up: a small glass card that unfolds from under the tile,
- * as wide as the tile, with two rows: Move, and More Options (the full menu). The focused row is
- * a white pill that slides between them, as on the tab bar. The tile keeps focus; Up and Down
+ * as wide as the tile, with two rows, their names centred: Move, and More Options (the full
+ * menu). The focused row is a white pill that slides between them, as on the tab bar. The tile keeps focus; Up and Down
  * move the pill, Select chooses, Back folds the card away.
  */
 final class TileMenu extends View {
@@ -27,11 +26,8 @@ final class TileMenu extends View {
 
     private final Glass glass;
     private final Paint pill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint glyph = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint dot = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint label = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final ArgbEvaluator argb = new ArgbEvaluator();
-    private final Path moveGlyph = new Path();
     private final RectF r = new RectF();
     private boolean open;
     private int focused;
@@ -51,30 +47,9 @@ final class TileMenu extends View {
         setLayerType(LAYER_TYPE_HARDWARE, null);
         label.setTypeface(Fonts.inter(context, 500));
         label.setTextSize(Ui.px(22));
+        label.setTextAlign(Paint.Align.CENTER);
         pill.setColor(0xF7FFFFFF);
         pill.setShadowLayer(Ui.px(14), 0, Ui.px(5), 0x59000000);
-        glyph.setStyle(Paint.Style.STROKE);
-        glyph.setStrokeWidth(Ui.px(2f));
-        glyph.setStrokeCap(Paint.Cap.ROUND);
-        glyph.setStrokeJoin(Paint.Join.ROUND);
-        // Move: a four-way arrow, in an 18 px box
-        float a = Ui.px(7), h = Ui.px(3);
-        moveGlyph.moveTo(-a, 0);
-        moveGlyph.lineTo(a, 0);
-        moveGlyph.moveTo(0, -a);
-        moveGlyph.lineTo(0, a);
-        moveGlyph.moveTo(-a + h, -h);
-        moveGlyph.lineTo(-a, 0);
-        moveGlyph.lineTo(-a + h, h);
-        moveGlyph.moveTo(a - h, -h);
-        moveGlyph.lineTo(a, 0);
-        moveGlyph.lineTo(a - h, h);
-        moveGlyph.moveTo(-h, -a + h);
-        moveGlyph.lineTo(0, -a);
-        moveGlyph.lineTo(h, -a + h);
-        moveGlyph.moveTo(-h, a - h);
-        moveGlyph.lineTo(0, a);
-        moveGlyph.lineTo(h, a - h);
         setElevation(Ui.px(18));
         setOutlineProvider(new ViewOutlineProvider() {
             @Override
@@ -241,25 +216,11 @@ final class TileMenu extends View {
             float top = rowY(i), dy = -Ui.px(6) * (1f - shown);
             float f = Math.max(0f, Math.min(1f, 1f - Math.abs(pillY - top) / row));
             int ink = (int) argb.evaluate(f, 0xFFFFFFFF, 0xFF111317);
-            int glyphInk = (int) argb.evaluate(f, 0xB3FFFFFF, 0xFF111317);
             int alpha = Math.round(255 * shown);
             label.setColor(ink);
             label.setAlpha(alpha * Color.alpha(ink) / 255);
             float cy = top + row / 2f + dy;
-            c.drawText(LABELS[i], pad + Ui.px(20), cy - (fm.ascent + fm.descent) / 2f, label);
-            float gx = right - Ui.px(26);
-            if (i == 0) {
-                glyph.setColor(glyphInk);
-                glyph.setAlpha(alpha * Color.alpha(glyphInk) / 255);
-                c.save();
-                c.translate(gx, cy);
-                c.drawPath(moveGlyph, glyph);
-                c.restore();
-            } else {
-                dot.setColor(glyphInk);
-                dot.setAlpha(alpha * Color.alpha(glyphInk) / 255);
-                for (int k = -1; k <= 1; k++) c.drawCircle(gx + k * Ui.pxf(6.5f), cy, Ui.pxf(2.2f), dot);
-            }
+            c.drawText(LABELS[i], getWidth() / 2f, cy - (fm.ascent + fm.descent) / 2f, label);
         }
     }
 

@@ -177,7 +177,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private long movingId = RecyclerView.NO_ID;
     private TileMenu tileMenu;
     private Glass menuGlass;
-    private MoveIndicator indicator;
     private ReorderMotion reorder;
     private HomeLayoutManager layoutManager;
     private long tileMenuShownAt;
@@ -526,13 +525,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 Math.max(0, screenH - Ui.px(Ui.DOCK_ROW_TOP) - Ui.px(Ui.ROW_PITCH)));
         grid.getViewTreeObserver().addOnPreDrawListener(() -> {
             fadeRowsAboveDock();
-            followMovingTile();
             return true;
         });
         root.addView(grid, match());
-        // Over the tiles, under everything else: the chevrons round a tile being moved, and a tile's menu
-        indicator = new MoveIndicator(this);
-        root.addView(indicator, new FrameLayout.LayoutParams(MoveIndicator.width(), MoveIndicator.height(), Gravity.TOP | Gravity.START));
+        // Over the tiles, under everything else: a tile's menu
         menuGlass = new Glass(config.blurGlass, 0xE62A2E36);
         tileMenu = new TileMenu(this, menuGlass);
         root.addView(tileMenu, new FrameLayout.LayoutParams(TileMenu.width(), TileMenu.height(), Gravity.TOP | Gravity.START));
@@ -1691,8 +1687,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     /**
-     * The tile lifts and the others recede a little, with glass chevrons round it where it can go;
-     * the arrows then carry it along and the others make room.
+     * The tile lifts and jiggles, as in iOS's jiggle mode, and the others recede a little; the
+     * arrows then carry it along and the others make room.
      */
     private void startMoving(AppEntry app) {
         int i = adapter.indexOf(app.key);
@@ -1711,28 +1707,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         reorder.liftedId = movingId;
         reorder.active = true;
         reorder.onIdle = () -> {
-            if (moving != null) {
-                main.removeCallbacks(breatheLater);
-                main.postDelayed(breatheLater, 300);
-            } else {
+            if (moving == null) {
                 reorder.active = false;
                 layoutManager.setArranging(false);
             }
         };
         layoutManager.setArranging(true);
-        indicator.show(directions(i));
-        followMovingTile();
-    }
-
-    /** Which way the tile at {@code i} can go, as {@link #moveTile} moves it (Left and Right go round the rows' ends). */
-    private boolean[] directions(int i) {
-        int n = adapter.getItemCount();
-        boolean[] d = new boolean[4];
-        d[MoveIndicator.LEFT] = i > 0;
-        d[MoveIndicator.RIGHT] = i + 1 < n;
-        d[MoveIndicator.UP] = i >= Ui.COLUMNS;
-        d[MoveIndicator.DOWN] = i + Ui.COLUMNS < n || i / Ui.COLUMNS < (n - 1) / Ui.COLUMNS;
-        return d;
     }
 
     /** The arrows carry the tile along, the others making room; a fresh press it can't follow bumps it against the edge. */
@@ -1761,16 +1741,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (fresh) nudge(direction);
             return;
         }
-        main.removeCallbacks(breatheLater);
         reorder.noteMove(adapter.itemIds());
-        indicator.stopBreathing();
         adapter.move(from, to);
         lastFocused = to;
         if (to < Ui.COLUMNS) lastDockColumn = to;
-        indicator.setDirections(directions(to));
     }
-
-    private final Runnable breatheLater = () -> indicator.breathe();
 
     private void nudge(int direction) {
         RecyclerView.ViewHolder vh = grid.findViewHolderForItemId(movingId);
@@ -1781,29 +1756,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         reorder.kick(vh.itemView, vx, vy);
     }
 
-    /** The chevrons stay centred on the tile being moved, wherever its glide has got to. */
-    private void followMovingTile() {
-        if (movingId == RecyclerView.NO_ID || !indicator.isShowing()) return;
-        RecyclerView.ViewHolder vh = grid.findViewHolderForItemId(movingId);
-        if (!(vh instanceof AppAdapter.Holder)) {
-            indicator.setAlpha(0f);
-            return;
-        }
-        TileView t = ((AppAdapter.Holder) vh).tile;
-        View cell = vh.itemView;
-        float cx = grid.getX() + cell.getX() + t.getX() + t.getWidth() / 2f;
-        float cy = grid.getY() + cell.getY() + t.getY() + t.getHeight() / 2f;
-        indicator.follow(cx, cy, t.getWidth() * t.getScaleX() / 2f, t.getHeight() * t.getScaleY() / 2f);
-    }
-
     /** Puts the moving tile down where it is, and keeps the order. */
     private void placeTile(boolean animate) {
         if (moving == null) return;
         moving = null;
-        main.removeCallbacks(breatheLater);
         adapter.setMovingKey(null);
         for (AppAdapter.Holder x : holders()) x.tile.setRole(TileView.NONE, animate);
-        indicator.hide(animate);
         showFocusedName(animate);
         settings.setAppOrder(adapter.keys());
         movingId = RecyclerView.NO_ID;
@@ -1834,9 +1792,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return tileMenu;
     }
 
-    MoveIndicator moveIndicator() {
-        return indicator;
-    }
 
     private void hideApp(AppEntry app) {
         hidePrompt();

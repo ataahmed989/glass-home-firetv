@@ -39,7 +39,7 @@ final class Ui {
     static final int FOCUS_LIFT = 16;
     static final int FOCUS_MS = 180;
     // Arranging apps: the held tile rises this far for its menu while the others dim; a tile being
-    // moved lifts a little more while the others recede (their gutters then fit its glass chevrons)
+    // moved lifts a little more (and jiggles) while the others recede
     static final int MENU_RISE = 20;
     static final float MENU_DIM = 0.5f;
     static final float LIFT_SCALE = 1.14f;
