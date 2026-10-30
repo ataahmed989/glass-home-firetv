@@ -1,7 +1,9 @@
 package app.glasshome.launcher;
 
+import static android.view.KeyEvent.KEYCODE_BACK;
 import static android.view.KeyEvent.KEYCODE_DPAD_CENTER;
 import static android.view.KeyEvent.KEYCODE_DPAD_DOWN;
+import static android.view.KeyEvent.KEYCODE_DPAD_LEFT;
 import static android.view.KeyEvent.KEYCODE_DPAD_RIGHT;
 import static android.view.KeyEvent.KEYCODE_DPAD_UP;
 import static org.junit.Assert.*;
@@ -9,7 +11,13 @@ import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
 import android.content.Intent;
+import android.graphics.RectF;
+import android.os.SystemClock;
 import android.provider.Settings;
+import android.view.KeyEvent;
+import android.view.View;
+
+import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -23,7 +31,10 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.annotation.LooperMode;
 
-/** Holding Select on a tile: Move, Hide from Home, App Info. */
+/**
+ * Holding Select on a tile: a glass card unfolds under it (Move, More Options); Move carries the
+ * tile with the arrows while the others make room; More Options is the full menu.
+ */
 @RunWith(RobolectricTestRunner.class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @LooperMode(LooperMode.Mode.PAUSED)
@@ -41,25 +52,100 @@ public class TileMenuTest {
         h.hold(KEYCODE_DPAD_CENTER, HomeActivity.TILE_HOLD_MS + 200, 50);
     }
 
-    private static void choose(TestHome h, String button) throws InterruptedException {
+    /** The focused tile's cell. */
+    private static View cell(TestHome h) {
+        return h.grid.getFocusedChild();
+    }
+
+    private static TileView tile(TestHome h) {
+        return ((AppAdapter.Holder) h.grid.getChildViewHolder(cell(h))).tile;
+    }
+
+    /** Holds Select, then chooses a row of the card. */
+    private static void menu(TestHome h, String row) throws InterruptedException {
+        holdSelect(h);
+        assertEquals(HomeActivity.Zone.TILE_MENU, h.zone());
+        int i = Arrays.asList(TileMenu.LABELS).indexOf(row);
+        while (h.activity.tileMenu().focusedIndex() < i) h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);
+    }
+
+    /** Through More Options, a button of the full menu. */
+    private static void fullMenu(TestHome h, String button) throws InterruptedException {
+        menu(h, "More Options");
         UpdatePrompt p = prompt(h);
+        assertTrue(p.isOpen());
         int i = Arrays.asList(p.buttons()).indexOf(button);
         assertTrue(button + " is offered", i >= 0);
         while (p.focusedIndex() < i) h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_CENTER);
     }
 
+    /** A press, and then only {@code ms} of time: for frames in the middle of the motion. */
+    private static void pressAndWait(TestHome h, int code, long ms) {
+        long t = SystemClock.uptimeMillis();
+        h.activity.dispatchKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0));
+        h.activity.dispatchKeyEvent(new KeyEvent(t, t + 40, KeyEvent.ACTION_UP, code, 0));
+        TestHome.advance(ms);
+    }
+
+    private static void assertAtRest(TestHome h) {
+        for (int i = 0; i < h.grid.getChildCount(); i++) {
+            View c = h.grid.getChildAt(i);
+            assertEquals(0f, c.getTranslationX(), 0.01f);
+            assertEquals(0f, c.getTranslationY(), 0.01f);
+        }
+    }
+
     @Test
-    public void holdingSelectOpensTheMenuAndOpensNothing() throws Exception {
+    public void holdingSelectUnfoldsTheCardUnderTheTile() throws Exception {
         TestHome h = new TestHome();
         h.loadSampleWeather();
         String key = h.focusedKey();
         holdSelect(h);
+        assertEquals(HomeActivity.Zone.TILE_MENU, h.zone());
+        assertEquals(0, h.activity.tileMenu().focusedIndex());
+        assertEquals(key, h.focusedKey());
+        assertNull("the release opened nothing", shadowOf(h.activity).getNextStartedActivity());
+        assertEquals("the tile rose to make room", -Ui.px(Ui.MENU_RISE), tile(h).getTranslationY(), 0.5f);
+        RectF card = new RectF();
+        h.activity.tileMenu().cardBounds(card);
+        float tileBottom = cell(h).getTop() + h.grid.getY() + tile(h).getY() + tile(h).getHeight() / 2f
+                + tile(h).getHeight() * tile(h).getScaleY() / 2f;
+        assertTrue("under the tile", card.top >= tileBottom);
+        assertTrue("on screen", card.bottom <= h.activity.getWindow().getDecorView().getHeight() - Ui.px(24));
+        h.capture("tile-menu.png");
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(1, h.activity.tileMenu().focusedIndex());
+        h.capture("tile-menu-more.png");
+    }
+
+    @Test
+    public void backFoldsTheCardAway() throws Exception {
+        TestHome h = new TestHome();
+        String key = h.focusedKey();
+        holdSelect(h);
+        h.back();
+        assertEquals(HomeActivity.Zone.GRID, h.zone());
+        assertEquals(key, h.focusedKey());
+        assertEquals(0f, tile(h).getTranslationY(), 0.01f);
+        for (int i = 0; i < h.grid.getChildCount(); i++) {
+            assertEquals("the others are back", 1f, ((AppAdapter.Holder) h.grid.getChildViewHolder(h.grid.getChildAt(i))).tile.getAlpha(), 0.01f);
+        }
+        assertEquals("its name is back", 1f, ((AppAdapter.Holder) h.grid.getChildViewHolder(cell(h))).name.getAlpha(), 0.01f);
+        assertNull(shadowOf(h.activity).getNextStartedActivity());
+    }
+
+    @Test
+    public void moreOptionsIsTheFullMenu() throws Exception {
+        TestHome h = new TestHome();
+        h.loadSampleWeather();
+        String key = h.focusedKey();
+        menu(h, "More Options");
         assertEquals(HomeActivity.Zone.UPDATE, h.zone());
         assertEquals(apps(h).get(0).label, prompt(h).heading());
         assertArrayEquals(new String[] {"Move", "Hide from Home", "App Info", "Cancel"}, prompt(h).buttons());
-        assertNull("the release opened nothing", shadowOf(h.activity).getNextStartedActivity());
-        h.capture("tile-menu.png");
+        h.capture("tile-more-options.png");
         h.back();
         assertEquals(HomeActivity.Zone.GRID, h.zone());
         assertEquals(key, h.focusedKey());
@@ -69,46 +155,67 @@ public class TileMenuTest {
     public void aShortPressStillOpensTheApp() throws Exception {
         TestHome h = new TestHome();
         h.press(KEYCODE_DPAD_CENTER);
-        assertNotEquals(HomeActivity.Zone.UPDATE, h.zone());
+        assertNotEquals(HomeActivity.Zone.TILE_MENU, h.zone());
         assertNotNull(shadowOf(h.activity).getNextStartedActivity());
+        assertEquals(Ui.FOCUS_SCALE, tile(h).getScaleX(), 0.001f);
     }
 
     @Test
-    public void moveCarriesTheTileAndKeepsTheOrder() throws Exception {
+    public void moveCarriesTheTileAndTheOthersMakeRoom() throws Exception {
         TestHome h = new TestHome();
         h.loadSampleWeather();
         String key = h.focusedKey(), second = apps(h).get(1).key;
-        holdSelect(h);
-        choose(h, "Move");
+        menu(h, "Move");
         assertTrue(h.activity.isMovingTile());
         assertEquals(HomeActivity.Zone.GRID, h.zone());
+        assertEquals(Ui.LIFT_SCALE, tile(h).getScaleX(), 0.001f);
+        assertTrue(h.activity.moveIndicator().isShowing());
+        assertArrayEquals("nowhere left or up from the first tile", new boolean[] {false, false, true, true},
+                h.activity.moveIndicator().directions());
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_RIGHT);
         assertEquals("the tile went along", 2, apps(h).indexOf(key));
         assertEquals("the others made room", 0, apps(h).indexOf(second));
         assertEquals(key, h.focusedKey());
-        h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("down a row", 2 + Ui.COLUMNS, apps(h).indexOf(key));
-        h.press(KEYCODE_DPAD_UP);
+        assertEquals("still in the dock", Ui.px(Ui.DOCK_ROW_TOP), cell(h).getTop());
+        assertAtRest(h);
+        assertArrayEquals(new boolean[] {true, false, true, true}, h.activity.moveIndicator().directions());
         h.capture("tile-moving.png");
+
+        // In the middle of a step: everything on its way
+        pressAndWait(h, KEYCODE_DPAD_RIGHT, 120);
+        h.capture("tile-reorder-mid.png");
+        TestHome.settle();
+        assertEquals(3, apps(h).indexOf(key));
+        pressAndWait(h, KEYCODE_DPAD_DOWN, 120);
+        h.capture("tile-reorder-row-mid.png");
+        TestHome.settle();
+        assertEquals("down a row", 3 + Ui.COLUMNS, apps(h).indexOf(key));
+        assertEquals("the rows came up under it", Ui.px(Ui.DOCK_ROW_TOP), cell(h).getTop());
+        assertAtRest(h);
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(3, apps(h).indexOf(key));
+        assertEquals(Ui.px(Ui.DOCK_ROW_TOP), cell(h).getTop());
+
         h.press(KEYCODE_DPAD_CENTER);
         assertFalse(h.activity.isMovingTile());
-        assertNull("placing it opened nothing", shadowOf(h.activity).getNextStartedActivity());
+        assertFalse(h.activity.moveIndicator().isShowing());
+        assertEquals(Ui.FOCUS_SCALE, tile(h).getScaleX(), 0.001f);
+        assertNull("putting it down opened nothing", shadowOf(h.activity).getNextStartedActivity());
         List<String> saved = new HomeSettings(h.activity).appOrder();
-        assertEquals(key, saved.get(2));
+        assertEquals(key, saved.get(3));
 
         // Kept when Home starts again
         h.controller.pause().stop().destroy();
         TestHome again = new TestHome();
-        assertEquals(2, apps(again).indexOf(key));
+        assertEquals(3, apps(again).indexOf(key));
     }
 
     @Test
     public void backPutsTheTileDownToo() throws Exception {
         TestHome h = new TestHome();
         String key = h.focusedKey();
-        holdSelect(h);
-        choose(h, "Move");
+        menu(h, "Move");
         h.press(KEYCODE_DPAD_RIGHT);
         h.back();
         assertFalse(h.activity.isMovingTile());
@@ -117,13 +224,63 @@ public class TileMenuTest {
     }
 
     @Test
+    public void anEdgeOnlyBumpsTheTile() throws Exception {
+        TestHome h = new TestHome();
+        List<String> before = apps(h).keys();
+        menu(h, "Move");
+        h.press(KEYCODE_DPAD_LEFT);
+        h.press(KEYCODE_DPAD_UP);
+        assertEquals(before, apps(h).keys());
+        assertTrue(h.activity.isMovingTile());
+        assertAtRest(h);
+    }
+
+    @Test
+    public void moveFromTheFullMenu() throws Exception {
+        TestHome h = new TestHome();
+        String key = h.focusedKey();
+        fullMenu(h, "Move");
+        assertTrue(h.activity.isMovingTile());
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals(Ui.LIFT_SCALE, tile(h).getScaleX(), 0.001f);
+        h.press(KEYCODE_DPAD_CENTER);
+        assertEquals(1, apps(h).indexOf(key));
+    }
+
+    @Test
+    public void theLastColumnsCardStaysOnScreen() throws Exception {
+        TestHome h = new TestHome();
+        h.loadSampleWeather();
+        for (int i = 0; i < Ui.COLUMNS - 1; i++) h.press(KEYCODE_DPAD_RIGHT);
+        holdSelect(h);
+        RectF card = new RectF();
+        h.activity.tileMenu().cardBounds(card);
+        assertTrue(card.right <= h.activity.getWindow().getDecorView().getWidth() - Ui.px(24));
+        h.capture("tile-menu-last-column.png");
+    }
+
+    @Test
+    public void theHomeButtonClosesEverything() throws Exception {
+        TestHome h = new TestHome();
+        holdSelect(h);
+        h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
+        TestHome.settle();
+        assertFalse(h.activity.tileMenu().isOpen());
+        menu(h, "Move");
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
+        TestHome.settle();
+        assertFalse(h.activity.isMovingTile());
+        assertEquals("put down where it was", 1, new HomeSettings(h.activity).appOrder().indexOf(apps(h).get(1).key));
+    }
+
+    @Test
     public void hiddenAppsComeBackFromSettings() throws Exception {
         TestHome h = new TestHome();
         h.loadSampleWeather();
         String key = h.focusedKey();
         int before = apps(h).getItemCount();
-        holdSelect(h);
-        choose(h, "Hide from Home");
+        fullMenu(h, "Hide from Home");
         TestHome.settle();
         for (int i = 0; i < 40 && apps(h).indexOf(key) >= 0; i++) {
             Thread.sleep(25);
@@ -159,8 +316,7 @@ public class TileMenuTest {
     public void appInfoOpensFireTvsPageForTheApp() throws Exception {
         TestHome h = new TestHome();
         String key = h.focusedKey();
-        holdSelect(h);
-        choose(h, "App Info");
+        fullMenu(h, "App Info");
         Intent opened = shadowOf(h.activity).getNextStartedActivity();
         assertNotNull(opened);
         assertEquals(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, opened.getAction());

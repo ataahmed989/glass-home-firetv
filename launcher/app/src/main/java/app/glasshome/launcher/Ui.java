@@ -38,6 +38,14 @@ final class Ui {
     static final float FOCUS_SCALE = 1.12f;
     static final int FOCUS_LIFT = 16;
     static final int FOCUS_MS = 180;
+    // Arranging apps: the held tile rises this far for its menu while the others dim; a tile being
+    // moved lifts a little more while the others recede (their gutters then fit its glass chevrons)
+    static final int MENU_RISE = 20;
+    static final float MENU_DIM = 0.5f;
+    static final float LIFT_SCALE = 1.14f;
+    static final int LIFT_Z = 30;
+    static final float RECEDE_SCALE = 0.95f;
+    static final float PRESS_SCALE = 1.08f;
     static final int HERO_DWELL_MS = 400;       // focus must rest this long before the hero changes
     static final int KEY_REPEAT_DELAY_MS = 300; // holding a direction: wait, then step at a steady rate
     static final int KEY_REPEAT_MS = 110;

@@ -22,7 +22,11 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     private final List<AppEntry> apps = new ArrayList<>();
     private final Listener listener;
     /** The app being moved (hold Select, Move), or null. */
-    private String moving;
+    private String movingKey;
+    /** The app whose menu is open (hold Select), or null. */
+    private String menuKey;
+    /** Told when a cell leaves the grid, so nothing goes on moving it. */
+    private java.util.function.Consumer<android.view.View> onRecycled;
 
     AppAdapter(Listener listener) {
         this.listener = listener;
@@ -57,8 +61,32 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         notifyItemMoved(from, to);
     }
 
-    void setMoving(String key) {
-        moving = key;
+    /** The apps' ids, in their order on Home. */
+    List<Long> itemIds() {
+        List<Long> ids = new ArrayList<>();
+        for (int i = 0; i < apps.size(); i++) ids.add(getItemId(i));
+        return ids;
+    }
+
+    void setMovingKey(String key) {
+        movingKey = key;
+    }
+
+    void setMenuKey(String key) {
+        menuKey = key;
+    }
+
+    String menuKey() {
+        return menuKey;
+    }
+
+    void setOnRecycled(java.util.function.Consumer<android.view.View> listener) {
+        onRecycled = listener;
+    }
+
+    /** The focused app's name shows, except while apps are being arranged. */
+    private boolean nameShown(TileView tile) {
+        return tile.isFocused() && movingKey == null && menuKey == null;
     }
 
     @Override
@@ -112,20 +140,28 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         holder.tile.setArt(app.art, app.layers);
         holder.tile.setContentDescription(app.label);
         holder.tile.resetFocusState();
-        if (app.key.equals(moving)) holder.tile.setMoving(true);
+        if (movingKey != null) holder.tile.setRole(app.key.equals(movingKey) ? TileView.LIFTED : TileView.RECEDED, false);
+        if (menuKey != null) holder.tile.setMenuState(app.key.equals(menuKey), !app.key.equals(menuKey), false);
         holder.name.setText(app.label);
         holder.name.animate().cancel();
-        holder.name.setAlpha(holder.tile.isFocused() ? 1f : 0f);
+        holder.name.setAlpha(nameShown(holder.tile) ? 1f : 0f);
         holder.tile.setOnClickListener(v -> {
             int pos = holder.getBindingAdapterPosition();
             if (pos != RecyclerView.NO_POSITION) listener.onLaunch(apps.get(pos), pos);
         });
         holder.tile.setOnFocusChangeListener((v, hasFocus) -> {
-            holder.name.animate().alpha(hasFocus ? 1f : 0f).setDuration(Ui.reducedMotion ? 0 : Ui.FOCUS_MS)
+            holder.name.animate().alpha(nameShown(holder.tile) ? 1f : 0f).setDuration(Ui.reducedMotion ? 0 : Ui.FOCUS_MS)
                     .setInterpolator(Ui.EASE).start();
             int pos = holder.getBindingAdapterPosition();
             if (hasFocus && pos != RecyclerView.NO_POSITION) listener.onFocused(apps.get(pos), pos);
         });
+    }
+
+    @Override
+    public void onViewRecycled(@NonNull Holder holder) {
+        holder.itemView.setTranslationX(0f);
+        holder.itemView.setTranslationY(0f);
+        if (onRecycled != null) onRecycled.accept(holder.itemView);
     }
 
     static final class Holder extends RecyclerView.ViewHolder {

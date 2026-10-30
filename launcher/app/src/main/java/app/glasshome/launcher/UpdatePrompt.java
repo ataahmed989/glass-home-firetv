@@ -39,6 +39,8 @@ final class UpdatePrompt extends View {
         setFocusable(true);
         setDefaultFocusHighlightEnabled(false);
         setVisibility(GONE);
+        // Above a tile's menu (which casts a shadow, so is raised), as it folds away under the alert
+        setTranslationZ(Ui.px(64));
         scrim.setColor(0x80000000);
         title = text(context, 600, 34, 0xFFFFFFFF);
         body = text(context, 400, 23, 0xB3FFFFFF);

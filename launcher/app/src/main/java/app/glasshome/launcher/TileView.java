@@ -1,5 +1,6 @@
 package app.glasshome.launcher;
 
+import android.animation.TimeInterpolator;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -63,8 +64,11 @@ final class TileView extends View {
     private float focus;          // 0..1, eased with the focus transition
     private float tiltX, tiltY = REST_TILT_Y;   // -1..1, the sway after focus arrives
     private ValueAnimator focusAnimator, swayAnimator;
-    private android.animation.ObjectAnimator jiggle;
-    private boolean moving;
+    /** While apps are arranged: {@link #NONE}, {@link #LIFTED} (being moved) or {@link #RECEDED} (making room). */
+    static final int NONE = 0, LIFTED = 1, RECEDED = 2;
+    private int role = NONE;
+    private boolean menuRaised, menuDimmed, pressing;
+    private android.animation.ObjectAnimator alphaAnim;
 
     TileView(Context context) {
         super(context);
@@ -120,15 +124,15 @@ final class TileView extends View {
     void resetFocusState() {
         animate().cancel();
         stopAnimators();
-        if (jiggle != null) jiggle.cancel();
-        jiggle = null;
-        moving = false;
-        setRotation(0f);
+        if (alphaAnim != null) alphaAnim.cancel();
+        role = NONE;
+        menuRaised = menuDimmed = pressing = false;
         boolean f = isFocused();
-        float s = f ? Ui.FOCUS_SCALE : 1f;
-        setScaleX(s);
-        setScaleY(s);
-        setTranslationZ(f ? Ui.px(Ui.FOCUS_LIFT) : 0);
+        setScaleX(targetScale());
+        setScaleY(targetScale());
+        setTranslationZ(targetZ());
+        setTranslationY(0f);
+        setAlpha(1f);
         focus = f ? 1f : 0f;
         tiltX = 0f;
         tiltY = REST_TILT_Y;
@@ -211,10 +215,9 @@ final class TileView extends View {
     @Override
     protected void onFocusChanged(boolean gainFocus, int direction, Rect previouslyFocusedRect) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect);
-        float s = gainFocus ? Ui.FOCUS_SCALE : 1f;
+        if (!gainFocus) pressing = false;
         long ms = Ui.reducedMotion ? 0 : Ui.FOCUS_MS;
-        animate().scaleX(s).scaleY(s).translationZ(gainFocus ? Ui.px(Ui.FOCUS_LIFT) : 0)
-                .setDuration(ms).setInterpolator(Ui.EASE).start();
+        apply(true, Ui.EASE, ms);
         // Lift the whole cell so the bloom draws over neighbouring tiles rather than under them
         if (getParent() instanceof View) ((View) getParent()).setTranslationZ(gainFocus ? 1f : 0f);
 
@@ -263,28 +266,81 @@ final class TileView extends View {
         swayAnimator.start();
     }
 
-    /**
-     * Being moved (hold Select, Move): lifted a little higher, and jiggling as tvOS icons do while
-     * they are rearranged (held still with reduced motion).
-     */
-    void setMoving(boolean on) {
-        if (moving == on) return;
-        moving = on;
-        if (jiggle != null) jiggle.cancel();
-        jiggle = null;
-        float s = on ? Ui.FOCUS_SCALE + 0.05f : isFocused() ? Ui.FOCUS_SCALE : 1f;
-        animate().scaleX(s).scaleY(s).setDuration(Ui.reducedMotion ? 0 : Ui.FOCUS_MS).setInterpolator(Ui.EASE).start();
-        setRotation(0f);
-        if (!on || Ui.reducedMotion || !swayEnabled) return;
-        jiggle = android.animation.ObjectAnimator.ofFloat(this, ROTATION, -1.1f, 1.1f);
-        jiggle.setDuration(150);
-        jiggle.setRepeatMode(ValueAnimator.REVERSE);
-        jiggle.setRepeatCount(ValueAnimator.INFINITE);
-        jiggle.start();
+    // ---- Arranging apps ---------------------------------------------------------------------
+
+    private float targetScale() {
+        if (role == LIFTED) return Ui.LIFT_SCALE;
+        if (role == RECEDED) return Ui.RECEDE_SCALE;
+        if (!isFocused()) return 1f;
+        return pressing ? Ui.PRESS_SCALE : Ui.FOCUS_SCALE;
     }
 
-    boolean isMoving() {
-        return moving;
+    private float targetZ() {
+        if (role == LIFTED) return Ui.px(Ui.LIFT_Z);
+        return isFocused() ? Ui.px(Ui.FOCUS_LIFT) : 0;
+    }
+
+    private float targetY() {
+        return menuRaised ? -Ui.px(Ui.MENU_RISE) : 0;
+    }
+
+    /** Scale, lift and rise to where the tile's state puts them: at once, or over {@code ms} on {@code curve}. */
+    private void apply(boolean animate, TimeInterpolator curve, long ms) {
+        animate().cancel();
+        if (!animate || Ui.reducedMotion || ms == 0) {
+            setScaleX(targetScale());
+            setScaleY(targetScale());
+            setTranslationZ(targetZ());
+            setTranslationY(targetY());
+            return;
+        }
+        animate().scaleX(targetScale()).scaleY(targetScale()).translationZ(targetZ()).translationY(targetY())
+                .setInterpolator(curve).setDuration(ms).start();
+    }
+
+    /** Lifted to be moved, receded to make room, or back to normal ({@link #NONE}). */
+    void setRole(int r, boolean animate) {
+        if (role == r) return;
+        Spring spring = r == LIFTED || role == LIFTED ? Spring.LIFT : Spring.REORDER;
+        role = r;
+        apply(animate, spring.interpolator(), spring.settleMs());
+    }
+
+    int role() {
+        return role;
+    }
+
+    /** The held tile rises for its menu ({@code raised}); the others dim while it is open. */
+    void setMenuState(boolean raised, boolean dimmed, boolean animate) {
+        if (raised != menuRaised) {
+            menuRaised = raised;
+            Spring spring = raised ? Spring.POP : Spring.MENU;
+            apply(animate, spring.interpolator(), spring.settleMs());
+        }
+        if (dimmed != menuDimmed) {
+            menuDimmed = dimmed;
+            float to = dimmed ? Ui.MENU_DIM : 1f;
+            if (alphaAnim != null) alphaAnim.cancel();
+            if (!animate || Ui.reducedMotion) {
+                setAlpha(to);
+            } else {
+                alphaAnim = android.animation.ObjectAnimator.ofFloat(this, ALPHA, getAlpha(), to).setDuration(200);
+                alphaAnim.setInterpolator(Ui.EASE);
+                alphaAnim.start();
+            }
+        }
+    }
+
+    boolean menuRaised() {
+        return menuRaised;
+    }
+
+    /** Select held down on the tile: it sinks a little, so the hold is felt before its menu opens. */
+    void setPressing(boolean on) {
+        if (pressing == on) return;
+        pressing = on;
+        if (on) apply(true, new android.view.animation.PathInterpolator(0.33f, 0f, 0.67f, 1f), 450);
+        else apply(true, Ui.EASE, 140);
     }
 
     private void stopAnimators() {
@@ -295,7 +351,7 @@ final class TileView extends View {
     @Override
     protected void onDetachedFromWindow() {
         stopAnimators();
-        if (jiggle != null) jiggle.cancel();
+        if (alphaAnim != null) alphaAnim.cancel();
         super.onDetachedFromWindow();
     }
 }

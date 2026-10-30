@@ -199,6 +199,7 @@ final class Glass {
         }
         float c = sum / n;
         float shade = c <= READABLE - LIFT ? 0f : Math.min(MAX_SHADE, 1f - (READABLE - LIFT) / c);
+        if (shades.size() > 64) shades.clear();
         shades.put(key, shade);
         return shade;
     }

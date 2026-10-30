@@ -14,10 +14,48 @@ import androidx.recyclerview.widget.RecyclerView;
  * scrolling the minimum amount. Down glides the next row up into the dock.
  */
 final class HomeLayoutManager extends GridLayoutManager {
+    /** Told around each layout, so a reorder can glide every tile from where it was (see {@link ReorderMotion}). */
+    interface Hooks {
+        void beforeLayout();
+
+        void afterLayout();
+    }
+
     private final DecelerateInterpolator ease = new DecelerateInterpolator(2f);
+    private Hooks hooks;
+    private boolean arranging;
 
     HomeLayoutManager(Context context) {
         super(context, Ui.COLUMNS);
+    }
+
+    void setHooks(Hooks h) {
+        hooks = h;
+    }
+
+    /** While apps are arranged, a row below the dock stays laid out, so a tile sliding out of view isn't recycled mid-glide. */
+    void setArranging(boolean on) {
+        if (arranging == on) return;
+        arranging = on;
+        requestLayout();
+    }
+
+    @Override
+    public void onLayoutChildren(RecyclerView.Recycler recycler, RecyclerView.State state) {
+        if (hooks != null && !state.isPreLayout()) hooks.beforeLayout();
+        super.onLayoutChildren(recycler, state);
+    }
+
+    @Override
+    public void onLayoutCompleted(RecyclerView.State state) {
+        super.onLayoutCompleted(state);
+        if (hooks != null) hooks.afterLayout();
+    }
+
+    @Override
+    protected void calculateExtraLayoutSpace(@NonNull RecyclerView.State state, @NonNull int[] extra) {
+        super.calculateExtraLayoutSpace(state, extra);
+        if (arranging) extra[1] = Math.max(extra[1], Ui.px(Ui.ROW_PITCH));
     }
 
     @Override

@@ -72,7 +72,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
     private static final long RESUME_REFRESH_MS = 600;
 
-    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE }
+    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE, TILE_MENU }
 
     static final int HOME = 0, MOVIES = 1, TV = 2, SPORTS = 3;
 
@@ -174,7 +174,20 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     static final long TILE_HOLD_MS = 600;
     /** The app whose tile is being moved (its menu's Move), or null. */
     private String moving;
-    private MoveHint moveHint;
+    private long movingId = RecyclerView.NO_ID;
+    private TileMenu tileMenu;
+    private Glass menuGlass;
+    private MoveIndicator indicator;
+    private ReorderMotion reorder;
+    private HomeLayoutManager layoutManager;
+    private long tileMenuShownAt;
+    /** Apps changed while a tile was being moved: loaded again once it is put down. */
+    private boolean reloadAfterMove;
+    /** Select held on a tile: it sinks a little before its menu opens. */
+    private final Runnable pressIn = () -> {
+        TileView t = focusedTile();
+        if (t != null && selectArmed && moving == null && zone() == Zone.GRID) t.setPressing(true);
+    };
 
     private int appsGeneration;
     private int backdropGeneration;
@@ -350,6 +363,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case SOURCES:
             case PAGE_DETAIL:
             case UPDATE:
+            case TILE_MENU:
                 return false;
             default:
                 return true;
@@ -369,6 +383,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void showPrompt() {
+        // Nothing else of a tile's stays up under an alert
+        if (tileMenu.isOpen()) closeTileMenu(false, false);
+        if (moving != null) placeTile(false);
+        cancelPressIn();
         // A press already under way (Select on a tile, Back) belongs to what was in front before
         selectArmed = false;
         menuArmed = false;
@@ -488,9 +506,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         dock = new GlassDock(dockGlass);
         adapter = new AppAdapter(this);
         grid = new RecyclerView(this);
-        grid.setLayoutManager(new HomeLayoutManager(this));
+        layoutManager = new HomeLayoutManager(this);
+        grid.setLayoutManager(layoutManager);
         grid.setAdapter(adapter);
+        // ReorderMotion moves the cells while apps are arranged; an ItemAnimator would fight it
         grid.setItemAnimator(null);
+        reorder = new ReorderMotion(grid);
+        layoutManager.setHooks(reorder);
+        adapter.setOnRecycled(reorder::forget);
         grid.setHasFixedSize(true);
         grid.setClipChildren(false);
         grid.setClipToPadding(false);
@@ -503,9 +526,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 Math.max(0, screenH - Ui.px(Ui.DOCK_ROW_TOP) - Ui.px(Ui.ROW_PITCH)));
         grid.getViewTreeObserver().addOnPreDrawListener(() -> {
             fadeRowsAboveDock();
+            followMovingTile();
             return true;
         });
         root.addView(grid, match());
+        // Over the tiles, under everything else: the chevrons round a tile being moved, and a tile's menu
+        indicator = new MoveIndicator(this);
+        root.addView(indicator, new FrameLayout.LayoutParams(MoveIndicator.width(), MoveIndicator.height(), Gravity.TOP | Gravity.START));
+        menuGlass = new Glass(config.blurGlass, 0xE62A2E36);
+        tileMenu = new TileMenu(this, menuGlass);
+        root.addView(tileMenu, new FrameLayout.LayoutParams(TileMenu.width(), TileMenu.height(), Gravity.TOP | Gravity.START));
 
         // The browse pages cover Home completely while they are shown
         String[] names = {null, "Movies", "TV Shows", "Sports"};
@@ -559,8 +589,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         sources = new SourcesPanel(this, sourcesGlass);
         sources.setListener(this::onSource);
         root.addView(sources, match());
-        moveHint = new MoveHint(this, new Glass(config.blurGlass, 0xB31C1E23));
-        root.addView(moveHint, match());
         promptGlass = new Glass(config.blurGlass, 0xE62A2E36);
         prompt = new UpdatePrompt(this, promptGlass);
         root.addView(prompt, match());
@@ -739,6 +767,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             main.post(() -> {
                 if (generation != backdropGeneration) return;
                 dockGlass.setBackdrop(small, screenW, screenH);
+                menuGlass.setBackdrop(small, screenW, screenH);
+                tileMenu.invalidate();
                 weatherGlass.setBackdrop(small, screenW, screenH);
                 if (page == HOME) setBarBackdrop(small);
                 grid.invalidate();
@@ -854,6 +884,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             }
             main.post(() -> {
                 if (generation != appsGeneration) return;
+                // Not under a tile being moved (the order loaded would undo the move): once it is put down
+                if (moving != null) {
+                    reloadAfterMove = true;
+                    return;
+                }
+                if (tileMenu.isOpen()) closeTileMenu(false, false);
                 boolean wasInGrid = zone() == Zone.GRID;
                 adapter.setApps(apps);
                 // If the remembered app is gone, or its row got shorter, land on the nearest one
@@ -1294,7 +1330,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** ☰ goes to the tab bar from anywhere (closing whatever is open); pressed there, it goes back down. */
     private void onMenu() {
+        if (moving != null) placeTile(true);
         switch (zone()) {
+            case TILE_MENU:
+                closeTileMenu(false, false);
+                break;
             case TABS:
                 flushTab();
                 focusPage();
@@ -1352,6 +1392,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     Zone zone() {
         if (prompt.isOpen()) return Zone.UPDATE;
+        if (tileMenu.isOpen()) return Zone.TILE_MENU;
         if (panel.isOpen()) return Zone.SETTINGS;
         if (sources.isOpen()) return Zone.SOURCES;
         if (control.isOpen()) return Zone.CONTROL;
@@ -1549,11 +1590,87 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     private static final String MEMORY_ROW = "Memory & Storage";
 
-    /** Held Select on a tile: what can be done with it, in a glass alert like the others. */
+    /** Select held this long on a tile before it starts to sink (the menu opens at {@link #TILE_HOLD_MS}). */
+    static final long PRESS_IN_MS = 150;
+
+    private TileView focusedTile() {
+        int pos = focusedPosition();
+        RecyclerView.ViewHolder h = pos == RecyclerView.NO_POSITION ? null : grid.findViewHolderForAdapterPosition(pos);
+        return h instanceof AppAdapter.Holder ? ((AppAdapter.Holder) h).tile : null;
+    }
+
+    private void cancelPressIn() {
+        main.removeCallbacks(pressIn);
+        for (AppAdapter.Holder h : holders()) h.tile.setPressing(false);
+    }
+
+    private List<AppAdapter.Holder> holders() {
+        List<AppAdapter.Holder> out = new ArrayList<>();
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            RecyclerView.ViewHolder h = grid.getChildViewHolder(grid.getChildAt(i));
+            if (h instanceof AppAdapter.Holder) out.add((AppAdapter.Holder) h);
+        }
+        return out;
+    }
+
+    /** A row still gliding into the dock is put there at once, so what is drawn round its tile lines up. */
+    private void snapRowToDock(View cell) {
+        grid.stopScroll();
+        int dy = cell.getTop() - Ui.px(Ui.DOCK_ROW_TOP);
+        if (dy != 0) grid.scrollBy(0, dy);
+    }
+
+    /**
+     * Held Select on a tile: a small glass card unfolds from under it, Move and More Options. The
+     * tile rises a little to make room and keeps focus; the other tiles dim.
+     */
     private void openTileMenu() {
         int pos = focusedPosition();
-        if (pos == RecyclerView.NO_POSITION) return;
+        RecyclerView.ViewHolder vh = pos == RecyclerView.NO_POSITION ? null : grid.findViewHolderForAdapterPosition(pos);
+        if (!(vh instanceof AppAdapter.Holder)) return;
+        AppAdapter.Holder h = (AppAdapter.Holder) vh;
+        snapRowToDock(h.itemView);
         AppEntry app = adapter.get(pos);
+        tileMenuShownAt = SystemClock.uptimeMillis();
+        menuArmed = false;
+        adapter.setMenuKey(app.key);
+        for (AppAdapter.Holder x : holders()) x.tile.setMenuState(x == h, x != h, true);
+        h.name.animate().cancel();
+        h.name.animate().alpha(0f).setDuration(Ui.reducedMotion ? 0 : 120).setInterpolator(Ui.EASE).start();
+        float cx = grid.getX() + h.itemView.getLeft() + h.tile.getLeft() + h.tile.getWidth() / 2f;
+        float cy = grid.getY() + h.itemView.getTop() + h.tile.getTop() + h.tile.getHeight() / 2f - Ui.px(Ui.MENU_RISE);
+        float half = h.tile.getHeight() * Ui.FOCUS_SCALE / 2f;
+        tileMenu.show(cx, cy - half, cy + half, () -> {
+            closeTileMenu(true, true);
+            startMoving(app);
+        }, () -> {
+            closeTileMenu(true, false);
+            openAppMenu(app);
+        });
+    }
+
+    /** Folds a tile's menu away; the tile settles back (and its name returns unless it is to be moved). */
+    private void closeTileMenu(boolean animate, boolean intoMove) {
+        if (!tileMenu.isOpen() && adapter.menuKey() == null) return;
+        tileMenu.dismiss(animate);
+        adapter.setMenuKey(null);
+        for (AppAdapter.Holder x : holders()) x.tile.setMenuState(false, false, animate);
+        if (!intoMove) showFocusedName(animate);
+        if (!animate) fadeRowsAboveDock();
+    }
+
+    private void showFocusedName(boolean animate) {
+        int pos = focusedPosition();
+        RecyclerView.ViewHolder vh = pos == RecyclerView.NO_POSITION ? null : grid.findViewHolderForAdapterPosition(pos);
+        if (!(vh instanceof AppAdapter.Holder)) return;
+        View name = ((AppAdapter.Holder) vh).name;
+        name.animate().cancel();
+        if (!animate || Ui.reducedMotion) name.setAlpha(1f);
+        else name.animate().alpha(1f).setStartDelay(60).setDuration(180).setInterpolator(Ui.EASE).start();
+    }
+
+    /** The full menu for a tile, in a glass alert like the others: Move, Hide from Home, App Info. */
+    private void openAppMenu(AppEntry app) {
         List<String> labels = new ArrayList<>();
         List<Runnable> actions = new ArrayList<>();
         labels.add("Move");
@@ -1573,19 +1690,56 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         showPrompt();
     }
 
+    /**
+     * The tile lifts and the others recede a little, with glass chevrons round it where it can go;
+     * the arrows then carry it along and the others make room.
+     */
     private void startMoving(AppEntry app) {
+        int i = adapter.indexOf(app.key);
+        if (i < 0) return;
+        grid.stopScroll();
         moving = app.key;
-        adapter.setMoving(app.key);
-        RecyclerView.ViewHolder h = grid.findViewHolderForAdapterPosition(adapter.indexOf(app.key));
-        if (h != null) ((AppAdapter.Holder) h).tile.setMoving(true);
-        moveHint.show(app.label);
+        movingId = adapter.getItemId(i);
+        adapter.setMovingKey(app.key);
+        for (AppAdapter.Holder x : holders()) {
+            x.tile.setRole(x.getItemId() == movingId ? TileView.LIFTED : TileView.RECEDED, true);
+            if (x.getItemId() == movingId) {
+                x.name.animate().cancel();
+                x.name.setAlpha(0f);
+            }
+        }
+        reorder.liftedId = movingId;
+        reorder.active = true;
+        reorder.onIdle = () -> {
+            if (moving != null) {
+                main.removeCallbacks(breatheLater);
+                main.postDelayed(breatheLater, 300);
+            } else {
+                reorder.active = false;
+                layoutManager.setArranging(false);
+            }
+        };
+        layoutManager.setArranging(true);
+        indicator.show(directions(i));
+        followMovingTile();
     }
 
-    /** The arrows carry the tile along, the others making room; Left and Right go on round the rows' ends. */
-    private void moveTile(int direction) {
+    /** Which way the tile at {@code i} can go, as {@link #moveTile} moves it (Left and Right go round the rows' ends). */
+    private boolean[] directions(int i) {
+        int n = adapter.getItemCount();
+        boolean[] d = new boolean[4];
+        d[MoveIndicator.LEFT] = i > 0;
+        d[MoveIndicator.RIGHT] = i + 1 < n;
+        d[MoveIndicator.UP] = i >= Ui.COLUMNS;
+        d[MoveIndicator.DOWN] = i + Ui.COLUMNS < n || i / Ui.COLUMNS < (n - 1) / Ui.COLUMNS;
+        return d;
+    }
+
+    /** The arrows carry the tile along, the others making room; a fresh press it can't follow bumps it against the edge. */
+    private void moveTile(int direction, boolean fresh) {
         int from = adapter.indexOf(moving), count = adapter.getItemCount(), to = from;
         if (from < 0) {
-            placeTile();
+            placeTile(false);
             return;
         }
         switch (direction) {
@@ -1603,27 +1757,85 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 else if (from / Ui.COLUMNS < (count - 1) / Ui.COLUMNS) to = count - 1;
                 break;
         }
-        if (to == from) return;
+        if (to == from) {
+            if (fresh) nudge(direction);
+            return;
+        }
+        main.removeCallbacks(breatheLater);
+        reorder.noteMove(adapter.itemIds());
+        indicator.stopBreathing();
         adapter.move(from, to);
         lastFocused = to;
         if (to < Ui.COLUMNS) lastDockColumn = to;
-        focusGrid(to);
+        indicator.setDirections(directions(to));
+    }
+
+    private final Runnable breatheLater = () -> indicator.breathe();
+
+    private void nudge(int direction) {
+        RecyclerView.ViewHolder vh = grid.findViewHolderForItemId(movingId);
+        if (vh == null) return;
+        float v = Ui.px(520);
+        float vx = direction == View.FOCUS_LEFT ? -v : direction == View.FOCUS_RIGHT ? v : 0;
+        float vy = direction == View.FOCUS_UP ? -v : direction == View.FOCUS_DOWN ? v : 0;
+        reorder.kick(vh.itemView, vx, vy);
+    }
+
+    /** The chevrons stay centred on the tile being moved, wherever its glide has got to. */
+    private void followMovingTile() {
+        if (movingId == RecyclerView.NO_ID || !indicator.isShowing()) return;
+        RecyclerView.ViewHolder vh = grid.findViewHolderForItemId(movingId);
+        if (!(vh instanceof AppAdapter.Holder)) {
+            indicator.setAlpha(0f);
+            return;
+        }
+        TileView t = ((AppAdapter.Holder) vh).tile;
+        View cell = vh.itemView;
+        float cx = grid.getX() + cell.getX() + t.getX() + t.getWidth() / 2f;
+        float cy = grid.getY() + cell.getY() + t.getY() + t.getHeight() / 2f;
+        indicator.follow(cx, cy, t.getWidth() * t.getScaleX() / 2f, t.getHeight() * t.getScaleY() / 2f);
     }
 
     /** Puts the moving tile down where it is, and keeps the order. */
-    private void placeTile() {
+    private void placeTile(boolean animate) {
+        if (moving == null) return;
         moving = null;
-        adapter.setMoving(null);
-        for (int i = 0; i < grid.getChildCount(); i++) {
-            RecyclerView.ViewHolder h = grid.getChildViewHolder(grid.getChildAt(i));
-            if (h instanceof AppAdapter.Holder) ((AppAdapter.Holder) h).tile.setMoving(false);
-        }
-        moveHint.hide();
+        main.removeCallbacks(breatheLater);
+        adapter.setMovingKey(null);
+        for (AppAdapter.Holder x : holders()) x.tile.setRole(TileView.NONE, animate);
+        indicator.hide(animate);
+        showFocusedName(animate);
         settings.setAppOrder(adapter.keys());
+        movingId = RecyclerView.NO_ID;
+        reorder.liftedId = RecyclerView.NO_ID;
+        if (!animate) reorder.finishNow();
+        if (reorder.isIdle()) {
+            reorder.active = false;
+            layoutManager.setArranging(false);
+        }
+        if (reloadAfterMove) {
+            reloadAfterMove = false;
+            loadApps();
+        }
+    }
+
+    /** Leaving (the Home button, another app): a tile's menu closes and a moving tile is put down, at once. */
+    private void dropArranging() {
+        cancelPressIn();
+        if (tileMenu.isOpen() || adapter.menuKey() != null) closeTileMenu(false, false);
+        if (moving != null) placeTile(false);
     }
 
     boolean isMovingTile() {
         return moving != null;
+    }
+
+    TileMenu tileMenu() {
+        return tileMenu;
+    }
+
+    MoveIndicator moveIndicator() {
+        return indicator;
     }
 
     private void hideApp(AppEntry app) {
@@ -1962,9 +2174,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         int code = event.getKeyCode();
         int direction = direction(code);
         if (direction != 0) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) cancelPressIn();
             if (event.getAction() == KeyEvent.ACTION_DOWN && acceptStep(event)) {
                 String before = focusSignature();
-                move(direction);
+                if (moving != null && zone() == Zone.GRID) moveTile(direction, event.getRepeatCount() == 0);
+                else move(direction);
                 // Fire TV's faint tick when focus moved on the Home page (not the browse pages)
                 if (page == HOME && tabs.selected() == HOME && !before.equals(focusSignature())) navSounds.play(direction);
             }
@@ -1975,20 +2189,28 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 && (isSelect(code) || code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_BACK)) {
             return true;
         }
+        // Likewise Back or ☰ begun before a tile's menu opened
+        if (zone() == Zone.TILE_MENU && event.getDownTime() < tileMenuShownAt
+                && (code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_BACK)) {
+            return true;
+        }
         if (isSelect(code)) {
             // Activate on release, once per press; holding Select does not repeat it
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (event.getRepeatCount() == 0) {
                     selectArmed = true;
+                    if (moving == null && zone() == Zone.GRID) main.postDelayed(pressIn, PRESS_IN_MS);
                 } else if (selectArmed && moving == null && zone() == Zone.GRID
                         && event.getEventTime() - event.getDownTime() >= TILE_HOLD_MS) {
                     // Held on a tile: its menu, and the release that follows is no press
                     selectArmed = false;
+                    main.removeCallbacks(pressIn);
                     openTileMenu();
                 }
             } else if (event.getAction() == KeyEvent.ACTION_UP) {
                 boolean fire = selectArmed && !event.isCanceled();
                 selectArmed = false;
+                cancelPressIn();
                 if (fire) activate();
             }
             return true;
@@ -2039,7 +2261,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Where focus is, as far as the arrows can move it: unchanged after a move, nothing moved. */
     private String focusSignature() {
         return zone() + "/" + focusedPosition() + "/" + capsule.item() + "/" + tabs.selected() + "/" + weather.focusedKind()
-                + "/" + panel.focusedIndex() + "/" + control.focusedItem();
+                + "/" + panel.focusedIndex() + "/" + control.focusedItem() + "/" + tileMenu.isOpen() + tileMenu.focusedIndex();
     }
 
     private static int direction(int code) {
@@ -2156,9 +2378,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (direction == View.FOCUS_UP) prompt.move(-1);
                 else if (direction == View.FOCUS_DOWN) prompt.move(1);
                 return;
+            case TILE_MENU:
+                if (direction == View.FOCUS_UP) tileMenu.move(-1);
+                else if (direction == View.FOCUS_DOWN) tileMenu.move(1);
+                return;
             default:
-                if (moving != null) moveTile(direction);
-                else moveInGrid(direction);
+                moveInGrid(direction);
         }
     }
 
@@ -2222,6 +2447,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case UPDATE:
                 prompt.choose();
                 return;
+            case TILE_MENU:
+                tileMenu.choose();
+                return;
             case CONTROL:
                 control.select();
                 return;
@@ -2244,7 +2472,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             default:
                 if (moving != null) {
-                    placeTile();
+                    placeTile(true);
                     return;
                 }
                 int pos = focusedPosition();
@@ -2272,6 +2500,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case SOURCES:
                 closeSources();
+                return;
+            case TILE_MENU:
+                closeTileMenu(true, false);
                 return;
             case UPDATE:
                 Runnable then = prompt.backAction();
@@ -2303,7 +2534,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             default:
                 if (moving != null) {
-                    placeTile();
+                    placeTile(true);
                     return;
                 }
                 if (focusedPosition() >= Ui.COLUMNS) {
@@ -2391,7 +2622,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         setIntent(intent);
         if (!intent.getBooleanExtra(HomeButtonService.EXTRA_HOME_BUTTON, false)) return;
         cancelLinkWait();
-        if (moving != null) placeTile();
+        dropArranging();
         // Everything changes at once, under the snapshot of Home that covers the trip back (see HomeSnapshot)
         if (panel.isOpen()) {
             panel.animate().cancel();
@@ -2420,7 +2651,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * the apps), so a snapshot of it can stand in for Glass Home while Fire OS makes the trip.
      */
     private boolean showingHomeAsTheHomeButtonLeavesIt() {
-        return page == HOME && zone() == Zone.GRID && !barHidden;
+        return page == HOME && zone() == Zone.GRID && !barHidden && moving == null;
     }
 
     /** Glass Home lost the top spot and has not been paused since. */
@@ -2432,6 +2663,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         super.onTopResumedActivityChanged(top);
         if (!resumed) return;
         if (!top) {
+            dropArranging();
             lostTop = true;
             HomeButtonService.losingTop(showingHomeAsTheHomeButtonLeavesIt());
         } else if (lostTop) {
@@ -2442,6 +2674,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     protected void onPause() {
+        dropArranging();
         clock.stop();
         main.removeCallbacks(resumeRefresh);
         main.removeCallbacks(updateCheck);
@@ -2461,7 +2694,6 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             HomeSnapshot.capture(this);
             snapshotDue = false;
         }
-        if (moving != null) placeTile();
         if (zone() != Zone.UPDATE) lastZone = zone();   // showPrompt kept the zone under the alert
         selectArmed = false;
         menuArmed = false;
