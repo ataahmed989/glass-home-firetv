@@ -32,6 +32,7 @@ final class Brand {
         featured("com.amazon.firebat", "Prime Video", 0xFF0F171E, 0xFF0A3550, "9");
         featured("com.apple.atve.amazon.appletv", "Apple TV", 0xFF000000, 0xFF26262A, "350");
         other("com.amazon.firetv.youtube", "YouTube", 0xFF0F0F0F, 0xFF2A0A0A);
+        other("org.smarttube.stable", "SmartTube", 0xFF000000, 0xFF2A0A0A);
         other("app.fireplayer", "FirePlayer", 0xFF02040C, 0xFF0A1E4A);
         other("com.spotify.tv.android", "Spotify", 0xFF121212, 0xFF0B3D20);
         other("com.apple.android.music", "Apple Music", 0xFF1A0610, 0xFF5A0F2A);

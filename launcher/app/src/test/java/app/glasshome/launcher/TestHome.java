@@ -228,6 +228,11 @@ final class TestHome {
         return activity.focusedPosition();
     }
 
+    /** The focused app's package (its key). */
+    String focusedKey() {
+        return ((AppAdapter) grid.getAdapter()).get(focused()).key;
+    }
+
     HomeActivity.Zone zone() {
         return activity.zone();
     }

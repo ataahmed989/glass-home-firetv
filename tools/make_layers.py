@@ -262,7 +262,7 @@ netflix()
 apple_tv()
 settings()
 fireplayer()
-for key in ("com.amazon.firetv.youtube", "com.hbo.hbonow", "ar.tvplayer.tv", "com.amazon.firebat",
+for key in ("com.amazon.firetv.youtube", "org.smarttube.stable", "com.hbo.hbonow", "ar.tvplayer.tv", "com.amazon.firebat",
             "com.spotify.tv.android", "com.esaba.downloader", "com.tailscale.ipn"):
     flat_logo(key, key + ".png")
 for key in ("com.disney.disneyplus", "gamepass.fire.tv", "com.amazon.venezia", "com.apple.android.music", "com.amazon.tv.livetv"):
