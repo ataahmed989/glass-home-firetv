@@ -32,12 +32,13 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
     /** The order before the steps not yet laid out; null when there are none. */
     private List<Long> orderBefore;
     /**
-     * Tests step the motion themselves ({@link #showAt}): Robolectric's clock runs every frame
-     * of an animation within one idle, so a frame mid-glide could not be drawn otherwise.
+     * Tests step the motion themselves: Robolectric's clock runs every frame
+     * of an animation within one idle, so a frame mid-glide could not be drawn otherwise
+     * ({@link #showNow}).
      */
     static boolean ticking = true;
-    /** When the latest glide began (animation clock). */
-    private long startedAt;
+    /** The animation clock (frame time on the TV); tests use one clock for every step. */
+    static java.util.function.LongSupplier clock = AnimationUtils::currentAnimationTimeMillis;
     /** On while apps are being arranged: only then are layouts turned into motion. */
     boolean active;
     long liftedId = RecyclerView.NO_ID;
@@ -73,7 +74,7 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
             before.clear();
             return;
         }
-        long now = AnimationUtils.currentAnimationTimeMillis();
+        long now = clock.getAsLong();
         Float frame = frameBefore();
         int pitchX = Ui.px(Ui.COL_PITCH), pitchY = Ui.px(Ui.ROW_PITCH);
         for (int i = 0; i < grid.getChildCount(); i++) {
@@ -95,7 +96,6 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
         }
         orderBefore = null;
         before.clear();
-        startedAt = now;
         if (!tracks.isEmpty() && !ticker.isStarted() && ticking) ticker.start();
     }
 
@@ -112,7 +112,7 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
     /** A push with no new place: the tile being moved bumps against the edge it can't pass, and springs back. */
     void kick(View cell, float vx, float vy) {
         if (Ui.reducedMotion || cell == null) return;
-        retarget(cell, Spring.LIFT, 0, 0, vx, vy, AnimationUtils.currentAnimationTimeMillis());
+        retarget(cell, Spring.LIFT, 0, 0, vx, vy, clock.getAsLong());
         if (!ticker.isStarted() && ticking) ticker.start();
     }
 
@@ -121,7 +121,7 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
         Track t = tracks.get(v);
         float x, y, vx, vy;
         if (t != null) {
-            float dt = (now - t.t0) / 1000f;
+            float dt = Math.max(0, now - t.t0) / 1000f;   // never before it began: the spring would run backwards and blow up
             x = t.spring.x(t.x0, t.vx, dt);
             y = t.spring.x(t.y0, t.vy, dt);
             vx = t.spring.v(t.x0, t.vx, dt);
@@ -145,12 +145,12 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
 
     @Override
     public void onTimeUpdate(TimeAnimator animation, long totalTime, long deltaTime) {
-        long now = AnimationUtils.currentAnimationTimeMillis();
+        long now = clock.getAsLong();
         float still = Math.max(0.25f, Ui.pxf(0.35f));
         for (Iterator<Map.Entry<View, Track>> it = tracks.entrySet().iterator(); it.hasNext(); ) {
             Map.Entry<View, Track> e = it.next();
             Track t = e.getValue();
-            float s = (now - t.t0) / 1000f;
+            float s = Math.max(0, now - t.t0) / 1000f;
             float x = t.spring.x(t.x0, t.vx, s), y = t.spring.x(t.y0, t.vy, s);
             float vx = t.spring.v(t.x0, t.vx, s), vy = t.spring.v(t.y0, t.vy, s);
             if (Math.abs(x) < still && Math.abs(y) < still && Math.abs(vx) < 4 && Math.abs(vy) < 4) {
@@ -166,9 +166,9 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
         }
     }
 
-    /** Every cell where its glide puts it {@code ms} after the latest one began (tests; see {@link #ticking}). */
-    void showAt(long ms) {
-        long now = startedAt + ms;
+    /** Every cell where its glide puts it now (tests, stepping the clock themselves; see {@link #ticking}). */
+    void showNow() {
+        long now = clock.getAsLong();
         for (Map.Entry<View, Track> e : tracks.entrySet()) {
             Track t = e.getValue();
             float s = Math.max(0, now - t.t0) / 1000f;

@@ -265,35 +265,59 @@ public class TileMenuTest {
 
     /**
      * Each step glides, as on an iPhone: the tile and the one it passes start where they were,
-     * slide past each other and settle, and no frame jumps more than a sliver.
+     * slide past each other and settle, no frame moving more than a sliver; a next step before the
+     * last has settled carries the tile on from where it is, without a jump.
      */
     @Test
     public void stepsGlideWithoutJumping() throws Exception {
         TestHome h = new TestHome();
         menu(h, "Move");
         ReorderMotion.ticking = false;
+        ReorderMotion.clock = SystemClock::uptimeMillis;
         try {
+            ReorderMotion motion = h.activity.reorderMotion();
             View moved = cell(h);
             View next = h.grid.getLayoutManager().findViewByPosition(1);
             float movedFrom = moved.getX(), nextFrom = next.getX();
-            pressAndWait(h, KEYCODE_DPAD_RIGHT, 16);
-            ReorderMotion motion = h.activity.reorderMotion();
-            motion.showAt(0);
-            assertEquals("it starts where it was", movedFrom, moved.getX(), 1f);
-            assertEquals("and so does the tile it passes", nextFrom, next.getX(), 1f);
-            float lastMoved = moved.getX(), lastNext = next.getX(), most = 0f;
-            for (int ms = 16; ms <= 1500; ms += 16) {
-                motion.showAt(ms);
-                most = Math.max(most, Math.max(Math.abs(moved.getX() - lastMoved), Math.abs(next.getX() - lastNext)));
+            pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
+            motion.showNow();
+            float sliver = Ui.px(Ui.COL_PITCH) / 9f;
+            assertEquals("it starts where it was", movedFrom, moved.getX(), sliver);
+            assertEquals("and so does the tile it passes", nextFrom, next.getX(), sliver);
+            float lastMoved = moved.getX(), lastNext = next.getX(), most = 0f, mostChained = 0f;
+            int worst = 0;
+            long lastT = SystemClock.uptimeMillis();
+            for (int f = 1; f <= 90; f++) {
+                if (f == 12) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);   // the next step, mid-glide
+                frame(motion);
+                // As far as it went in a 60 Hz frame (the test's clock can skip more than one)
+                long now = SystemClock.uptimeMillis();
+                float perFrame = 16f / Math.max(16, now - lastT);
+                lastT = now;
+                float d = perFrame * Math.max(Math.abs(moved.getX() - lastMoved), f < 12 ? Math.abs(next.getX() - lastNext) : 0f);
+                if (f < 12 && d > most) {
+                    most = d;
+                    worst = f;
+                }
+                mostChained = Math.max(mostChained, d);
                 lastMoved = moved.getX();
                 lastNext = next.getX();
             }
+            assertEquals(2, ((AppAdapter) h.grid.getAdapter()).indexOf(h.focusedKey()));
             assertEquals("it ends in its new place", moved.getLeft(), lastMoved, 1f);
-            assertEquals(next.getLeft(), lastNext, 1f);
-            assertTrue("no frame jumps: " + most + " px at most", most < Ui.px(Ui.COL_PITCH) / 9f);
+            assertTrue("a step glides, no frame jumps: " + most + " px at frame " + worst, most < sliver);
+            // Steps in quick succession carry the tile on at speed (as a held arrow does), but never jump
+            assertTrue("chained steps carry on smoothly: " + mostChained + " px", mostChained < Ui.px(Ui.COL_PITCH) / 4f);
         } finally {
             ReorderMotion.ticking = true;
+            ReorderMotion.clock = android.view.animation.AnimationUtils::currentAnimationTimeMillis;
         }
+    }
+
+    /** One frame: the glides where they are now. */
+    private static void frame(ReorderMotion motion) {
+        TestHome.advance(16);
+        motion.showNow();
     }
 
     /** Frames of a move, for a clip: jiggling, two steps right, then down a row, at 60 frames a second. */
@@ -305,21 +329,23 @@ public class TileMenuTest {
         menu(h, "Move");
         // The glides and the jiggle stepped by hand, frame by frame (see ReorderMotion.ticking, TileView.jiggleEnabled)
         ReorderMotion.ticking = false;
+        ReorderMotion.clock = SystemClock::uptimeMillis;
         try {
             ReorderMotion motion = h.activity.reorderMotion();
             int[] keys = {0, KEYCODE_DPAD_RIGHT, KEYCODE_DPAD_RIGHT, KEYCODE_DPAD_DOWN, 0};
             int frame = 0;
             long t = 0;
             for (int key : keys) {
-                if (key != 0) pressAndWait(h, key, 16);
+                if (key != 0) pressAndWait(h, key, 0);
                 for (int i = 0; i < 36; i++, t += 16) {
-                    motion.showAt(i * 16L);
+                    frame(motion);
                     tile(h).setRotation(TileView.jiggleAngle(t));
                     h.capture(String.format("clip/move-%03d.png", frame++));
                 }
             }
         } finally {
             ReorderMotion.ticking = true;
+            ReorderMotion.clock = android.view.animation.AnimationUtils::currentAnimationTimeMillis;
         }
     }
 
