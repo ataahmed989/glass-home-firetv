@@ -73,7 +73,7 @@ final class TileView extends View {
     private int role = NONE;
     private boolean menuRaised, menuDimmed, pressing;
     private android.animation.ObjectAnimator alphaAnim;
-    private ValueAnimator jiggle;
+    private android.animation.TimeAnimator jiggle;
 
     TileView(Context context) {
         super(context);
@@ -329,14 +329,10 @@ final class TileView extends View {
     private void startJiggle() {
         stopJiggle();
         if (Ui.reducedMotion || !jiggleEnabled) return;
-        jiggle = ValueAnimator.ofFloat(0f, 1f);
-        jiggle.setDuration(JIGGLE_MS);
-        jiggle.setRepeatCount(ValueAnimator.INFINITE);
-        jiggle.setInterpolator(new LinearInterpolator());
-        final long start = android.view.animation.AnimationUtils.currentAnimationTimeMillis();
-        jiggle.addUpdateListener(a -> {
-            float ramp = Math.min(1f, (android.view.animation.AnimationUtils.currentAnimationTimeMillis() - start) / (float) JIGGLE_MS);
-            setRotation(JIGGLE_DEG * ramp * (float) Math.sin(2 * Math.PI * (float) a.getAnimatedValue()));
+        jiggle = new android.animation.TimeAnimator();
+        jiggle.setTimeListener((anim, total, delta) -> {
+            float ramp = Math.min(1f, total / (float) JIGGLE_MS);
+            setRotation(JIGGLE_DEG * ramp * (float) Math.sin(2 * Math.PI * total / JIGGLE_MS));
         });
         jiggle.start();
     }

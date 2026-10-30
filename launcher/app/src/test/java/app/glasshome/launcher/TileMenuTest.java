@@ -227,7 +227,7 @@ public class TileMenuTest {
                 TestHome.advance(16);
                 most = Math.max(most, Math.abs(tile(h).getRotation()));
             }
-            assertTrue("it rocks", most > 1f && most <= 1.7f);
+            assertTrue("it rocks: " + most, most > 1f && most <= 1.7f);
             h.press(KEYCODE_DPAD_CENTER);
             assertFalse(tile(h).isJiggling());
             assertEquals(0f, tile(h).getRotation(), 0.01f);

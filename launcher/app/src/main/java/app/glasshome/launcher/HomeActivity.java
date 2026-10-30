@@ -180,6 +180,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private ReorderMotion reorder;
     private HomeLayoutManager layoutManager;
     private long tileMenuShownAt;
+    /** Every app that can be opened, hidden from Home or not, by key. */
+    private Map<String, AppEntry> installed = new HashMap<>();
     /** Apps changed while a tile was being moved: loaded again once it is put down. */
     private boolean reloadAfterMove;
     /** Select held on a tile: it sinks a little before its menu opens. */
@@ -213,10 +215,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     };
 
     private final Runnable takeSnapshot = () -> {
-        if (!resumed || !showingHomeAsTheHomeButtonLeavesIt()) return;
+        if (!resumed || !homeAsTheHomeButtonLeavesIt()) return;
         HomeSnapshot.capture(this);
         snapshotDue = false;
+        snapshotStale = false;
     };
+    /** The tiles were rearranged since the snapshot was copied: it can't stand in for Home until copied again. */
+    private boolean snapshotStale;
     /** Home has been drawn since its snapshot was last copied (see {@link #snapshotLater}). */
     private boolean snapshotDue;
 
@@ -873,7 +878,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         final List<String> arranged = settings.appOrder();
         final Set<String> hiddenHere = settings.hiddenApps();
         worker.execute(() -> {
-            List<AppEntry> apps = AppRepository.load(this, config, arranged, hiddenHere);
+            // Hidden apps are only off Home: the browse pages still offer them to watch on
+            List<AppEntry> all = AppRepository.load(this, config, arranged, new HashSet<>());
+            Map<String, AppEntry> everyApp = new HashMap<>();
+            List<AppEntry> apps = new ArrayList<>();
+            for (AppEntry app : all) {
+                everyApp.put(app.key, app);
+                if (!hiddenHere.contains(app.key)) apps.add(app);
+            }
             for (AppEntry app : apps) {
                 app.art = ArtLoader.load(this, app, artWidth);
                 app.layers = ArtLoader.loadLayers(this, app, artWidth);
@@ -885,7 +897,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     reloadAfterMove = true;
                     return;
                 }
-                if (tileMenu.isOpen()) closeTileMenu(false, false);
+                // Rearranged or hidden meanwhile: this load's order is out of date
+                if (!arranged.equals(settings.appOrder()) || !hiddenHere.equals(settings.hiddenApps())) {
+                    loadApps();
+                    return;
+                }
+                if (tileMenu.isOpen() || adapter.menuKey() != null) {
+                    closeTileMenu(false, false);
+                    selectArmed = false;   // a press begun on the menu is no press on the tile
+                }
+                installed = everyApp;
                 boolean wasInGrid = zone() == Zone.GRID;
                 adapter.setApps(apps);
                 // If the remembered app is gone, or its row got shorter, land on the nearest one
@@ -925,14 +946,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Opens an app by its key, if it is installed. */
     private void launch(String key) {
-        int i = adapter.indexOf(key);
-        if (i >= 0) launch(adapter.get(i));
+        AppEntry app = installed.get(key);
+        if (app != null) launch(app);
     }
 
     private Set<String> installedKeys() {
-        Set<String> keys = new HashSet<>();
-        for (int i = 0; i < adapter.getItemCount(); i++) keys.add(adapter.get(i).key);
-        return keys;
+        return new HashSet<>(installed.keySet());
     }
 
     private static Map<String, String> appNames(Set<String> keys) {
@@ -1764,6 +1783,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         for (AppAdapter.Holder x : holders()) x.tile.setRole(TileView.NONE, animate);
         showFocusedName(animate);
         settings.setAppOrder(adapter.keys());
+        snapshotStale = true;
         movingId = RecyclerView.NO_ID;
         reorder.liftedId = RecyclerView.NO_ID;
         if (!animate) reorder.finishNow();
@@ -1780,6 +1800,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Leaving (the Home button, another app): a tile's menu closes and a moving tile is put down, at once. */
     private void dropArranging() {
         cancelPressIn();
+        if (tileMenu.isOpen()) selectArmed = false;
         if (tileMenu.isOpen() || adapter.menuKey() != null) closeTileMenu(false, false);
         if (moving != null) placeTile(false);
     }
@@ -1865,7 +1886,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Each Amazon app Fire OS turns back on is told once, when Home is free. */
     private final Runnable cleanupCheck = () -> worker.execute(() -> {
-        FireOsCleanup.Status status = FireOsCleanup.check(this);
+        FireOsCleanup.Status status = checkCleanup();
         main.post(() -> {
             cleanup = status;
             if (isDestroyed()) return;
@@ -1876,9 +1897,18 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         });
     });
 
+    /** Checks the Amazon apps, remembering those seen turned off. */
+    private FireOsCleanup.Status checkCleanup() {
+        Set<String> seen = settings.cleanupSeenOff();
+        int before = seen.size();
+        FireOsCleanup.Status status = FireOsCleanup.check(this, seen);
+        if (seen.size() != before) settings.setCleanupSeenOff(seen);
+        return status;
+    }
+
     /** What became of the Amazon apps turned off at setup; {@code asked} from Home Screen settings, looked at afresh. */
     private void showCleanup(boolean asked) {
-        if (asked || cleanup == null) cleanup = FireOsCleanup.check(this);
+        if (asked || cleanup == null) cleanup = checkCleanup();
         FireOsCleanup.Status status = cleanup;
         if (status.backOn.isEmpty()) {
             prompt.ask("Amazon apps are still off", status.off == 0
@@ -1895,7 +1925,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private String cleanupSummary() {
-        if (cleanup == null) cleanup = FireOsCleanup.check(this);
+        if (cleanup == null) cleanup = checkCleanup();
         if (!cleanup.backOn.isEmpty()) return cleanup.backOn.size() + " turned back on by Fire OS: select for more";
         return cleanup.off == 0 ? "None of them are on this TV" : "All " + cleanup.off + " are still off";
     }
@@ -2606,6 +2636,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * the apps), so a snapshot of it can stand in for Glass Home while Fire OS makes the trip.
      */
     private boolean showingHomeAsTheHomeButtonLeavesIt() {
+        return homeAsTheHomeButtonLeavesIt() && !snapshotStale;
+    }
+
+    private boolean homeAsTheHomeButtonLeavesIt() {
         return page == HOME && zone() == Zone.GRID && !barHidden && moving == null;
     }
 

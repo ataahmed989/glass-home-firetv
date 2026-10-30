@@ -63,7 +63,12 @@ final class FireOsCleanup {
         final List<String> backOn = new ArrayList<>();
     }
 
-    static Status check(Context context) {
+    /**
+     * {@code seenOff}: the apps Glass Home has seen turned off, added to here. Only those count as
+     * turned back on, so a TV never cleaned up (or turned back on on purpose, with restore.sh) is
+     * never told Fire OS did it.
+     */
+    static Status check(Context context, java.util.Set<String> seenOff) {
         PackageManager pm = context.getPackageManager();
         Status status = new Status();
         for (String pkg : PACKAGES) {
@@ -74,9 +79,10 @@ final class FireOsCleanup {
                 continue;
             }
             if (state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT || state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-                status.backOn.add(pkg);
+                if (seenOff.contains(pkg)) status.backOn.add(pkg);
             } else {
                 status.off++;
+                seenOff.add(pkg);
             }
         }
         return status;

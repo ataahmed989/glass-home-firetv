@@ -54,10 +54,20 @@ public class FireOsCleanupTest {
 
     @Test
     public void tellsOnceWhenFireOsTurnsThemBackOn() throws Exception {
-        install("com.amazon.bueller.photos", "Amazon Photos", PackageManager.COMPONENT_ENABLED_STATE_DEFAULT);
-        install("com.amazon.tv.ftvambient", "Ambient Experience", PackageManager.COMPONENT_ENABLED_STATE_ENABLED);
+        Application app = RuntimeEnvironment.getApplication();
+        PackageManager pm = app.getPackageManager();
+        // Off at setup, as Glass Home sees them
+        install("com.amazon.bueller.photos", "Amazon Photos", PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER);
+        install("com.amazon.tv.ftvambient", "Ambient Experience", PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER);
         install("com.amazon.dp.logger", "com.amazon.dp.logger", PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER);
-        FireOsCleanup.Status status = FireOsCleanup.check(RuntimeEnvironment.getApplication());
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        assertTrue(FireOsCleanup.check(app, seen).backOn.isEmpty());
+        assertEquals(3, seen.size());
+        new HomeSettings(app).setCleanupSeenOff(seen);
+        // Then a Fire OS update turns two back on
+        pm.setApplicationEnabledSetting("com.amazon.bueller.photos", PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, 0);
+        pm.setApplicationEnabledSetting("com.amazon.tv.ftvambient", PackageManager.COMPONENT_ENABLED_STATE_ENABLED, 0);
+        FireOsCleanup.Status status = FireOsCleanup.check(app, seen);
         assertEquals(1, status.off);
         assertEquals(Arrays.asList("com.amazon.bueller.photos", "com.amazon.tv.ftvambient"), status.backOn);
 
@@ -78,6 +88,21 @@ public class FireOsCleanupTest {
         // Told once: not again on coming back, until another comes back on
         h.controller.pause();
         h.controller.resume();
+        for (int i = 0; i < 60; i++) {
+            TestHome.advance(250);
+            Thread.sleep(10);
+        }
+        TestHome.settle();
+        assertFalse(prompt.isOpen());
+    }
+
+    /** A TV never cleaned up (or turned back on on purpose): nothing was seen off, so nothing is blamed on Fire OS. */
+    @Test
+    public void quietWhereTheyWereNeverSeenOff() throws Exception {
+        install("com.amazon.bueller.photos", "Amazon Photos", PackageManager.COMPONENT_ENABLED_STATE_DEFAULT);
+        assertTrue(FireOsCleanup.check(RuntimeEnvironment.getApplication(), new java.util.HashSet<>()).backOn.isEmpty());
+        TestHome h = new TestHome();
+        UpdatePrompt prompt = TestHome.find(h.activity.getWindow().getDecorView(), UpdatePrompt.class);
         for (int i = 0; i < 60; i++) {
             TestHome.advance(250);
             Thread.sleep(10);

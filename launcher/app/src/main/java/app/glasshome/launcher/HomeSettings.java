@@ -136,4 +136,14 @@ final class HomeSettings {
     void setCleanupNoticed(Set<String> packages) {
         prefs.edit().putString("cleanup_noticed", String.join(",", packages)).apply();
     }
+
+    /** The Amazon apps Glass Home has seen turned off: only these can be reported as turned back on. */
+    Set<String> cleanupSeenOff() {
+        String s = prefs.getString("cleanup_seen_off", "");
+        return s.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(Arrays.asList(s.split(",")));
+    }
+
+    void setCleanupSeenOff(Set<String> packages) {
+        prefs.edit().putString("cleanup_seen_off", String.join(",", packages)).apply();
+    }
 }

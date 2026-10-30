@@ -157,6 +157,19 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         });
     }
 
+    /**
+     * A cell back from the view cache isn't bound again: it takes up the tiles' current state here
+     * (a tile left receded while scrolled out of a move would otherwise stay small).
+     */
+    @Override
+    public void onViewAttachedToWindow(@NonNull Holder holder) {
+        int pos = holder.getBindingAdapterPosition();
+        if (pos == RecyclerView.NO_POSITION) return;
+        String key = apps.get(pos).key;
+        holder.tile.setRole(movingKey == null ? TileView.NONE : key.equals(movingKey) ? TileView.LIFTED : TileView.RECEDED, false);
+        holder.tile.setMenuState(key.equals(menuKey), menuKey != null && !key.equals(menuKey), false);
+    }
+
     @Override
     public void onViewRecycled(@NonNull Holder holder) {
         holder.itemView.setTranslationX(0f);
