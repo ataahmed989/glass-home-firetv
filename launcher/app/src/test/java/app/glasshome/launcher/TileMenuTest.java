@@ -263,25 +263,63 @@ public class TileMenuTest {
         }
     }
 
-    /** Frames of a move, for a clip: jiggling, one step right, then down a row. */
+    /**
+     * Each step glides, as on an iPhone: the tile and the one it passes start where they were,
+     * slide past each other and settle, and no frame jumps more than a sliver.
+     */
+    @Test
+    public void stepsGlideWithoutJumping() throws Exception {
+        TestHome h = new TestHome();
+        menu(h, "Move");
+        ReorderMotion.ticking = false;
+        try {
+            View moved = cell(h);
+            View next = h.grid.getLayoutManager().findViewByPosition(1);
+            float movedFrom = moved.getX(), nextFrom = next.getX();
+            pressAndWait(h, KEYCODE_DPAD_RIGHT, 16);
+            ReorderMotion motion = h.activity.reorderMotion();
+            motion.showAt(0);
+            assertEquals("it starts where it was", movedFrom, moved.getX(), 1f);
+            assertEquals("and so does the tile it passes", nextFrom, next.getX(), 1f);
+            float lastMoved = moved.getX(), lastNext = next.getX(), most = 0f;
+            for (int ms = 16; ms <= 1500; ms += 16) {
+                motion.showAt(ms);
+                most = Math.max(most, Math.max(Math.abs(moved.getX() - lastMoved), Math.abs(next.getX() - lastNext)));
+                lastMoved = moved.getX();
+                lastNext = next.getX();
+            }
+            assertEquals("it ends in its new place", moved.getLeft(), lastMoved, 1f);
+            assertEquals(next.getLeft(), lastNext, 1f);
+            assertTrue("no frame jumps: " + most + " px at most", most < Ui.px(Ui.COL_PITCH) / 9f);
+        } finally {
+            ReorderMotion.ticking = true;
+        }
+    }
+
+    /** Frames of a move, for a clip: jiggling, two steps right, then down a row, at 60 frames a second. */
     @Test
     public void recordAMove() throws Exception {
         org.junit.Assume.assumeTrue("only with -Pclip=true", Boolean.getBoolean("clip"));
         TestHome h = new TestHome();
         h.loadSampleWeather();
         menu(h, "Move");
-        // The jiggle stepped by hand, frame by frame (see TileView.jiggleEnabled)
-        int frame = 0;
-        long t = 0;
-        for (int step = 0; step < 4; step++) {
-            if (step == 1) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
-            if (step == 2) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
-            if (step == 3) pressAndWait(h, KEYCODE_DPAD_DOWN, 0);
-            for (int i = 0; i < 24; i++, t += 33) {
-                TestHome.advance(33);
-                tile(h).setRotation(TileView.jiggleAngle(t));
-                h.capture(String.format("clip/move-%03d.png", frame++));
+        // The glides and the jiggle stepped by hand, frame by frame (see ReorderMotion.ticking, TileView.jiggleEnabled)
+        ReorderMotion.ticking = false;
+        try {
+            ReorderMotion motion = h.activity.reorderMotion();
+            int[] keys = {0, KEYCODE_DPAD_RIGHT, KEYCODE_DPAD_RIGHT, KEYCODE_DPAD_DOWN, 0};
+            int frame = 0;
+            long t = 0;
+            for (int key : keys) {
+                if (key != 0) pressAndWait(h, key, 16);
+                for (int i = 0; i < 36; i++, t += 16) {
+                    motion.showAt(i * 16L);
+                    tile(h).setRotation(TileView.jiggleAngle(t));
+                    h.capture(String.format("clip/move-%03d.png", frame++));
+                }
             }
+        } finally {
+            ReorderMotion.ticking = true;
         }
     }
 

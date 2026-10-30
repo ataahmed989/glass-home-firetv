@@ -12,10 +12,10 @@ final class Spring {
     static final Spring MENU = new Spring(0.34f, 0.82f);
     /** The held tile rising to make room for its menu: a soft pop. */
     static final Spring POP = new Spring(0.32f, 0.72f);
-    /** Tiles sliding aside for one being moved, as icons do on an iPhone's home screen. */
-    static final Spring REORDER = new Spring(0.38f, 0.86f);
+    /** Tiles sliding aside for one being moved, as icons do on an iPhone's home screen: unhurried, no bounce to speak of. */
+    static final Spring REORDER = new Spring(0.48f, 0.92f);
     /** The tile being moved: a touch quicker than the others, so it leads them. */
-    static final Spring LIFT = new Spring(0.30f, 0.86f);
+    static final Spring LIFT = new Spring(0.42f, 0.94f);
 
     private final float w, z, wd;
 

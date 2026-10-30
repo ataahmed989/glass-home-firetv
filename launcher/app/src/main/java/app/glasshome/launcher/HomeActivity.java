@@ -1813,6 +1813,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return tileMenu;
     }
 
+    ReorderMotion reorderMotion() {
+        return reorder;
+    }
+
 
     private void hideApp(AppEntry app) {
         hidePrompt();

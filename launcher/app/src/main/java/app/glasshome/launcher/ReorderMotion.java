@@ -31,6 +31,13 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
     private final Map<Long, int[]> before = new HashMap<>();
     /** The order before the steps not yet laid out; null when there are none. */
     private List<Long> orderBefore;
+    /**
+     * Tests step the motion themselves ({@link #showAt}): Robolectric's clock runs every frame
+     * of an animation within one idle, so a frame mid-glide could not be drawn otherwise.
+     */
+    static boolean ticking = true;
+    /** When the latest glide began (animation clock). */
+    private long startedAt;
     /** On while apps are being arranged: only then are layouts turned into motion. */
     boolean active;
     long liftedId = RecyclerView.NO_ID;
@@ -88,7 +95,8 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
         }
         orderBefore = null;
         before.clear();
-        if (!tracks.isEmpty() && !ticker.isStarted()) ticker.start();
+        startedAt = now;
+        if (!tracks.isEmpty() && !ticker.isStarted() && ticking) ticker.start();
     }
 
     /** Where the first row was before these steps, from any cell laid out then. */
@@ -105,7 +113,7 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
     void kick(View cell, float vx, float vy) {
         if (Ui.reducedMotion || cell == null) return;
         retarget(cell, Spring.LIFT, 0, 0, vx, vy, AnimationUtils.currentAnimationTimeMillis());
-        if (!ticker.isStarted()) ticker.start();
+        if (!ticker.isStarted() && ticking) ticker.start();
     }
 
     /** Jumps the cell's track by (dx, dy), keeping where it is on screen this instant and how fast it is going. */
@@ -155,6 +163,17 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
         if (tracks.isEmpty()) {
             ticker.end();
             if (onIdle != null) onIdle.run();
+        }
+    }
+
+    /** Every cell where its glide puts it {@code ms} after the latest one began (tests; see {@link #ticking}). */
+    void showAt(long ms) {
+        long now = startedAt + ms;
+        for (Map.Entry<View, Track> e : tracks.entrySet()) {
+            Track t = e.getValue();
+            float s = Math.max(0, now - t.t0) / 1000f;
+            e.getKey().setTranslationX(t.spring.x(t.x0, t.vx, s));
+            e.getKey().setTranslationY(t.spring.x(t.y0, t.vy, s));
         }
     }
 
