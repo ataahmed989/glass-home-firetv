@@ -180,12 +180,18 @@ public class NavigationTest {
     public void selectActivatesOncePerPressEvenWhenHeld() throws Exception {
         TestHome h = new TestHome();
         h.press(KEYCODE_DPAD_DOWN);             // FirePlayer, first in the second row
-        h.hold(KEYCODE_DPAD_CENTER, 1500, 50);
+        // Held, but not long enough for the tile's menu: it opens once, on release
+        h.hold(KEYCODE_DPAD_CENTER, HomeActivity.TILE_HOLD_MS - 150, 50);
         ShadowActivity sa = shadowOf(h.activity);
         Intent started = sa.getNextStartedActivity();
         assertNotNull(started);
         assertEquals("app.fireplayer", started.getComponent().getPackageName());
         assertNull("one launch per press", sa.getNextStartedActivity());
+        // Held longer, the tile's menu opens instead, and nothing is launched
+        h.hold(KEYCODE_DPAD_CENTER, 1500, 50);
+        assertEquals(HomeActivity.Zone.TILE_MENU, h.zone());
+        assertNull(sa.getNextStartedActivity());
+        h.back();
         // A select whose press was cancelled does nothing
         long t = SystemClock.uptimeMillis();
         h.activity.dispatchKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KEYCODE_DPAD_CENTER, 0));
