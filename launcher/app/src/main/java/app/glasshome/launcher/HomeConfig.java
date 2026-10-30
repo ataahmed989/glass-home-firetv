@@ -50,7 +50,15 @@ final class HomeConfig {
         File[] custom = {new File(context.getFilesDir(), "apps.json"), external == null ? null : new File(external, "apps.json")};
         try {
             for (File f : custom) {
-                if (f != null && f.isFile()) return new HomeConfig(new JSONObject(read(new FileInputStream(f))));
+                if (f != null && f.isFile()) {
+                    HomeConfig config = new HomeConfig(new JSONObject(read(new FileInputStream(f))));
+                    try {
+                        config.placeNewApps(new HomeConfig(new JSONObject(read(context.getAssets().open("apps.json")))).order);
+                    } catch (Exception e) {
+                        // the copy's own order stands
+                    }
+                    return config;
+                }
             }
             return new HomeConfig(new JSONObject(read(context.getAssets().open("apps.json"))));
         } catch (Exception e) {
@@ -59,6 +67,27 @@ final class HomeConfig {
             } catch (Exception fatal) {
                 return new HomeConfig(new JSONObject());
             }
+        }
+    }
+
+    /**
+     * A copy's order dates from when it was written: apps the bundled order has gained since
+     * (SmartTube, after FirePlayer) take their place in it, after the app they follow there, rather
+     * than at the end with the apps nobody placed.
+     */
+    void placeNewApps(List<String> bundled) {
+        for (int i = 0; i < bundled.size(); i++) {
+            String app = bundled.get(i);
+            if (order.contains(app)) continue;
+            int at = 0;
+            for (int j = i - 1; j >= 0; j--) {
+                int k = order.indexOf(bundled.get(j));
+                if (k >= 0) {
+                    at = k + 1;
+                    break;
+                }
+            }
+            order.add(at, app);
         }
     }
 

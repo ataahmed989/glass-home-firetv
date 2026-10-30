@@ -102,12 +102,17 @@ final class AppRepository {
                 return new Intent("com.amazon.venezia.ade.FEATURED_LAUNCH").setPackage(pkg);
             case LIVE_TV:
                 return new Intent(Intent.ACTION_VIEW, Uri.parse("livetv://showEpg")).setPackage(pkg);
+            case SMARTTUBE:
+                // Its search screen is TV-launchable too: the tile opens the app itself
+                return new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
+                        .setClassName(pkg, "com.liskovsoft.smartyoutubetv2.tv.ui.main.SplashActivity");
             default:
                 return null;
         }
     }
 
     private static final String LIVE_TV = "com.amazon.tv.livetv";
+    private static final String SMARTTUBE = "org.smarttube.stable";
 
     /**
      * Fire TV's Settings. Android TV's settings intent opens Fire OS's settings screen directly, in
