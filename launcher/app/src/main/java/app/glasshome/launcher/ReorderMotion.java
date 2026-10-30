@@ -138,7 +138,7 @@ final class ReorderMotion implements TimeAnimator.TimeListener, HomeLayoutManage
     @Override
     public void onTimeUpdate(TimeAnimator animation, long totalTime, long deltaTime) {
         long now = AnimationUtils.currentAnimationTimeMillis();
-        float still = Ui.px(0.35f);
+        float still = Math.max(0.25f, Ui.pxf(0.35f));
         for (Iterator<Map.Entry<View, Track>> it = tracks.entrySet().iterator(); it.hasNext(); ) {
             Map.Entry<View, Track> e = it.next();
             Track t = e.getValue();

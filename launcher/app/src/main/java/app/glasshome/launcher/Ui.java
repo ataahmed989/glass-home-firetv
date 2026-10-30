@@ -71,6 +71,11 @@ final class Ui {
         scale = screenWidth / DESIGN_WIDTH;
     }
 
+    /** Design px to screen px, unrounded: for thresholds and fine strokes. */
+    static float pxf(float designPx) {
+        return designPx * scale;
+    }
+
     static int px(float designPx) {
         return Math.round(designPx * scale);
     }

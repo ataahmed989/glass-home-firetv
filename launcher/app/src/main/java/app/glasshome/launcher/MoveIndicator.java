@@ -36,10 +36,10 @@ final class MoveIndicator extends View {
         setFocusable(false);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         stroke.setStyle(Paint.Style.STROKE);
-        stroke.setStrokeWidth(Ui.px(3.5f));
+        stroke.setStrokeWidth(Ui.pxf(3.5f));
         stroke.setStrokeCap(Paint.Cap.ROUND);
         stroke.setStrokeJoin(Paint.Join.ROUND);
-        stroke.setShadowLayer(Ui.px(4.5f), 0, Ui.px(1.5f), 0x73000000);
+        stroke.setShadowLayer(Ui.pxf(4.5f), 0, Ui.pxf(1.5f), 0x73000000);
     }
 
     static int width() {

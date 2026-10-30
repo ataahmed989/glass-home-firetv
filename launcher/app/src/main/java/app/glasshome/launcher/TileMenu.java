@@ -258,7 +258,7 @@ final class TileMenu extends View {
             } else {
                 dot.setColor(glyphInk);
                 dot.setAlpha(alpha * Color.alpha(glyphInk) / 255);
-                for (int k = -1; k <= 1; k++) c.drawCircle(gx + k * Ui.px(6.5f), cy, Ui.px(2.2f), dot);
+                for (int k = -1; k <= 1; k++) c.drawCircle(gx + k * Ui.pxf(6.5f), cy, Ui.pxf(2.2f), dot);
             }
         }
     }
