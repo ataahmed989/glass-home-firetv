@@ -2008,7 +2008,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case MIRRORING:
                 // Fire TV's mirroring screen (open to other apps); failing that, Display & Sounds, where it can be enabled
-                SystemControls.open(this, SystemControls.mirroring(this), new Intent(android.provider.Settings.ACTION_DISPLAY_SETTINGS));
+                List<Intent> mirror = new ArrayList<>();
+                mirror.add(SystemControls.mirroring(this));
+                mirror.addAll(java.util.Arrays.asList(SystemControls.displaySettings()));
+                SystemControls.open(this, mirror.toArray(new Intent[0]));
                 return;
             case ACCESSIBILITY:
                 SystemControls.open(this, SystemControls.accessibilitySettings());

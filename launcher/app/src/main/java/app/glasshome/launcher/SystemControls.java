@@ -203,8 +203,17 @@ final class SystemControls {
                 new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)};
     }
 
+    /**
+     * "Display & Sounds". Android's display action reaches only Fire OS's empty stand-in, which
+     * closes straight away (as accessibility's does), so it is never used: Fire OS's own actions
+     * for the screen first, in the form of its Controllers and Accessibility ones, then Fire TV's
+     * main settings, where Display & Sounds is one row down.
+     */
     static Intent[] displaySettings() {
-        return new Intent[] {new Intent(Settings.ACTION_DISPLAY_SETTINGS)};
+        return new Intent[] {new Intent("com.amazon.device.settings.action.DISPLAY_AND_SOUNDS"),
+                new Intent("com.amazon.device.settings.action.DISPLAY_SOUNDS"),
+                new Intent("com.amazon.device.settings.action.DISPLAY"),
+                new Intent(Intent.ACTION_MAIN).addCategory("android.intent.category.LEANBACK_SETTINGS")};
     }
 
     /** Android's accessibility action reaches only Fire OS's empty stand-in, which closes straight away. */
@@ -220,7 +229,6 @@ final class SystemControls {
         return new Intent().setComponent(new ComponentName(MIRRORING_PACKAGE, MIRRORING_PACKAGE + ".DisplayMirroringSinkActivity"));
     }
 
-    /** Opens the first of these that exists, then Fire TV's main settings; false if none would open. */
     /** Memory free for apps and the TV's total, in bytes, as Fire OS counts them. */
     static long[] memory(Context c) {
         ActivityManager am = c.getSystemService(ActivityManager.class);
@@ -239,6 +247,7 @@ final class SystemControls {
         }
     }
 
+    /** Opens the first of these that exists, then Fire TV's main settings; false if none would open. */
     static boolean open(Context c, Intent... candidates) {
         HomeButtonService.opening(null);
         for (Intent i : candidates) {
