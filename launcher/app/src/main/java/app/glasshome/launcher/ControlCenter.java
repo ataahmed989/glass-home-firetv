@@ -65,6 +65,9 @@ final class ControlCenter extends View {
     private boolean canSleep;
     private String network = "", bluetooth = "";
     private int wifiBars = -1, timerMinutes;
+    // Free memory and storage at the foot, in bytes; none shown while memTotal is 0
+    private long memFree, memTotal, diskFree, diskTotal;
+    private final RectF stats = new RectF(0, 332, 318, 400);   // kit px: the 4×1 strip under the shortcuts
 
     ControlCenter(Context context, Glass glass) {
         super(context);
@@ -116,6 +119,19 @@ final class ControlCenter extends View {
         bluetooth = bluetoothStatus;
         timerMinutes = sleepMinutesLeft;
         invalidate();
+    }
+
+    /** Free memory and storage for the strip at the foot; a total of 0 leaves the strip out. */
+    void setStats(long memoryFree, long memoryTotal, long storageFree, long storageTotal) {
+        memFree = memoryFree;
+        memTotal = memoryTotal;
+        diskFree = storageFree;
+        diskTotal = storageTotal;
+        invalidate();
+    }
+
+    boolean showsStats() {
+        return memTotal > 0;
     }
 
     void setBluetooth(String status) {
@@ -229,12 +245,20 @@ final class ControlCenter extends View {
             if (item != focused) drawItem(c, item, 0f);
         }
         drawItem(c, focused, isFocused() ? focusT : 0f);
-        // The focused shortcut's name, under the row of circles
+        if (memTotal > 0) drawStats(c);
+        // The focused shortcut's name, under the row of circles; beside it while the strip is under them
         int i = focused.ordinal() - Item.MIRRORING.ordinal();
         if (i >= 0 && isFocused()) {
             RectF row = screenRect(Item.MIRRORING);
-            float centre = gridLeft + Ui.px(GRID_W * K) / 2f;
-            c.drawText(ROUND_NAMES[i], centre, row.bottom + Ui.px(22 * K), caption);
+            if (memTotal > 0) {
+                Paint.FontMetrics fm = caption.getFontMetrics();
+                caption.setTextAlign(Paint.Align.RIGHT);
+                c.drawText(ROUND_NAMES[i], gridLeft - Ui.px(16 * K), row.centerY() - (fm.ascent + fm.descent) / 2f, caption);
+                caption.setTextAlign(Paint.Align.CENTER);
+            } else {
+                float centre = gridLeft + Ui.px(GRID_W * K) / 2f;
+                c.drawText(ROUND_NAMES[i], centre, row.bottom + Ui.px(22 * K), caption);
+            }
         }
     }
 
@@ -280,6 +304,48 @@ final class ControlCenter extends View {
             c.drawText(TextUtils.ellipsize(text[1], detail, maxW, TextUtils.TruncateAt.END).toString(), box.left + pad, box.top + Ui.px(131.5f * K), detail);
         }
         c.restore();
+    }
+
+    /**
+     * Free memory and storage: one 4×1 glass strip under the shortcuts that takes no focus, each
+     * half a well with a ring filled as far as that space is used (blue, as the kit's wells are
+     * while something is on; orange past 90 %), then its name and what is free.
+     */
+    private void drawStats(Canvas c) {
+        RectF box = new RectF(gridLeft + Ui.px(stats.left * K), gridTop + Ui.px(stats.top * K),
+                gridLeft + Ui.px(stats.right * K), gridTop + Ui.px(stats.bottom * K));
+        glass.draw(c, box, box.height() / 2f, getLeft(), getTop(), 0f);
+        float half = box.width() / 2f;
+        drawMeter(c, box.left, box, half, "Memory", memFree, memTotal);
+        drawMeter(c, box.left + half, box, half, "Storage", diskFree, diskTotal);
+    }
+
+    private void drawMeter(Canvas c, float left, RectF box, float w, String name, long free, long total) {
+        float pad = Ui.px(14 * K), d = Ui.px(WELL * K);
+        well.set(left + pad, box.centerY() - d / 2f, left + pad + d, box.centerY() + d / 2f);
+        fill.setColor(0x0FFFFFFF);
+        c.drawOval(well, fill);
+        float stroke = Ui.px(4 * K), inset = Ui.px(9 * K);
+        RectF ring = new RectF(well.left + inset, well.top + inset, well.right - inset, well.bottom - inset);
+        glyph.setStrokeWidth(stroke);
+        glyph.setColor(0x33FFFFFF);
+        c.drawOval(ring, glyph);
+        float used = total <= 0 ? 0f : Math.max(0f, Math.min(1f, 1f - (float) free / total));
+        glyph.setColor(used > 0.9f ? 0xFFFF9F0A : ACCENT_BLUE);
+        if (used > 0f) c.drawArc(ring, -90f, Math.max(6f, 360f * used), false, glyph);
+        float tx = well.right + Ui.px(10 * K), maxW = left + w - Ui.px(8 * K) - tx;
+        title.setColor(0xFFFFFFFF);
+        detail.setColor(0x8CFFFFFF);
+        c.drawText(name, tx, box.top + Ui.px(30.5f * K), title);
+        c.drawText(TextUtils.ellipsize(gb(free) + " free", detail, maxW, TextUtils.TruncateAt.END).toString(),
+                tx, box.top + Ui.px(47.5f * K), detail);
+    }
+
+    /** Bytes as gigabytes, one decimal place (megabytes under 1 GB). */
+    static String gb(long bytes) {
+        double g = bytes / (1024.0 * 1024 * 1024);
+        if (g < 1) return Math.round(bytes / (1024.0 * 1024)) + " MB";
+        return (g >= 10 ? String.valueOf(Math.round(g)) : String.format(java.util.Locale.US, "%.1f", g)) + " GB";
     }
 
     /**

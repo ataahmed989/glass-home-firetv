@@ -77,9 +77,9 @@ public class SettingsTest {
         assertEquals("Tiles", h.panel.option(7).title);
         assertEquals("List", h.panel.option(8).title);
         assertFalse("Sleep's permission is not granted here", h.panel.option(9).enabled);
-        assertTrue("Updates, last", h.panel.option(13).action);
-        for (int i = 0; i < 16; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option, Updates, past those that can't be used", 13, h.panel.focusedIndex());
+        assertTrue("Updates, last", h.panel.option(17).action);
+        for (int i = 0; i < 20; i++) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("stops at the last option, Updates, past those that can't be used", 17, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 
@@ -167,11 +167,11 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Opens Glass Home", h.panel.option(10).title);
-        assertTrue(h.panel.option(10).enabled);
-        assertFalse(h.panel.option(10).checked);
-        while (h.panel.focusedIndex() < 10) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(10, h.panel.focusedIndex());
+        assertEquals("Opens Glass Home", h.panel.option(11).title);
+        assertTrue(h.panel.option(11).enabled);
+        assertFalse(h.panel.option(11).checked);
+        while (h.panel.focusedIndex() < 11) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(11, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
 
         assertTrue(new HomeSettings(app).homeButtonOpensGlassHome());
@@ -190,8 +190,8 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Clear Cache", h.panel.option(12).title);
-        while (h.panel.focusedIndex() < 12) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("Clear Cache", h.panel.option(15).title);
+        while (h.panel.focusedIndex() < 15) h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_CENTER);
         for (int i = 0; i < 5; i++) TestHome.settle();
         assertFalse(junk.exists());

@@ -53,7 +53,11 @@ final class SettingsPanel extends View {
         }
 
         static Option action(String section, String title, String subtitle) {
-            return new Option(false, true, section, title, subtitle, null, null, true, false);
+            return action(section, title, subtitle, true);
+        }
+
+        static Option action(String section, String title, String subtitle, boolean enabled) {
+            return new Option(false, true, section, title, subtitle, null, null, enabled, false);
         }
 
         static Option choice(String section, String title, String subtitle, String value, Bitmap thumb, boolean chosen) {

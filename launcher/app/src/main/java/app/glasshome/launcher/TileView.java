@@ -63,6 +63,8 @@ final class TileView extends View {
     private float focus;          // 0..1, eased with the focus transition
     private float tiltX, tiltY = REST_TILT_Y;   // -1..1, the sway after focus arrives
     private ValueAnimator focusAnimator, swayAnimator;
+    private android.animation.ObjectAnimator jiggle;
+    private boolean moving;
 
     TileView(Context context) {
         super(context);
@@ -118,6 +120,10 @@ final class TileView extends View {
     void resetFocusState() {
         animate().cancel();
         stopAnimators();
+        if (jiggle != null) jiggle.cancel();
+        jiggle = null;
+        moving = false;
+        setRotation(0f);
         boolean f = isFocused();
         float s = f ? Ui.FOCUS_SCALE : 1f;
         setScaleX(s);
@@ -257,6 +263,30 @@ final class TileView extends View {
         swayAnimator.start();
     }
 
+    /**
+     * Being moved (hold Select, Move): lifted a little higher, and jiggling as tvOS icons do while
+     * they are rearranged (held still with reduced motion).
+     */
+    void setMoving(boolean on) {
+        if (moving == on) return;
+        moving = on;
+        if (jiggle != null) jiggle.cancel();
+        jiggle = null;
+        float s = on ? Ui.FOCUS_SCALE + 0.05f : isFocused() ? Ui.FOCUS_SCALE : 1f;
+        animate().scaleX(s).scaleY(s).setDuration(Ui.reducedMotion ? 0 : Ui.FOCUS_MS).setInterpolator(Ui.EASE).start();
+        setRotation(0f);
+        if (!on || Ui.reducedMotion || !swayEnabled) return;
+        jiggle = android.animation.ObjectAnimator.ofFloat(this, ROTATION, -1.1f, 1.1f);
+        jiggle.setDuration(150);
+        jiggle.setRepeatMode(ValueAnimator.REVERSE);
+        jiggle.setRepeatCount(ValueAnimator.INFINITE);
+        jiggle.start();
+    }
+
+    boolean isMoving() {
+        return moving;
+    }
+
     private void stopAnimators() {
         if (focusAnimator != null) focusAnimator.cancel();
         if (swayAnimator != null) swayAnimator.cancel();
@@ -265,6 +295,7 @@ final class TileView extends View {
     @Override
     protected void onDetachedFromWindow() {
         stopAnimators();
+        if (jiggle != null) jiggle.cancel();
         super.onDetachedFromWindow();
     }
 }

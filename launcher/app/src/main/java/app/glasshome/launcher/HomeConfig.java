@@ -76,12 +76,17 @@ final class HomeConfig {
      * than at the end with the apps nobody placed.
      */
     void placeNewApps(List<String> bundled) {
-        for (int i = 0; i < bundled.size(); i++) {
-            String app = bundled.get(i);
+        placeNew(order, bundled);
+    }
+
+    /** Puts each of {@code from}'s keys missing from {@code order} after the one it follows in {@code from}. */
+    static void placeNew(List<String> order, List<String> from) {
+        for (int i = 0; i < from.size(); i++) {
+            String app = from.get(i);
             if (order.contains(app)) continue;
             int at = 0;
             for (int j = i - 1; j >= 0; j--) {
-                int k = order.indexOf(bundled.get(j));
+                int k = order.indexOf(from.get(j));
                 if (k >= 0) {
                     at = k + 1;
                     break;

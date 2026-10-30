@@ -31,6 +31,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -169,6 +170,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     // Menu went down here and is not yet up: acted on when it comes up, unless it was held (see dispatchKeyEvent)
     private boolean menuArmed;
     private long lastStepTime;
+    /** Holding Select this long on a tile brings up its menu (Move, Hide from Home, App Info). */
+    static final long TILE_HOLD_MS = 600;
+    /** The app whose tile is being moved (its menu's Move), or null. */
+    private String moving;
+    private MoveHint moveHint;
 
     private int appsGeneration;
     private int backdropGeneration;
@@ -336,7 +342,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Nothing open over Home, and Home in front: an update may be offered now. */
     private boolean homeIsFree() {
-        if (!resumed) return false;
+        if (!resumed || moving != null) return false;
         switch (zone()) {
             case OVERLAY:
             case SETTINGS:
@@ -553,6 +559,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         sources = new SourcesPanel(this, sourcesGlass);
         sources.setListener(this::onSource);
         root.addView(sources, match());
+        moveHint = new MoveHint(this, new Glass(config.blurGlass, 0xB31C1E23));
+        root.addView(moveHint, match());
         promptGlass = new Glass(config.blurGlass, 0xE62A2E36);
         prompt = new UpdatePrompt(this, promptGlass);
         root.addView(prompt, match());
@@ -836,8 +844,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void loadApps() {
         final int generation = ++appsGeneration;
         final int artWidth = Math.round(Ui.tileW() * Ui.FOCUS_SCALE);
+        final List<String> arranged = settings.appOrder();
+        final Set<String> hiddenHere = settings.hiddenApps();
         worker.execute(() -> {
-            List<AppEntry> apps = AppRepository.load(this, config);
+            List<AppEntry> apps = AppRepository.load(this, config, arranged, hiddenHere);
             for (AppEntry app : apps) {
                 app.art = ArtLoader.load(this, app, artWidth);
                 app.layers = ArtLoader.loadLayers(this, app, artWidth);
@@ -1480,6 +1490,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
                 sleepAvailable ? "Lets Control Center put the TV to sleep" : "Needs the Home service, set up over ADB",
                 sleepAvailable, SystemControls.canSleep(this)));
+        options.add(SettingsPanel.Option.toggle("CONTROL CENTER", MEMORY_ROW,
+                "Free memory and storage, under the shortcuts", true, settings.showSystemStats()));
         // Glass Home can turn its service back on itself when allowed to (see HomeServiceRecovery)
         boolean redirect = homeButtonServiceOn() || HomeServiceRecovery.allowed(this);
         options.add(SettingsPanel.Option.toggle("HOME BUTTON", "Opens Glass Home",
@@ -1492,8 +1504,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 !tivimate ? "TiviMate isn't installed" : hold ? "From any app; a short press works as usual"
                         : "Needs the Home service, set up over ADB",
                 hold, hold && settings.menuHoldOpensTiviMate()));
+        Set<String> hiddenHere = settings.hiddenApps();
+        options.add(SettingsPanel.Option.action("APPS", "Hidden Apps",
+                hiddenHere.isEmpty() ? "None. Hold Select on an app to hide it" : hiddenHere.size() + " hidden: select to show them again",
+                !hiddenHere.isEmpty()));
+        boolean arranged = !settings.appOrder().isEmpty();
+        options.add(SettingsPanel.Option.action("APPS", "Original Order",
+                arranged ? "Puts the apps back in Glass Home's order" : "Hold Select on an app to move it", arranged));
         options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache",
                 "Glass Home's saved pictures, pages and scores"));
+        options.add(SettingsPanel.Option.action("FIRE OS", "Amazon Apps Turned Off", cleanupSummary()));
         Updater.Release known = Updater.latest;
         options.add(SettingsPanel.Option.action("UPDATES", "Glass Home " + Updater.installedName(this),
                 Updater.isNewer(this, known) ? known.name + " is ready to install"
@@ -1525,12 +1545,206 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         focusCapsule();
     }
 
+    // ---- Arranging apps ---------------------------------------------------------------------
+
+    private static final String MEMORY_ROW = "Memory & Storage";
+
+    /** Held Select on a tile: what can be done with it, in a glass alert like the others. */
+    private void openTileMenu() {
+        int pos = focusedPosition();
+        if (pos == RecyclerView.NO_POSITION) return;
+        AppEntry app = adapter.get(pos);
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        labels.add("Move");
+        actions.add(() -> {
+            hidePrompt();
+            startMoving(app);
+        });
+        labels.add("Hide from Home");
+        actions.add(() -> hideApp(app));
+        if (!AppEntry.SETTINGS.equals(app.key)) {
+            labels.add("App Info");
+            actions.add(() -> openAppInfo(app));
+        }
+        labels.add("Cancel");
+        actions.add(this::hidePrompt);
+        prompt.ask(app.label, "", labels.toArray(new String[0]), actions.toArray(new Runnable[0]), null);
+        showPrompt();
+    }
+
+    private void startMoving(AppEntry app) {
+        moving = app.key;
+        adapter.setMoving(app.key);
+        RecyclerView.ViewHolder h = grid.findViewHolderForAdapterPosition(adapter.indexOf(app.key));
+        if (h != null) ((AppAdapter.Holder) h).tile.setMoving(true);
+        moveHint.show(app.label);
+    }
+
+    /** The arrows carry the tile along, the others making room; Left and Right go on round the rows' ends. */
+    private void moveTile(int direction) {
+        int from = adapter.indexOf(moving), count = adapter.getItemCount(), to = from;
+        if (from < 0) {
+            placeTile();
+            return;
+        }
+        switch (direction) {
+            case View.FOCUS_LEFT:
+                if (from > 0) to = from - 1;
+                break;
+            case View.FOCUS_RIGHT:
+                if (from + 1 < count) to = from + 1;
+                break;
+            case View.FOCUS_UP:
+                if (from >= Ui.COLUMNS) to = from - Ui.COLUMNS;
+                break;
+            default:
+                if (from + Ui.COLUMNS < count) to = from + Ui.COLUMNS;
+                else if (from / Ui.COLUMNS < (count - 1) / Ui.COLUMNS) to = count - 1;
+                break;
+        }
+        if (to == from) return;
+        adapter.move(from, to);
+        lastFocused = to;
+        if (to < Ui.COLUMNS) lastDockColumn = to;
+        focusGrid(to);
+    }
+
+    /** Puts the moving tile down where it is, and keeps the order. */
+    private void placeTile() {
+        moving = null;
+        adapter.setMoving(null);
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            RecyclerView.ViewHolder h = grid.getChildViewHolder(grid.getChildAt(i));
+            if (h instanceof AppAdapter.Holder) ((AppAdapter.Holder) h).tile.setMoving(false);
+        }
+        moveHint.hide();
+        settings.setAppOrder(adapter.keys());
+    }
+
+    boolean isMovingTile() {
+        return moving != null;
+    }
+
+    private void hideApp(AppEntry app) {
+        hidePrompt();
+        Set<String> hidden = settings.hiddenApps();
+        hidden.add(app.key);
+        settings.setHiddenApps(hidden);
+        loadApps();
+    }
+
+    /** Fire TV's page for the app: storage, clearing its cache or data, force stop, uninstall. */
+    private void openAppInfo(AppEntry app) {
+        hidePrompt();
+        SystemControls.open(this, new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.fromParts("package", app.key, null)));
+    }
+
+    /** The hidden apps, a few at a time, each with a button to put it back on Home. */
+    private void showHiddenApps() {
+        Set<String> hidden = settings.hiddenApps();
+        if (hidden.isEmpty()) {
+            restoreFocus();
+            return;
+        }
+        List<String> keys = new ArrayList<>(hidden);
+        int n = Math.min(keys.size(), 5);
+        String[] labels = new String[n + 1];
+        Runnable[] actions = new Runnable[n + 1];
+        for (int i = 0; i < n; i++) {
+            String key = keys.get(i);
+            labels[i] = "Show " + appLabel(key);
+            actions[i] = () -> {
+                Set<String> now = settings.hiddenApps();
+                now.remove(key);
+                settings.setHiddenApps(now);
+                loadApps();
+                if (now.isEmpty()) hidePrompt();
+                else showHiddenApps();
+            };
+        }
+        labels[n] = "Done";
+        actions[n] = this::hidePrompt;
+        prompt.ask("Hidden Apps", "Choose an app to put it back on Home.", labels, actions, null);
+        showPrompt();
+    }
+
+    private String appLabel(String key) {
+        if (AppEntry.SETTINGS.equals(key)) return "Settings";
+        try {
+            PackageManager pm = getPackageManager();
+            return pm.getApplicationLabel(pm.getApplicationInfo(key, 0)).toString();
+        } catch (PackageManager.NameNotFoundException e) {
+            return Brand.of(key, key).name;
+        }
+    }
+
+    private void askOriginalOrder() {
+        prompt.ask("Use the original order?", "The apps go back to Glass Home's order. Hidden apps stay hidden.",
+                new String[] {"Original Order", "Cancel"}, new Runnable[] {() -> {
+                    settings.setAppOrder(new ArrayList<>());
+                    loadApps();
+                    hidePrompt();
+                }, this::hidePrompt}, null);
+        showPrompt();
+    }
+
+    // ---- Fire OS cleanup --------------------------------------------------------------------
+
+    /** After the update check on coming back, so an update is offered first. */
+    static final long CLEANUP_CHECK_MS = UPDATE_CHECK_MS + 3000;
+    private FireOsCleanup.Status cleanup;
+
+    /** Each Amazon app Fire OS turns back on is told once, when Home is free. */
+    private final Runnable cleanupCheck = () -> worker.execute(() -> {
+        FireOsCleanup.Status status = FireOsCleanup.check(this);
+        main.post(() -> {
+            cleanup = status;
+            if (isDestroyed()) return;
+            Set<String> noticed = settings.cleanupNoticed();
+            // One turned off again since is told again, should it come back
+            if (noticed.retainAll(status.backOn)) settings.setCleanupNoticed(noticed);
+            if (!noticed.containsAll(status.backOn) && homeIsFree()) showCleanup(false);
+        });
+    });
+
+    /** What became of the Amazon apps turned off at setup; {@code asked} from Home Screen settings, looked at afresh. */
+    private void showCleanup(boolean asked) {
+        if (asked || cleanup == null) cleanup = FireOsCleanup.check(this);
+        FireOsCleanup.Status status = cleanup;
+        if (status.backOn.isEmpty()) {
+            prompt.ask("Amazon apps are still off", status.off == 0
+                            ? "None of the Amazon apps turned off at setup are on this TV."
+                            : "All " + status.off + " Amazon apps turned off at setup are still off.",
+                    new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
+        } else {
+            prompt.ask("Fire OS turned apps back on", "Fire OS has turned " + FireOsCleanup.describe(this, status.backOn)
+                            + " back on, as it can after an update. Glass Home can't turn them off itself: that takes ADB from a computer.",
+                    new String[] {"OK"}, new Runnable[] {this::hidePrompt}, null);
+            settings.setCleanupNoticed(new LinkedHashSet<>(status.backOn));
+        }
+        showPrompt();
+    }
+
+    private String cleanupSummary() {
+        if (cleanup == null) cleanup = FireOsCleanup.check(this);
+        if (!cleanup.backOn.isEmpty()) return cleanup.backOn.size() + " turned back on by Fire OS: select for more";
+        return cleanup.off == 0 ? "None of them are on this TV" : "All " + cleanup.off + " are still off";
+    }
+
     // ---- Control Center ---------------------------------------------------------------------
 
     private void openControlCenter() {
         control.setStatus(SystemControls.canSleep(this), SystemControls.networkStatus(this), SystemControls.wifiBars(this),
                 "", SystemControls.sleepMinutesLeft(this));
         SystemControls.bluetoothStatus(this, status -> main.post(() -> control.setBluetooth(status)));
+        if (settings.showSystemStats()) {
+            long[] m = SystemControls.memory(this), d = SystemControls.storage();
+            control.setStats(m[0], m[1], d[0], d[1]);
+        } else {
+            control.setStats(0, 0, 0, 0);
+        }
         control.reset();
         control.setVisibility(View.VISIBLE);
         control.setAlpha(Ui.reducedMotion ? 1f : 0f);
@@ -1622,6 +1836,21 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void onSettingChosen(SettingsPanel.Option option) {
+        if (option.action && option.section.equals("APPS")) {
+            closeSettings();
+            if (option.title.equals("Hidden Apps")) showHiddenApps();
+            else askOriginalOrder();
+            return;
+        }
+        if (option.action && option.section.equals("FIRE OS")) {
+            closeSettings();
+            showCleanup(true);
+            return;
+        }
+        if (option.toggle && MEMORY_ROW.equals(option.title)) {
+            settings.setShowSystemStats(option.checked);
+            return;
+        }
         if (option.action && option.section.equals("STORAGE")) {
             clearCache();
             return;
@@ -1749,7 +1978,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (isSelect(code)) {
             // Activate on release, once per press; holding Select does not repeat it
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (event.getRepeatCount() == 0) selectArmed = true;
+                if (event.getRepeatCount() == 0) {
+                    selectArmed = true;
+                } else if (selectArmed && moving == null && zone() == Zone.GRID
+                        && event.getEventTime() - event.getDownTime() >= TILE_HOLD_MS) {
+                    // Held on a tile: its menu, and the release that follows is no press
+                    selectArmed = false;
+                    openTileMenu();
+                }
             } else if (event.getAction() == KeyEvent.ACTION_UP) {
                 boolean fire = selectArmed && !event.isCanceled();
                 selectArmed = false;
@@ -1921,7 +2157,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 else if (direction == View.FOCUS_DOWN) prompt.move(1);
                 return;
             default:
-                moveInGrid(direction);
+                if (moving != null) moveTile(direction);
+                else moveInGrid(direction);
         }
     }
 
@@ -2006,6 +2243,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 openWidget(weather.focusedKind());
                 return;
             default:
+                if (moving != null) {
+                    placeTile();
+                    return;
+                }
                 int pos = focusedPosition();
                 if (pos != RecyclerView.NO_POSITION) onLaunch(adapter.get(pos), pos);
         }
@@ -2061,6 +2302,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 focusGrid(lastFocused);
                 return;
             default:
+                if (moving != null) {
+                    placeTile();
+                    return;
+                }
                 if (focusedPosition() >= Ui.COLUMNS) {
                     focusGrid(lastDockColumn);
                     return;
@@ -2105,6 +2350,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         // A newer Glass Home on GitHub: looked for once Home is up, and offered when nothing is open
         current = this;
         main.postDelayed(updateCheck, UPDATE_CHECK_MS);
+        main.removeCallbacks(cleanupCheck);
+        main.postDelayed(cleanupCheck, CLEANUP_CHECK_MS);
         main.removeCallbacks(offerPending);
         if (pendingUpdate != null) main.postDelayed(offerPending, UPDATE_CHECK_MS / 4);
         if (readyApk != null && !downloading && readyApk.isFile()) {
@@ -2144,6 +2391,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         setIntent(intent);
         if (!intent.getBooleanExtra(HomeButtonService.EXTRA_HOME_BUTTON, false)) return;
         cancelLinkWait();
+        if (moving != null) placeTile();
         // Everything changes at once, under the snapshot of Home that covers the trip back (see HomeSnapshot)
         if (panel.isOpen()) {
             panel.animate().cancel();
@@ -2197,6 +2445,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         clock.stop();
         main.removeCallbacks(resumeRefresh);
         main.removeCallbacks(updateCheck);
+        main.removeCallbacks(cleanupCheck);
         main.removeCallbacks(offerPending);
         resumed = false;
         inFront = false;
@@ -2212,6 +2461,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             HomeSnapshot.capture(this);
             snapshotDue = false;
         }
+        if (moving != null) placeTile();
         if (zone() != Zone.UPDATE) lastZone = zone();   // showPrompt kept the zone under the alert
         selectArmed = false;
         menuArmed = false;

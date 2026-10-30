@@ -22,6 +22,11 @@ final class AppRepository {
     private AppRepository() {}
 
     static List<AppEntry> load(Context context, HomeConfig config) {
+        return load(context, config, new ArrayList<>(), new HashSet<>());
+    }
+
+    /** With the order arranged on the TV ({@code arranged}, empty if never) and the apps hidden there. */
+    static List<AppEntry> load(Context context, HomeConfig config, List<String> arranged, Set<String> hidden) {
         PackageManager pm = context.getPackageManager();
         Map<String, ActivityInfo> launchable = new LinkedHashMap<>();
         Map<String, String> categories = new HashMap<>();
@@ -52,7 +57,22 @@ final class AppRepository {
         }
         extras.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
         apps.addAll(extras);
-        return apps;
+        return arrange(apps, arranged, hidden);
+    }
+
+    /**
+     * The order arranged on the TV, where there is one: apps installed since take their place after
+     * the app they follow in the usual order. Apps hidden on the TV are left out.
+     */
+    static List<AppEntry> arrange(List<AppEntry> apps, List<String> arranged, Set<String> hidden) {
+        Map<String, AppEntry> byKey = new LinkedHashMap<>();
+        for (AppEntry app : apps) byKey.put(app.key, app);
+        List<String> order = new ArrayList<>();
+        for (String key : arranged) if (byKey.containsKey(key) && !order.contains(key)) order.add(key);
+        HomeConfig.placeNew(order, new ArrayList<>(byKey.keySet()));
+        List<AppEntry> out = new ArrayList<>();
+        for (String key : order) if (!hidden.contains(key)) out.add(byKey.get(key));
+        return out;
     }
 
     private static void collect(PackageManager pm, String category, Map<String, ActivityInfo> into, Map<String, String> categories) {

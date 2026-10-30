@@ -37,6 +37,45 @@
         <package android:name="com.amazon.tv.livetv" />
         <!-- FirePlayer, whose title server is started again after Fire OS force-stops it -->
         <package android:name="app.fireplayer" />
+        <!-- The Amazon apps turned off at setup (firetv/disabled-packages.txt), watched in case Fire OS turns them back on -->
+        <package android:name="com.amazon.client.metrics.api" />
+        <package android:name="com.amazon.device.telemetry.emitter" />
+        <package android:name="com.amazon.dp.logger" />
+        <package android:name="com.amazon.ceviche" />
+        <package android:name="com.amazon.perfc" />
+        <package android:name="com.amazon.perfcollection" />
+        <package android:name="com.amazon.neo.minerva" />
+        <package android:name="com.amazon.neo.minerva.logcat" />
+        <package android:name="com.amazon.wirelessmetrics.service" />
+        <package android:name="com.amazon.kso.blackbird" />
+        <package android:name="com.amazon.hybridadidservice" />
+        <package android:name="com.amazon.tv.acr" />
+        <package android:name="com.amazon.bueller.photos" />
+        <package android:name="com.amazon.bueller.music" />
+        <package android:name="com.amazon.tv.ftvambient" />
+        <package android:name="com.amazon.sneakpeek" />
+        <package android:name="com.amazon.shoptv.client" />
+        <package android:name="com.amazon.shoptv.firetv.client" />
+        <package android:name="com.amazon.d3" />
+        <package android:name="com.amazon.logan" />
+        <package android:name="com.amazon.media.recommendations" />
+        <package android:name="com.amazon.minitv.android.app" />
+        <package android:name="com.amazon.gamehub" />
+        <package android:name="com.amazon.tv.earlyaccess" />
+        <package android:name="com.amazon.tv.releasenotes" />
+        <package android:name="com.amazon.storm.lightning.tutorial" />
+        <package android:name="com.amazon.tmm.tutorial" />
+        <package android:name="com.amazon.smarthomemapviewapp" />
+        <package android:name="com.android.protips" />
+        <package android:name="com.android.printservice.recommendation" />
+        <package android:name="com.amazon.tv.matter" />
+        <package android:name="com.amazon.tv.mattercohost" />
+        <package android:name="com.amazon.ods.kindleconnect" />
+        <package android:name="com.amazon.rtcsessioncontroller" />
+        <package android:name="com.amazon.tv.ffsprovisioneeclient" />
+        <package android:name="com.android.traceur" />
+        <package android:name="com.amazon.cloud9" />
+        <package android:name="com.amazon.tahoe" />
     </queries>
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

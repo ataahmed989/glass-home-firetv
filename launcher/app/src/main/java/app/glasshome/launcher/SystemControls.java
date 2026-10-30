@@ -1,5 +1,6 @@
 package app.glasshome.launcher;
 
+import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManager;
@@ -13,6 +14,8 @@ import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.wifi.WifiManager;
+import android.os.Environment;
+import android.os.StatFs;
 import android.provider.Settings;
 
 import java.util.List;
@@ -218,6 +221,24 @@ final class SystemControls {
     }
 
     /** Opens the first of these that exists, then Fire TV's main settings; false if none would open. */
+    /** Memory free for apps and the TV's total, in bytes, as Fire OS counts them. */
+    static long[] memory(Context c) {
+        ActivityManager am = c.getSystemService(ActivityManager.class);
+        ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+        if (am != null) am.getMemoryInfo(info);
+        return new long[] {info.availMem, info.totalMem};
+    }
+
+    /** Free and total storage for apps and their data, in bytes. */
+    static long[] storage() {
+        try {
+            StatFs fs = new StatFs(Environment.getDataDirectory().getPath());
+            return new long[] {fs.getAvailableBytes(), fs.getTotalBytes()};
+        } catch (IllegalArgumentException e) {
+            return new long[] {0, 0};
+        }
+    }
+
     static boolean open(Context c, Intent... candidates) {
         HomeButtonService.opening(null);
         for (Intent i : candidates) {

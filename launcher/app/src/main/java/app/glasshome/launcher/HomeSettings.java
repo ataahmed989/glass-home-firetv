@@ -3,6 +3,12 @@ package app.glasshome.launcher;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 /** The user's home-screen choices, kept on the device. */
 final class HomeSettings {
     private final SharedPreferences prefs;
@@ -90,5 +96,44 @@ final class HomeSettings {
 
     void setSleepAt(long millis) {
         prefs.edit().putLong("sleep_at", millis).apply();
+    }
+
+    /** The apps' order as last arranged on the TV (hold Select on a tile, Move); empty until then. */
+    List<String> appOrder() {
+        String s = prefs.getString("app_order", "");
+        return s.isEmpty() ? new ArrayList<>() : new ArrayList<>(Arrays.asList(s.split(",")));
+    }
+
+    void setAppOrder(List<String> keys) {
+        prefs.edit().putString("app_order", String.join(",", keys)).apply();
+    }
+
+    /** Apps hidden from Home on the TV (hold Select on a tile, Hide from Home). */
+    Set<String> hiddenApps() {
+        String s = prefs.getString("hidden_apps", "");
+        return s.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(Arrays.asList(s.split(",")));
+    }
+
+    void setHiddenApps(Set<String> keys) {
+        prefs.edit().putString("hidden_apps", String.join(",", keys)).apply();
+    }
+
+    /** Free memory and storage at the foot of Control Center; on unless turned off. */
+    boolean showSystemStats() {
+        return prefs.getBoolean("system_stats", true);
+    }
+
+    void setShowSystemStats(boolean on) {
+        prefs.edit().putBoolean("system_stats", on).apply();
+    }
+
+    /** The Amazon apps Fire OS had turned back on when the user was last told, so each change is told once. */
+    Set<String> cleanupNoticed() {
+        String s = prefs.getString("cleanup_noticed", "");
+        return s.isEmpty() ? new LinkedHashSet<>() : new LinkedHashSet<>(Arrays.asList(s.split(",")));
+    }
+
+    void setCleanupNoticed(Set<String> packages) {
+        prefs.edit().putString("cleanup_noticed", String.join(",", packages)).apply();
     }
 }

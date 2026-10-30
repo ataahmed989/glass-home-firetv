@@ -21,6 +21,8 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
     private final List<AppEntry> apps = new ArrayList<>();
     private final Listener listener;
+    /** The app being moved (hold Select, Move), or null. */
+    private String moving;
 
     AppAdapter(Listener listener) {
         this.listener = listener;
@@ -40,6 +42,23 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         apps.clear();
         apps.addAll(list);
         notifyDataSetChanged();
+    }
+
+    /** The apps' keys, in their order on Home. */
+    List<String> keys() {
+        List<String> keys = new ArrayList<>();
+        for (AppEntry app : apps) keys.add(app.key);
+        return keys;
+    }
+
+    /** Moves the app at {@code from} to {@code to}; its tile goes with it, keeping focus. */
+    void move(int from, int to) {
+        apps.add(to, apps.remove(from));
+        notifyItemMoved(from, to);
+    }
+
+    void setMoving(String key) {
+        moving = key;
     }
 
     @Override
@@ -93,6 +112,7 @@ final class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         holder.tile.setArt(app.art, app.layers);
         holder.tile.setContentDescription(app.label);
         holder.tile.resetFocusState();
+        if (app.key.equals(moving)) holder.tile.setMoving(true);
         holder.name.setText(app.label);
         holder.name.animate().cancel();
         holder.name.setAlpha(holder.tile.isFocused() ? 1f : 0f);
