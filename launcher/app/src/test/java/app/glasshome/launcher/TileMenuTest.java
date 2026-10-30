@@ -213,45 +213,44 @@ public class TileMenuTest {
         assertEquals(3, apps(again).indexOf(key));
     }
 
-    /** The tile being moved jiggles, as in iOS's jiggle mode, and stops once put down. */
+    /** The tile being moved jiggles, as in iOS's jiggle mode, and stops however it is put down. */
     @Test
-    public void theMovingTileJiggles() throws Exception {
+    public void theMovingTileJigglesUntilPutDown() throws Exception {
         TestHome h = new TestHome();
-        // A jiggling tile redraws Home every frame, which is slow here: fewer frames
-        org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(100));
-        TileView.jiggleEnabled = true;
-        try {
-            menu(h, "Move");
-            assertTrue(tile(h).isJiggling());
-            float most = 0f;
-            for (int i = 0; i < 8; i++) {
-                TestHome.advance(100);
-                most = Math.max(most, Math.abs(tile(h).getRotation()));
-            }
-            assertTrue("it rocks: " + most, most > 1f && most <= 1.7f);
-            h.press(KEYCODE_DPAD_CENTER);
-            assertStill(h);
-            // However it is put down: Back, ☰, the Home button, or another app coming in front
-            menu(h, "Move");
-            assertTrue(tile(h).isJiggling());
-            h.back();
-            assertStill(h);
-            menu(h, "Move");
-            h.menu();
-            assertStill(h);
-            h.back();
-            menu(h, "Move");
-            h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
-            TestHome.settle();
-            assertStill(h);
-            menu(h, "Move");
-            h.controller.pause();
-            TestHome.settle();
-            assertStill(h);
-            h.controller.resume();
-        } finally {
-            TileView.jiggleEnabled = false;
-        }
+        menu(h, "Move");
+        assertTrue(tile(h).isJiggling());
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertTrue("still jiggling as it goes", tile(h).isJiggling());
+        h.press(KEYCODE_DPAD_CENTER);
+        assertStill(h);
+        // Back, ☰, the Home button, or another app coming in front
+        menu(h, "Move");
+        assertTrue(tile(h).isJiggling());
+        h.back();
+        assertStill(h);
+        menu(h, "Move");
+        h.menu();
+        assertStill(h);
+        h.back();
+        menu(h, "Move");
+        h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
+        TestHome.settle();
+        assertStill(h);
+        menu(h, "Move");
+        h.controller.pause();
+        TestHome.settle();
+        assertStill(h);
+        h.controller.resume();
+    }
+
+    /** The jiggle: a quick rock of about 1.6°, easing in over its first wobble. */
+    @Test
+    public void theJiggle() {
+        assertEquals(0f, TileView.jiggleAngle(0), 0.001f);
+        float most = 0f;
+        for (long t = 0; t < 260; t += 5) assertTrue(Math.abs(TileView.jiggleAngle(t)) <= Math.abs(1.6f * t / 260f) + 0.001f);
+        for (long t = 260; t < 520; t += 5) most = Math.max(most, Math.abs(TileView.jiggleAngle(t)));
+        assertEquals(1.6f, most, 0.05f);
     }
 
     /** Put down: no tile jiggles any more, and every one is level. */
@@ -270,21 +269,19 @@ public class TileMenuTest {
         org.junit.Assume.assumeTrue("only with -Pclip=true", Boolean.getBoolean("clip"));
         TestHome h = new TestHome();
         h.loadSampleWeather();
-        TileView.jiggleEnabled = true;
-        try {
-            menu(h, "Move");
-            int frame = 0;
-            for (int step = 0; step < 4; step++) {
-                if (step == 1) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
-                if (step == 2) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
-                if (step == 3) pressAndWait(h, KEYCODE_DPAD_DOWN, 0);
-                for (int i = 0; i < 24; i++) {
-                    TestHome.advance(33);
-                    h.capture(String.format("clip/move-%03d.png", frame++));
-                }
+        menu(h, "Move");
+        // The jiggle stepped by hand, frame by frame (see TileView.jiggleEnabled)
+        int frame = 0;
+        long t = 0;
+        for (int step = 0; step < 4; step++) {
+            if (step == 1) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
+            if (step == 2) pressAndWait(h, KEYCODE_DPAD_RIGHT, 0);
+            if (step == 3) pressAndWait(h, KEYCODE_DPAD_DOWN, 0);
+            for (int i = 0; i < 24; i++, t += 33) {
+                TestHome.advance(33);
+                tile(h).setRotation(TileView.jiggleAngle(t));
+                h.capture(String.format("clip/move-%03d.png", frame++));
             }
-        } finally {
-            TileView.jiggleEnabled = false;
         }
     }
 

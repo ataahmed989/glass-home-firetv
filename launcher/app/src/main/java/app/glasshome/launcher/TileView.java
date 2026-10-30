@@ -42,7 +42,7 @@ final class TileView extends View {
 
     /** Tests switch the sway off, so every render shows the tile at rest. */
     static boolean swayEnabled = true;
-    /** Likewise the jiggle of a tile being moved. */
+    /** Likewise the jiggle's motion: it runs until the tile is put down, which a test's clock can't idle through. */
     static boolean jiggleEnabled = true;
     private static final float JIGGLE_DEG = 1.6f;   // iOS's jiggle, at the TV's distance
     private static final long JIGGLE_MS = 260;      // one full wobble
@@ -74,6 +74,7 @@ final class TileView extends View {
     private boolean menuRaised, menuDimmed, pressing;
     private android.animation.ObjectAnimator alphaAnim;
     private android.animation.TimeAnimator jiggle;
+    private boolean jiggling;
 
     TileView(Context context) {
         super(context);
@@ -328,22 +329,28 @@ final class TileView extends View {
      */
     private void startJiggle() {
         stopJiggle();
+        jiggling = true;
         if (Ui.reducedMotion || !jiggleEnabled) return;
         jiggle = new android.animation.TimeAnimator();
-        jiggle.setTimeListener((anim, total, delta) -> {
-            float ramp = Math.min(1f, total / (float) JIGGLE_MS);
-            setRotation(JIGGLE_DEG * ramp * (float) Math.sin(2 * Math.PI * total / JIGGLE_MS));
-        });
+        jiggle.setTimeListener((anim, total, delta) -> setRotation(jiggleAngle(total)));
         jiggle.start();
     }
 
+    /** The jiggle's angle {@code ms} after it began: a quick rock about the centre, easing in over the first wobble. */
+    static float jiggleAngle(long ms) {
+        float ramp = Math.min(1f, ms / (float) JIGGLE_MS);
+        return JIGGLE_DEG * ramp * (float) Math.sin(2 * Math.PI * ms / JIGGLE_MS);
+    }
+
     private void stopJiggle() {
+        jiggling = false;
         if (jiggle != null) jiggle.cancel();
         jiggle = null;
     }
 
+    /** Jiggling while it is being moved (whether or not the motion runs: none with reduced motion). */
     boolean isJiggling() {
-        return jiggle != null;
+        return jiggling;
     }
 
     /** The held tile rises for its menu ({@code raised}); the others dim while it is open. */
@@ -395,7 +402,9 @@ final class TileView extends View {
     protected void onDetachedFromWindow() {
         stopAnimators();
         if (alphaAnim != null) alphaAnim.cancel();
-        stopJiggle();
+        // Still being moved: the jiggle takes up again if the tile comes back
+        if (jiggle != null) jiggle.cancel();
+        jiggle = null;
         super.onDetachedFromWindow();
     }
 }
