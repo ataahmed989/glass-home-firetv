@@ -795,11 +795,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     // ---- Weather ----------------------------------------------------------------------------
 
+    /** A failed fetch is tried again a while later: one retry waiting at most, and only while Home is in front (onResume fetches again). */
+    private final Runnable weatherRetry = this::refreshWeather;
+
     private void refreshWeather() {
+        main.removeCallbacks(weatherRetry);
         network.execute(() -> {
             try {
                 Weather.Data data = Weather.fetch();
                 main.post(() -> {
+                    main.removeCallbacks(weatherRetry);
                     weather.setData(data);
                     detail.setData(data, false);
                 });
@@ -807,7 +812,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 main.post(() -> {
                     weather.setFailed();
                     detail.setData(weather.data(), weather.hasFailed());
-                    main.postDelayed(this::refreshWeather, WEATHER_RETRY_MS);
+                    main.removeCallbacks(weatherRetry);
+                    if (resumed) main.postDelayed(weatherRetry, WEATHER_RETRY_MS);
                 });
             }
         });
@@ -2696,6 +2702,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         // Nothing animates or polls while another app is in front
         main.removeCallbacks(advanceSlide);
         main.removeCallbacks(weatherTick);
+        main.removeCallbacks(weatherRetry);
         main.removeCallbacks(sportsTick);
         super.onPause();
     }
@@ -2749,6 +2756,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (current == this) current = null;
         main.removeCallbacks(collect);
         main.removeCallbacks(resumeRefresh);
+        main.removeCallbacks(weatherRetry);
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         worker.shutdownNow();
