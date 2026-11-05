@@ -18,7 +18,8 @@ import android.view.animation.PathInterpolator;
  * What holding Select on a tile brings up: a small glass card that unfolds from under the tile,
  * as wide as the tile, with two rows, their names centred: Move, and More Options (the full
  * menu). The focused row is a white pill that slides between them, as on the tab bar. The tile keeps focus; Up and Down
- * move the pill, Select chooses, Back folds the card away.
+ * move the pill, Select chooses, Back folds the card away. A Continue Watching card on Movies and
+ * TV Shows brings up the same card with rows of its own (Resume, Remove).
  */
 final class TileMenu extends View {
     static final String[] LABELS = {"Move", "More Options"};
@@ -34,7 +35,8 @@ final class TileMenu extends View {
     private float pillY, restX, restY;
     /** Milliseconds into the rows' reveal (240 when shown). */
     private float revealMs = 240;
-    private Runnable onMove, onMore;
+    private String[] labels = LABELS;
+    private Runnable[] actions = new Runnable[0];
     private ValueAnimator pillAnim, revealAnim;
     private ObjectAnimator alphaAnim;
 
@@ -76,6 +78,11 @@ final class TileMenu extends View {
         return focused;
     }
 
+    /** The rows it shows now. */
+    String[] labels() {
+        return labels;
+    }
+
     /** Where the card is on screen, for tests. */
     void cardBounds(RectF out) {
         out.set(restX, restY, restX + getWidth(), restY + getHeight());
@@ -90,8 +97,13 @@ final class TileMenu extends View {
      * it instead where there is no room below.
      */
     void show(float tileCx, float tileTop, float tileBottom, Runnable move, Runnable more) {
-        onMove = move;
-        onMore = more;
+        show(tileCx, tileTop, tileBottom, LABELS, new Runnable[] {move, more});
+    }
+
+    /** As above, with rows of its own: {@code labels[i]} runs {@code chosen[i]} (two rows, as the card is sized for). */
+    void show(float tileCx, float tileTop, float tileBottom, String[] labels, Runnable[] chosen) {
+        this.labels = labels;
+        actions = chosen;
         View parent = (View) getParent();
         int screenW = parent.getWidth(), screenH = parent.getHeight();
         float w = width(), h = height(), edge = Ui.px(EDGE);
@@ -139,7 +151,7 @@ final class TileMenu extends View {
     /** Up (-1) or Down (+1); nothing past the ends. */
     void move(int delta) {
         int to = focused + delta;
-        if (!open || to < 0 || to >= LABELS.length) return;
+        if (!open || to < 0 || to >= labels.length) return;
         focused = to;
         if (pillAnim != null) pillAnim.cancel();
         if (Ui.reducedMotion) {
@@ -158,7 +170,7 @@ final class TileMenu extends View {
 
     void choose() {
         if (!open) return;
-        Runnable then = focused == 0 ? onMove : onMore;
+        Runnable then = focused < actions.length ? actions[focused] : null;
         if (then != null) then.run();
     }
 
@@ -210,7 +222,7 @@ final class TileMenu extends View {
             c.drawRoundRect(r, row / 2f, row / 2f, pill);
         }
         Paint.FontMetrics fm = label.getFontMetrics();
-        for (int i = 0; i < LABELS.length; i++) {
+        for (int i = 0; i < labels.length; i++) {
             float shown = ease((revealMs - 60 - 40 * i) / 140f);
             if (shown <= 0f) continue;
             float top = rowY(i), dy = -Ui.px(6) * (1f - shown);
@@ -220,7 +232,7 @@ final class TileMenu extends View {
             label.setColor(ink);
             label.setAlpha(alpha * Color.alpha(ink) / 255);
             float cy = top + row / 2f + dy;
-            c.drawText(LABELS[i], getWidth() / 2f, cy - (fm.ascent + fm.descent) / 2f, label);
+            c.drawText(labels[i], getWidth() / 2f, cy - (fm.ascent + fm.descent) / 2f, label);
         }
     }
 

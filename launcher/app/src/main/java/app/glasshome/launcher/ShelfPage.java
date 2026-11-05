@@ -73,6 +73,17 @@ final class ShelfPage extends ViewGroup {
     private final ImageCache images;
     private Listener listener;
     private PageModel model;
+    /** Continue Watching, kept above the other shelves across refreshes (see {@link #setTopShelf}); or null. */
+    private PageModel.Shelf top;
+    // A card taken off the top shelf: it fades where it was while the cards after it close the gap
+    private PageModel.Card gone;
+    private int goneAt;
+    private float goneFocus, gapT = 1f;
+    private ValueAnimator gapAnim;
+    // A card's menu is open (see HomeActivity): the rest of the page dims back, the card's caption makes way
+    private float menuT;
+    private ValueAnimator menuAnim;
+    private static final float MENU_DIM = 0.5f;
     private String message = "";
     private long loadedAt;
 
@@ -164,6 +175,8 @@ final class ShelfPage extends ViewGroup {
         FeaturePainter.style(bigScore, context, 700, 44, 0xFFFFFFFF);
         bigScore.setTextAlign(Paint.Align.CENTER);
         FeaturePainter.style(chip, context, 700, 15, 0xFFFFFFFF);
+        FeaturePainter.style(titleCard, context, 600, 30, 0xE6FFFFFF);
+        titleCard.setTextAlign(Paint.Align.CENTER);
         chip.setLetterSpacing(0.06f);
         shadow.setColor(0xFF000000);
         rim.setStyle(Paint.Style.STROKE);
@@ -286,7 +299,9 @@ final class ShelfPage extends ViewGroup {
     /** New content; on a refresh the focused shelf and card stay where they were. */
     void setModel(PageModel m) {
         boolean first = model == null;
+        if (top != null && (m.shelves.isEmpty() || m.shelves.get(0) != top)) m.shelves.add(0, top);
         model = m;
+        endGap();
         message = "";
         loadedAt = Clock.now();
         // What the score cards show, worked out once per game here rather than on every frame
@@ -311,14 +326,7 @@ final class ShelfPage extends ViewGroup {
             }
         }
         layoutRows();
-        // A part per shelf, after the backdrop and the hero's text
-        if (getChildCount() > 2) removeViews(2, getChildCount() - 2);
-        rows = new Layer[n];
-        rowDrawn = new boolean[n];
-        for (int r = 0; r < n; r++) {
-            rows[r] = new Layer(r);
-            addView(rows[r]);
-        }
+        rebuildParts();
         if (hero >= m.hero.size()) hero = 0;
         heroFrom = -1;
         heroFade = 1f;
@@ -332,6 +340,203 @@ final class ShelfPage extends ViewGroup {
         applyScroll();
         invalidateAll();
         if (listener != null) listener.onHeroShown(this);
+    }
+
+    /** A part per shelf, after the backdrop and the hero's text. */
+    private void rebuildParts() {
+        int n = model.shelves.size();
+        if (getChildCount() > 2) removeViews(2, getChildCount() - 2);
+        rows = new Layer[n];
+        rowDrawn = new boolean[n];
+        for (int r = 0; r < n; r++) {
+            rows[r] = new Layer(r);
+            addView(rows[r]);
+        }
+        applyMenu();
+    }
+
+    /**
+     * Continue Watching, above the other shelves (null or empty: none), kept there when the page's
+     * content is refreshed. Focus stays on the shelf and card it was on: a card taken away has the
+     * cards after it close the gap, focus passing to the one that takes its place; the shelf taken
+     * away whole has the shelves below move up, focus passing to the next.
+     */
+    void setTopShelf(PageModel.Shelf s) {
+        if (s != null && s.cards.isEmpty()) s = null;
+        PageModel.Shelf old = top;
+        top = s;
+        if (model == null) return;
+        boolean had = old != null && !model.shelves.isEmpty() && model.shelves.get(0) == old;
+        if (had && s != null) {
+            replaceTop(old, s);
+            return;
+        }
+        if (!had && s == null) return;
+        endGap();
+        float h = rowHeight(had ? old : s);
+        int shift = had ? -1 : 1;
+        if (had) model.shelves.remove(0);
+        else model.shelves.add(0, s);
+        int n = model.shelves.size();
+        int[] oldCols = cols;
+        float[] oldX = rowX;
+        cols = new int[n];
+        rowX = new float[n];
+        for (int i = 0; i < n; i++) {
+            int from = i - shift;
+            if (from >= 0 && from < oldCols.length) {
+                cols[i] = oldCols[from];
+                rowX[i] = oldX[from];
+            }
+        }
+        layoutRows();
+        rebuildParts();
+        // The shelves' indices moved: what focus last grew is worked out afresh
+        prevRow = Integer.MIN_VALUE;
+        prevT = 0f;
+        if (row < 0) {
+            focusRow = Integer.MIN_VALUE;
+            markFocus(false);
+            applyScroll();
+            invalidateAll();
+            return;
+        }
+        boolean sameShelf = !had || row > 0;
+        if (!had) row++;
+        else if (row > 0) row--;
+        if (!focusable(row)) {
+            // The shelf that went was the only one
+            focusRow = Integer.MIN_VALUE;
+            setRow(model.hero.isEmpty() ? next(-1, 1) : -1);
+            invalidateAll();
+            return;
+        }
+        // The page stays still on screen, then the shelf below glides up into the place of one taken away
+        scrollY += shift * h;
+        if (sameShelf) {
+            focusRow = isFocused() ? row : Integer.MIN_VALUE;
+            focusCol = cols[row];
+        } else {
+            focusRow = Integer.MIN_VALUE;
+            markFocus(true);
+        }
+        animateScroll();
+        applyScroll();
+        invalidateAll();
+    }
+
+    /** The top shelf's cards changed; one taken away closes its gap. */
+    private void replaceTop(PageModel.Shelf old, PageModel.Shelf s) {
+        model.shelves.set(0, s);
+        endGap();
+        int k = removedIndex(old, s);
+        int col = cols[0];
+        String focusedId = col < old.cards.size() ? old.cards.get(col).id : null;
+        if (k >= 0 && !Ui.reducedMotion) {
+            gone = old.cards.get(k);
+            goneAt = k;
+            goneFocus = focusAmount(0, k);
+            gapT = 0f;
+            gapAnim = ValueAnimator.ofFloat(0f, 1f);
+            gapAnim.setDuration(Ui.SCROLL_MS);
+            gapAnim.setInterpolator(Ui.EASE);
+            gapAnim.addUpdateListener(a -> {
+                gapT = (float) a.getAnimatedValue();
+                if (gapT >= 1f) gone = null;
+                invalidateRow(0);
+            });
+            gapAnim.start();
+        }
+        if (k >= 0 && col > k) col--;
+        else if (k < 0) {
+            // Otherwise focus stays with its card, wherever that is now
+            for (int i = 0; focusedId != null && i < s.cards.size(); i++) if (focusedId.equals(s.cards.get(i).id)) col = i;
+        }
+        cols[0] = Math.max(0, Math.min(col, s.cards.size() - 1));
+        if (row == 0) {
+            if (!java.util.Objects.equals(focusedId, s.cards.get(cols[0]).id)) {
+                // The card in its place takes focus, growing in as the gap closes
+                focusRow = Integer.MIN_VALUE;
+                markFocus(true);
+            } else {
+                focusCol = cols[0];
+            }
+            setCol(cols[0]);
+        } else {
+            animateRow(0, Math.min(rowX[0], maxRowX(0)));
+        }
+        invalidateRow(0);
+    }
+
+    /** The index of the one card {@code s} lacks of {@code old}'s, the others the same in order; else -1. */
+    private static int removedIndex(PageModel.Shelf old, PageModel.Shelf s) {
+        if (old.cards.size() != s.cards.size() + 1) return -1;
+        int k = 0;
+        while (k < s.cards.size() && java.util.Objects.equals(old.cards.get(k).id, s.cards.get(k).id)) k++;
+        for (int i = k; i < s.cards.size(); i++) {
+            if (!java.util.Objects.equals(old.cards.get(i + 1).id, s.cards.get(i).id)) return -1;
+        }
+        return k;
+    }
+
+    private void endGap() {
+        if (gapAnim != null) gapAnim.cancel();
+        gone = null;
+        gapT = 1f;
+    }
+
+    /** The top shelf (Continue Watching), or null. */
+    PageModel.Shelf topShelf() {
+        return top;
+    }
+
+    /** The card focus is on, or null on the hero. */
+    PageModel.Card focusedCard() {
+        if (model == null || row < 0 || row >= model.shelves.size()) return null;
+        PageModel.Shelf s = model.shelves.get(row);
+        return cols[row] < s.cards.size() ? s.cards.get(cols[row]) : null;
+    }
+
+    /** Where the focused card is on screen, grown as focus grows it (for the menu held Select brings up); false on the hero. */
+    boolean focusedCardBounds(RectF out) {
+        if (focusedCard() == null) return false;
+        PageModel.Shelf s = model.shelves.get(row);
+        boolean poster = s.style == PageModel.Style.RANKED;
+        float w = Ui.px(poster ? POSTER_W : CARD_W), h = Ui.px(poster ? POSTER_H : CARD_H);
+        float x = Ui.px(LEFT) + cols[row] * pitch(s) - rowX[row] + (poster ? Ui.px(RANK_W) : 0);
+        float y = rowTop[row] - targetScroll() + Ui.px(TITLE_H);
+        float grow = (CARD_SCALE - 1f) * focusT / 2f;
+        out.set(x - w * grow, y - h * grow, x + w + w * grow, y + h + h * grow);
+        return true;
+    }
+
+    /** A card's menu opened or closed over the page: the rest dims back while it is open. */
+    void setMenuOpen(boolean open, boolean animate) {
+        if (menuAnim != null) menuAnim.cancel();
+        float to = open ? 1f : 0f;
+        if (!animate || Ui.reducedMotion) {
+            menuT = to;
+            applyMenu();
+            return;
+        }
+        menuAnim = ValueAnimator.ofFloat(menuT, to);
+        menuAnim.setDuration(Ui.FOCUS_MS);
+        menuAnim.setInterpolator(Ui.EASE);
+        menuAnim.addUpdateListener(a -> {
+            menuT = (float) a.getAnimatedValue();
+            applyMenu();
+        });
+        menuAnim.start();
+    }
+
+    /** Shelves other than the focused one dim as views (no drawing again); the focused one dims its other cards itself. */
+    private void applyMenu() {
+        for (int r = 0; r < rows.length; r++) rows[r].setAlpha(r == focusRow ? 1f : 1f - MENU_DIM * menuT);
+        invalidateRow(focusRow);
+    }
+
+    boolean menuOpen() {
+        return menuT > 0f;
     }
 
     void setMessage(String text) {
@@ -556,11 +761,13 @@ final class ShelfPage extends ViewGroup {
         int newCol = newRow >= 0 ? cols[newRow] : 0;
         if (newRow == focusRow && newCol == focusCol) return;
         if (newRow != focusRow) invalidate();   // the focused shelf draws last
+        boolean rowChanged = newRow != focusRow;
         prevRow = focusRow;
         prevCol = focusCol;
         prevT = focusT;
         focusRow = newRow;
         focusCol = newCol;
+        if (rowChanged && menuT > 0f) applyMenu();
         if (focusAnim != null) focusAnim.cancel();
         if (!animate || Ui.reducedMotion) {
             focusT = 1f;
@@ -663,6 +870,16 @@ final class ShelfPage extends ViewGroup {
         } else {
             painter.drawBackground(c, Backdrop.W, Backdrop.H, f, f == null ? null : images.peek(f.imageUrl, getWidth()));
         }
+        Backdrop.blur(small, Backdrop.RADIUS);
+        return small;
+    }
+
+    /** A small blurred copy of what is behind the shelves as they are now, for glass over them (a card's menu). */
+    Bitmap sceneBackdrop() {
+        Bitmap small = Bitmap.createBitmap(Backdrop.W, Backdrop.H, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(small);
+        if (getWidth() > 0 && getHeight() > 0) c.scale(Backdrop.W / (float) getWidth(), Backdrop.H / (float) getHeight());
+        drawBackdrop(c);
         Backdrop.blur(small, Backdrop.RADIUS);
         return small;
     }
@@ -867,21 +1084,39 @@ final class ShelfPage extends ViewGroup {
         c.drawText(s.title, Ui.px(LEFT), top + Ui.px(36), shelfTitle);
         float cardTop = top + Ui.px(TITLE_H);
         float pitch = pitch(s), focusedX = Float.NaN;
+        boolean closing = r == 0 && s == this.top && gone != null;
+        // While a card's menu is open, the shelf's other cards dim back
+        boolean dim = r == focusRow && menuT > 0f;
+        if (dim) c.saveLayerAlpha(0, 0, w, rows[r].getHeight(), Math.round(255 * (1f - MENU_DIM * menuT)));
+        if (closing) drawGone(c, s, Ui.px(LEFT) + goneAt * pitch - rowX[r], cardTop);
         int first = Math.max(0, (int) Math.floor((rowX[r] - Ui.px(LEFT)) / pitch) - 1);
         for (int i = first; i < s.cards.size(); i++) {
             float x = Ui.px(LEFT) + i * pitch - rowX[r];
+            if (closing && i >= goneAt) x += pitch * (1f - gapT);
             if (x > w) break;
             float t = focusAmount(r, i);
             if (r == focusRow && i == focusCol && t > 0f) {
                 focusedX = x;
                 continue;   // drawn last, above its neighbours
             }
-            drawCard(c, s, s.cards.get(i), x, cardTop, t);
+            drawCard(c, s, s.cards.get(i), x, cardTop, t, 1f);
         }
-        if (!Float.isNaN(focusedX)) drawCard(c, s, s.cards.get(focusCol), focusedX, cardTop, focusT);
+        if (dim) c.restore();
+        if (!Float.isNaN(focusedX)) drawCard(c, s, s.cards.get(focusCol), focusedX, cardTop, focusT, 1f - menuT);
         // Ask for the next card's artwork before it scrolls in
         int ahead = (int) ((rowX[r] + w) / pitch) + 1;
         if (ahead < s.cards.size()) prefetch(s, s.cards.get(ahead));
+    }
+
+    /** The card taken away, fading and shrinking a little where it was while the gap closes. */
+    private void drawGone(Canvas c, PageModel.Shelf s, float x, float top) {
+        float fade = Math.max(0f, 1f - gapT * 1.6f);
+        if (fade <= 0f) return;
+        float w = Ui.px(CARD_W), h = Ui.px(CARD_H), k = 1f - 0.12f * gapT;
+        int saved = c.saveLayerAlpha(x - w, top - h, x + 2 * w, top + 2 * h, Math.round(255 * fade));
+        c.scale(k, k, x + w / 2f, top + h / 2f);
+        drawCard(c, s, gone, x, top, goneFocus, 1f);
+        c.restoreToCount(saved);
     }
 
     private float focusAmount(int r, int i) {
@@ -898,7 +1133,8 @@ final class ShelfPage extends ViewGroup {
         return Math.round((s.style == PageModel.Style.RANKED ? Ui.px(POSTER_W) : Ui.px(CARD_W)) * CARD_SCALE);
     }
 
-    private void drawCard(Canvas c, PageModel.Shelf s, PageModel.Card card, float x, float top, float focus) {
+    /** One card at {@code x}, grown by {@code focus}; {@code captions} is how much its title and line underneath show. */
+    private void drawCard(Canvas c, PageModel.Shelf s, PageModel.Card card, float x, float top, float focus, float captions) {
         float w, h;
         float ix = x;
         if (s.style == PageModel.Style.RANKED) {
@@ -936,6 +1172,13 @@ final class ShelfPage extends ViewGroup {
             case SCORE:
                 drawScoreCard(c, card.game, w, h, r);
                 break;
+            case CONTINUE:
+                Bitmap b = card.imageUrl == null ? null : images.get(card.imageUrl, cardImageWidth(s), false, invalidator);
+                if (b != null) drawBitmap(c, b, rect, r);
+                else if (card.imageUrl != null) drawImage(c, null, rect, r, 0);   // its artwork is on the way
+                else drawTitleCard(c, card.title, w, h, r);
+                drawProgress(c, card.progress, w, h, r);
+                break;
             default:
                 drawImage(c, card.imageUrl, rect, r, cardImageWidth(s));
                 break;
@@ -951,12 +1194,54 @@ final class ShelfPage extends ViewGroup {
         rect.inset(in, in);
         c.drawRoundRect(rect, r - in, r - in, rim);
         c.restore();
+        if (captions <= 0f) return;
+        if (captions < 1f) {
+            cardTitle.setAlpha(Math.round(0xF2 * captions));
+            cardSub.setAlpha(Math.round(0x99 * captions));
+        }
         // Captions move down with the grown card instead of being covered by it
         float capTop = top + h + (scale - 1f) * h / 2f;
         c.drawText(TextUtils.ellipsize(card.title, cardTitle, w, TextUtils.TruncateAt.END).toString(), ix, capTop + Ui.px(34), cardTitle);
         if (!card.subtitle.isEmpty()) {
             c.drawText(TextUtils.ellipsize(card.subtitle, cardSub, w, TextUtils.TruncateAt.END).toString(), ix, capTop + Ui.px(62), cardSub);
         }
+        cardTitle.setAlpha(0xF2);
+        cardSub.setAlpha(0x99);
+    }
+
+    private final TextPaint titleCard = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint progressPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** A card with no artwork (FirePlayer couldn't match it on TMDB): its title, centred on graphite. */
+    private void drawTitleCard(Canvas c, String title, float w, float h, float radius) {
+        fill.setColor(0xFF000000);   // opaque: a shader takes the paint's alpha
+        fill.setShader(cached("titlecard" + h, () -> new LinearGradient(0, 0, w, h, 0xFF363A42, 0xFF1E2025, Shader.TileMode.CLAMP)));
+        c.drawRoundRect(rect, radius, radius, fill);
+        fill.setShader(null);
+        String t = TextUtils.ellipsize(title, titleCard, w - Ui.px(48), TextUtils.TruncateAt.END).toString();
+        c.drawText(t, w / 2f, h * 0.46f - (titleCard.ascent() + titleCard.descent()) / 2f, titleCard);
+    }
+
+    /**
+     * How far it has been watched: a thin white bar on a faint track near the card's foot, over a
+     * soft shade so it reads on bright artwork too.
+     */
+    private void drawProgress(Canvas c, float progress, float w, float h, float radius) {
+        if (progress < 0f) return;
+        progressPaint.setColor(0xFF000000);
+        progressPaint.setShader(cached("progressshade" + h, () -> new LinearGradient(0, h * 0.55f, 0, h,
+                0x00000000, 0x8C000000, Shader.TileMode.CLAMP)));
+        c.drawRoundRect(rect, radius, radius, progressPaint);
+        progressPaint.setShader(null);
+        float side = Ui.px(18), bar = Ui.px(6), bottom = h - Ui.px(16), track = w - 2 * side;
+        RectF r = chipBox;
+        r.set(side, bottom - bar, side + track, bottom);
+        progressPaint.setColor(0x59FFFFFF);
+        c.drawRoundRect(r, bar / 2f, bar / 2f, progressPaint);
+        r.right = side + Math.max(bar, track * progress);
+        progressPaint.setColor(0xF2FFFFFF);
+        c.drawRoundRect(r, bar / 2f, bar / 2f, progressPaint);
+        rect.set(0, 0, w, h);
     }
 
     private static final int SHADOW_BLUR = 26, SHADOW_DROP = 14;

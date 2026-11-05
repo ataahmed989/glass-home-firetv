@@ -136,8 +136,12 @@ final class Tmdb {
         String backdrop = clean(r.optString("backdrop_path", "")), poster = clean(r.optString("poster_path", ""));
         if (name.isEmpty() || (backdrop.isEmpty() && poster.isEmpty())) return null;
         JSONArray g = r.optJSONArray("genre_ids");
-        int[] genres = new int[g == null ? 0 : g.length()];
-        for (int i = 0; i < genres.length; i++) genres[i] = g.optInt(i);
+        JSONArray named = g == null ? r.optJSONArray("genres") : null;   // a details response names them
+        int[] genres = new int[g != null ? g.length() : named != null ? named.length() : 0];
+        for (int i = 0; i < genres.length; i++) {
+            JSONObject n = named == null ? null : named.optJSONObject(i);
+            genres[i] = g != null ? g.optInt(i) : n == null ? 0 : n.optInt("id");
+        }
         return new Title(r.optLong("id"), series, name, r.optString("overview", ""), backdrop, poster,
                 r.optString(series ? "first_air_date" : "release_date", ""), genres);
     }
@@ -149,9 +153,27 @@ final class Tmdb {
     /** Fills in the logo, length, rating, credits and where it streams. */
     Title details(Title t) throws Exception {
         if (t.detailed) return t;
-        String append = t.series ? "images,watch/providers,content_ratings,credits" : "images,watch/providers,release_dates,credits";
-        JSONObject d = get((t.series ? "tv/" : "movie/") + t.id,
-                "append_to_response=" + append + "&include_image_language=en,null", DETAIL_AGE);
+        fill(t, detailsOf(t.id, t.series));
+        return t;
+    }
+
+    /**
+     * A film or series by its TMDB id, with its details: the one request {@link #details} makes,
+     * so what one has fetched the other finds cached. Null if TMDB has no artwork for it.
+     */
+    Title byId(long id, boolean series) throws Exception {
+        JSONObject d = detailsOf(id, series);
+        Title t = parse(d, series);
+        if (t != null) fill(t, d);
+        return t;
+    }
+
+    private JSONObject detailsOf(long id, boolean series) throws Exception {
+        String append = series ? "images,watch/providers,content_ratings,credits" : "images,watch/providers,release_dates,credits";
+        return get((series ? "tv/" : "movie/") + id, "append_to_response=" + append + "&include_image_language=en,null", DETAIL_AGE);
+    }
+
+    private static void fill(Title t, JSONObject d) {
         t.logo = pickLogo(d.optJSONObject("images"));
         if (t.series) {
             t.seasons = d.optInt("number_of_seasons");
@@ -221,7 +243,6 @@ final class Tmdb {
             }
         }
         t.detailed = true;
-        return t;
     }
 
     /** An English title logo, if TMDB has one: Apple's pages show the title as artwork. */

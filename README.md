@@ -25,6 +25,10 @@ no ads and no sponsored rows.
 - **Movies and TV Shows** (TMDB): a hero carousel with title logos, Top 10, new arrivals, "Popular on …" for each streaming app installed, In Theaters and Coming Soon,
   Top Rated. Select opens a details page with where it streams; its "Open …" buttons go
   straight to the title's own page in that app (or to the app, where it has no link for it).
+- **Continue Watching** atop Movies (films) and TV Shows (one episode per show): what was played
+  in FirePlayer lately and not finished, from FirePlayer's content provider, with TMDB artwork,
+  how far it got and what is left. Select resumes it in FirePlayer where it was left; holding
+  Select offers Resume and Remove. No FirePlayer (or an older one): no row.
 - **Sports** (ESPN): Live Now, My Teams, and a row per league: NBA; the Premier League, La Liga,
   the Champions League, Ligue 1, the Bundesliga and MLS; the NFL, college football and basketball,
   men's tennis (ATP singles), NHL and MLB. Live scores, start times and the channel or app.

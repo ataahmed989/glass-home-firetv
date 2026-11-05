@@ -8,7 +8,8 @@ final class PageModel {
     enum Style {
         LANDSCAPE,  // 16:9 artwork, title and a detail line underneath
         RANKED,     // 2:3 poster beside a large rank number (Top 10)
-        SCORE       // a game: team colours, logos, score or start time
+        SCORE,      // a game: team colours, logos, score or start time
+        CONTINUE    // as LANDSCAPE, with how far it has been watched (FirePlayer's Continue Watching)
     }
 
     /** A button on the hero or on a detail page. */
@@ -48,6 +49,8 @@ final class PageModel {
         String imageUrl;          // backdrop (16:9) or poster (2:3)
         int rank;
         Sports.Game game;
+        String id;                // what it shows, where that outlives a refresh (Continue Watching's)
+        float progress = -1f;     // how far it has been watched, 0 to 1; -1 for none
         Object ref;
     }
 

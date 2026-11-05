@@ -120,6 +120,21 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private TabBar tabs;
     private final ShelfPage[] pages = new ShelfPage[4];   // index by tab; [HOME] stays null
     private final int[] pageGeneration = new int[4];
+    /** FirePlayer's Continue Watching, as last asked (main thread only); shown atop Movies and TV Shows. */
+    private List<ContinueWatching.Item> continueItems = new ArrayList<>();
+    private int continueGeneration;
+    /** Each entry's TMDB artwork by its key ("movie/…", "tv/…"): its address, or "" for none; and those being looked up. */
+    private final Map<String, String> continueArt = new HashMap<>();
+    private final Set<String> continueArtPending = new HashSet<>();
+    private ContinueWatching.Watcher continueWatcher;
+    /** FirePlayer's list changed: asked again a moment later, once whatever changed it has settled. */
+    private static final long CONTINUE_SETTLE_MS = 250;
+    private final Runnable continueChanged = () -> {
+        if (this.resumed && isContinuePage(this.page)) refreshContinue();
+    };
+    /** The page whose Continue Watching card has its menu open, and that card's entry; or null. */
+    private ShelfPage menuPage;
+    private ContinueWatching.Item menuItem;
     private DetailView titleDetail;
     private ControlCenter control;
     private Glass controlGlass, panelGlass, sourceGlass, sourcesGlass;
@@ -309,6 +324,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         getWindow().getDecorView().getViewTreeObserver().addOnDrawListener(() -> snapshotDue = true);
         loadProfile();
         loadApps();
+        // Anything FirePlayer adds or takes away while a page is shown comes straight to its row
+        continueWatcher = new ContinueWatching.Watcher(this, main, () -> {
+            main.removeCallbacks(continueChanged);
+            main.postDelayed(continueChanged, CONTINUE_SETTLE_MS);
+        });
 
         IntentFilter packages = new IntentFilter();
         packages.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -1106,6 +1126,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (sp.hasModel()) setBarBackdrop(sp.backdrop());
             if (!sp.hasModel() || sp.age() > (p == SPORTS ? SPORTS_LIVE_MS : CATALOG_REFRESH_MS)) loadPage(p);
             else if (p == SPORTS) scheduleSports();
+            if (isContinuePage(p)) refreshContinue();
         }
     }
 
@@ -1209,6 +1230,163 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             for (PageModel.Shelf s : m.shelves) for (PageModel.Card c : s.cards) live |= c.game != null && c.game.live();
         }
         main.postDelayed(sportsTick, live ? SPORTS_LIVE_MS : SPORTS_IDLE_MS);
+    }
+
+    // ---- Continue Watching ------------------------------------------------------------------
+
+    private static boolean isContinuePage(int p) {
+        return p == MOVIES || p == TV;
+    }
+
+    /**
+     * Asks FirePlayer for its Continue Watching (off the main thread: it is another app) and puts
+     * it atop Movies and TV Shows, then looks up the artwork of entries new to it. Asked when one of
+     * those pages is opened, when Glass Home comes back to it, and when FirePlayer says it changed;
+     * not otherwise, as asking starts FirePlayer if it isn't running, and this TV is short of memory.
+     */
+    private void refreshContinue() {
+        final int generation = ++continueGeneration;
+        continueWatcher.watch();   // FirePlayer may have come since it was last tried
+        runOff(worker, () -> {
+            List<ContinueWatching.Item> items = ContinueWatching.query(this);
+            main.post(() -> {
+                if (generation != continueGeneration || isDestroyed()) return;
+                showContinue(items);
+                lookUpContinueArt(items);
+            });
+        });
+    }
+
+    /** Runs {@code task} on {@code pool}, unless Glass Home is closing. */
+    private void runOff(ExecutorService pool, Runnable task) {
+        if (isDestroyed() || pool.isShutdown()) return;
+        try {
+            pool.execute(task);
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // closing
+        }
+    }
+
+    private void showContinue(List<ContinueWatching.Item> items) {
+        continueItems = items;
+        if (menuPage != null && indexOf(items, menuItem.id) < 0) closeTileMenu(true, false);   // gone from FirePlayer meanwhile
+        pages[MOVIES].setTopShelf(continueShelf(false));
+        pages[TV].setTopShelf(continueShelf(true));
+    }
+
+    /** The row for Movies (films) or, with {@code episodes}, TV Shows (one episode per show); null if there is none. */
+    private PageModel.Shelf continueShelf(boolean episodes) {
+        List<ContinueWatching.Item> items = ContinueWatching.of(continueItems, episodes);
+        if (items.isEmpty()) return null;
+        PageModel.Shelf s = new PageModel.Shelf("Continue Watching", PageModel.Style.CONTINUE);
+        for (ContinueWatching.Item item : items) {
+            PageModel.Card c = new PageModel.Card();
+            c.id = item.id;
+            c.title = item.title;
+            c.subtitle = item.caption();
+            c.progress = item.progress();
+            String art = item.artKey() == null ? null : continueArt.get(item.artKey());
+            c.imageUrl = art == null || art.isEmpty() ? null : art;
+            c.ref = item;
+            s.cards.add(c);
+        }
+        return s;
+    }
+
+    /** The backdrops of entries not seen before, from TMDB by their ids; the rows take them as they come. */
+    private void lookUpContinueArt(List<ContinueWatching.Item> items) {
+        if (config.tmdbApiKey.isEmpty()) return;
+        List<ContinueWatching.Item> missing = new ArrayList<>();
+        for (ContinueWatching.Item item : items) {
+            String key = item.artKey();
+            if (key != null && !continueArt.containsKey(key) && continueArtPending.add(key)) missing.add(item);
+        }
+        if (missing.isEmpty()) return;
+        runOff(pagesNet, () -> {
+            Tmdb tmdb = new Tmdb(this, config.tmdbApiKey);
+            Map<String, String> found = new HashMap<>();
+            for (ContinueWatching.Item item : missing) {
+                try {
+                    Tmdb.Title t = tmdb.byId(item.tmdbId, item.episode);
+                    String url = t == null ? null : t.backdropUrl("w780");
+                    found.put(item.artKey(), url == null ? "" : url);
+                } catch (Exception ignored) {
+                    // looked up again next time
+                }
+            }
+            main.post(() -> {
+                for (ContinueWatching.Item item : missing) continueArtPending.remove(item.artKey());
+                continueArt.putAll(found);
+                if (!found.isEmpty()) showContinue(continueItems);
+            });
+        });
+    }
+
+    /** Select on a Continue Watching card: FirePlayer's player, where it was left. */
+    private void resumeContinue(ContinueWatching.Item item) {
+        HomeButtonService.opening(FirePlayerTitles.PACKAGE);
+        try {
+            startActivity(ContinueWatching.resumeIntent(item.id), openingAnimation());
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Toast.makeText(this, "FirePlayer couldn't be opened", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Remove: the card goes at once (its row closes the gap), and FirePlayer is told. */
+    private void removeContinue(ContinueWatching.Item item) {
+        List<ContinueWatching.Item> rest = new ArrayList<>(continueItems);
+        int i = indexOf(rest, item.id);
+        if (i >= 0) rest.remove(i);
+        continueGeneration++;   // an answer on its way from before this would bring the card back
+        showContinue(rest);
+        runOff(worker, () -> ContinueWatching.delete(this, item.id));
+    }
+
+    private static int indexOf(List<ContinueWatching.Item> items, String id) {
+        for (int i = 0; i < items.size(); i++) if (items.get(i).id.equals(id)) return i;
+        return -1;
+    }
+
+    /** The Continue Watching entry under focus on the page shown, or null. */
+    private ContinueWatching.Item focusedContinueItem() {
+        ShelfPage sp = currentPage();
+        PageModel.Card card = sp == null ? null : sp.focusedCard();
+        return card != null && card.ref instanceof ContinueWatching.Item ? (ContinueWatching.Item) card.ref : null;
+    }
+
+    /**
+     * Held Select on a Continue Watching card: the same glass card as a tile's, unfolding under it,
+     * with Resume and Remove. The card keeps focus and the rest of the page dims back.
+     */
+    private void openCardMenu() {
+        ShelfPage sp = currentPage();
+        ContinueWatching.Item item = focusedContinueItem();
+        android.graphics.RectF card = new android.graphics.RectF();
+        if (item == null || !sp.focusedCardBounds(card)) return;
+        tileMenuShownAt = SystemClock.uptimeMillis();
+        menuArmed = false;
+        menuPage = sp;
+        menuItem = item;
+        sp.setMenuOpen(true, true);
+        // Its glass frosts the page behind it, not Home
+        menuGlass.setBackdrop(sp.sceneBackdrop(), screenW, screenH);
+        tileMenu.show(card.centerX(), card.top, card.bottom, new String[] {"Resume", "Remove"}, new Runnable[] {
+                () -> {
+                    closeTileMenu(true, false);
+                    resumeContinue(item);
+                },
+                () -> {
+                    closeTileMenu(true, false);
+                    removeContinue(item);
+                }});
+    }
+
+    private void closeCardMenu(boolean animate) {
+        tileMenu.dismiss(animate);
+        menuPage.setMenuOpen(false, animate);
+        menuPage = null;
+        menuItem = null;
+        if (homeBackdrop != null) menuGlass.setBackdrop(homeBackdrop, screenW, screenH);
     }
 
     /** While browsing the shelves, the tab bar and the capsule slide up out of the way. */
@@ -1327,6 +1505,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     public void onCard(ShelfPage source, PageModel.Shelf shelf, PageModel.Card card) {
+        if (card.ref instanceof ContinueWatching.Item) {
+            resumeContinue((ContinueWatching.Item) card.ref);
+            return;
+        }
         openDetails(source, card.ref);
     }
 
@@ -1753,6 +1935,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Folds a tile's menu away; the tile settles back (and its name returns unless it is to be moved). */
     private void closeTileMenu(boolean animate, boolean intoMove) {
+        if (menuPage != null) {
+            closeCardMenu(animate);
+            return;
+        }
         if (!tileMenu.isOpen() && adapter.menuKey() == null) return;
         tileMenu.dismiss(animate);
         adapter.setMenuKey(null);
@@ -1888,7 +2074,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void dropArranging() {
         cancelPressIn();
         if (tileMenu.isOpen()) selectArmed = false;
-        if (tileMenu.isOpen() || adapter.menuKey() != null) closeTileMenu(false, false);
+        if (tileMenu.isOpen() || adapter.menuKey() != null || menuPage != null) closeTileMenu(false, false);
         if (moving != null) placeTile(false);
     }
 
@@ -2289,6 +2475,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     selectArmed = false;
                     main.removeCallbacks(pressIn);
                     openTileMenu();
+                } else if (selectArmed && zone() == Zone.PAGE && focusedContinueItem() != null
+                        && event.getEventTime() - event.getDownTime() >= TILE_HOLD_MS) {
+                    // Likewise on a Continue Watching card (other cards keep their press on release)
+                    selectArmed = false;
+                    openCardMenu();
                 }
             } else if (event.getAction() == KeyEvent.ACTION_UP) {
                 boolean fire = selectArmed && !event.isCanceled();
@@ -2644,6 +2835,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Runnable resumeRefresh = () -> {
         if (!resumed || isFinishing() || isDestroyed()) return;
         if (page != HOME && pages[page].hasModel()) loadPage(page);
+        if (isContinuePage(page)) refreshContinue();
         refreshMyTeams();
         HomeServiceRecovery.restore(this);
     };
@@ -2889,6 +3081,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(weatherRetry);
         main.removeCallbacks(pauseSnapshot);
         main.removeCallbacks(gpuTrim);
+        main.removeCallbacks(continueChanged);
+        continueWatcher.stop();
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         worker.shutdownNow();
