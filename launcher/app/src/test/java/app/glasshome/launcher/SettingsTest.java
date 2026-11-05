@@ -77,9 +77,9 @@ public class SettingsTest {
         assertEquals("Tiles", h.panel.option(7).title);
         assertEquals("List", h.panel.option(8).title);
         assertFalse("Sleep's permission is not granted here", h.panel.option(9).enabled);
-        assertTrue("Updates, last", h.panel.option(17).action);
+        assertTrue("Updates, last", h.panel.option(18).action);
         for (int i = 0; i < 20; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option, Updates, past those that can't be used", 17, h.panel.focusedIndex());
+        assertEquals("stops at the last option, Updates, past those that can't be used", 18, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 
@@ -190,8 +190,8 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Clear Cache", h.panel.option(15).title);
-        while (h.panel.focusedIndex() < 15) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("Clear Cache", h.panel.option(16).title);
+        while (h.panel.focusedIndex() < 16) h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_CENTER);
         for (int i = 0; i < 5; i++) TestHome.settle();
         assertFalse(junk.exists());

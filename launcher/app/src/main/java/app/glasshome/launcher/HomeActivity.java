@@ -1567,6 +1567,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         boolean arranged = !settings.appOrder().isEmpty();
         options.add(SettingsPanel.Option.action("APPS", "Original Order",
                 arranged ? "Puts the apps back in Glass Home's order" : "Hold Select on an app to move it", arranged));
+        options.add(SettingsPanel.Option.action("STORAGE", FREE_MEMORY_ROW,
+                "Closes apps left running in the background; FirePlayer and TiviMate stay"));
         options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache",
                 "Glass Home's saved pictures, pages and scores"));
         options.add(SettingsPanel.Option.action("FIRE OS", "Amazon Apps Turned Off", cleanupSummary()));
@@ -1591,6 +1593,24 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (isDestroyed()) return;
                 Toast.makeText(this, freed > 0 ? "Cache cleared: " + CacheCleaner.size(freed) + " freed" : "The cache was already empty",
                         Toast.LENGTH_SHORT).show();
+            });
+        });
+    }
+
+    private static final String FREE_MEMORY_ROW = "Free Up Memory";
+
+    /** Closes the apps left in the background, and Glass Home lets go of the pages it isn't showing; says how much came free. */
+    private void freeMemory() {
+        for (int p = MOVIES; p <= SPORTS; p++) {
+            if (p != page) pages[p].trimMemory();
+        }
+        Toast.makeText(this, "Freeing up memory…", Toast.LENGTH_SHORT).show();
+        worker.execute(() -> {
+            long freed = MemoryCleaner.free(this);
+            main.post(() -> {
+                if (isDestroyed()) return;
+                Toast.makeText(this, freed >= 1024 * 1024 ? "Freed " + CacheCleaner.size(freed) + " of memory"
+                        : "Nothing else was taking up memory", Toast.LENGTH_SHORT).show();
             });
         });
     }
@@ -2053,6 +2073,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         if (option.toggle && MEMORY_ROW.equals(option.title)) {
             settings.setShowSystemStats(option.checked);
+            return;
+        }
+        if (option.action && FREE_MEMORY_ROW.equals(option.title)) {
+            freeMemory();
             return;
         }
         if (option.action && option.section.equals("STORAGE")) {
