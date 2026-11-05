@@ -1242,8 +1242,9 @@ final class ShelfPage extends ViewGroup {
     }
 
     /**
-     * How far it has been watched: a thin white bar on a faint track near the card's foot, over a
-     * soft shade so it reads on bright artwork too.
+     * How far it has been watched: a thin blue bar (Control Center's blue, lit a little brighter
+     * at its top edge, as glass catches light) on a faint frosted track near the card's foot, over
+     * a soft shade so it reads on bright artwork too.
      */
     private void drawProgress(Canvas c, float progress, float w, float h, float radius) {
         if (progress < 0f) return;
@@ -1258,8 +1259,12 @@ final class ShelfPage extends ViewGroup {
         progressPaint.setColor(0x59FFFFFF);
         c.drawRoundRect(r, bar / 2f, bar / 2f, progressPaint);
         r.right = side + Math.max(bar, track * progress);
-        progressPaint.setColor(0xF2FFFFFF);
+        final float top = r.top, foot = r.bottom;
+        progressPaint.setColor(0xFF000000);
+        progressPaint.setShader(cached("progressblue" + h, () -> new LinearGradient(0, top, 0, foot,
+                0xFF4DB0FF, 0xFF0088FF, Shader.TileMode.CLAMP)));
         c.drawRoundRect(r, bar / 2f, bar / 2f, progressPaint);
+        progressPaint.setShader(null);
         rect.set(0, 0, w, h);
     }
 
