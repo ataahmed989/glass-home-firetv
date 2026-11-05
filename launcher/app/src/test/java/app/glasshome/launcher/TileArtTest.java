@@ -1,7 +1,11 @@
 package app.glasshome.launcher;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.robolectric.Shadows.shadowOf;
 
@@ -9,6 +13,7 @@ import android.app.Application;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.net.Uri;
 import android.view.View;
 
 import org.junit.After;
@@ -20,9 +25,16 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.annotation.LooperMode;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
+
 /**
- * The tiles' art is kept small: a layered tile has no flat picture, and its layers are cut down (a
- * back of one colour kept as one pixel of it). None of it changes what a tile looks like.
+ * The tiles' art is kept small: a layered tile has no flat picture, its layers are cut down (a back
+ * of one colour kept as one pixel of it), and art decoded once is used again while nothing about it
+ * changed. None of it changes what a tile looks like.
  */
 @RunWith(RobolectricTestRunner.class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -99,5 +111,67 @@ public class TileArtTest {
         Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         tile.draw(new Canvas(out));
         return out;
+    }
+
+    /**
+     * A package broadcast decodes again only the app it names, and any app whose supplied art
+     * changed; the others keep the very art they had. So too while Home is out of sight.
+     */
+    @Test
+    public void aPackageBroadcastDecodesOnlyWhatChanged() throws Exception {
+        Application app = RuntimeEnvironment.getApplication();
+        // A sideloaded copy of one of Netflix's layers, so there is a file whose time can change
+        File custom = new File(app.getExternalFilesDir("icons"), "com.netflix.ninja.l1.png");
+        try (InputStream in = app.getAssets().open("icons/com.netflix.ninja.l1.png");
+                FileOutputStream out = new FileOutputStream(custom)) {
+            out.write(Net.readAll(in));
+        }
+        custom.setLastModified(1_700_000_000_000L);
+        TestHome h = new TestHome();
+        Map<String, TileLayers> before = layers(h);
+
+        broadcast(h, "com.disney.disneyplus");
+        Map<String, TileLayers> after = layers(h);
+        assertEquals(before.keySet(), after.keySet());
+        for (String key : before.keySet()) {
+            if (key.equals("com.disney.disneyplus")) assertNotSame("the app named is decoded again", before.get(key), after.get(key));
+            else assertSame(key + " is used as it was", before.get(key), after.get(key));
+        }
+
+        // Out of sight, with Netflix's sideloaded layer touched meanwhile
+        h.controller.pause().stop();
+        custom.setLastModified(1_700_000_100_000L);
+        broadcast(h, "com.hbo.hbonow");
+        Map<String, TileLayers> hidden = layers(h);
+        for (String key : after.keySet()) {
+            if (key.equals("com.hbo.hbonow") || key.equals("com.netflix.ninja")) {
+                assertNotSame(key + " is decoded again", after.get(key), hidden.get(key));
+            } else {
+                assertSame(key + " is used as it was", after.get(key), hidden.get(key));
+            }
+        }
+    }
+
+    private static Map<String, TileLayers> layers(TestHome h) {
+        AppAdapter apps = (AppAdapter) h.grid.getAdapter();
+        Map<String, TileLayers> out = new HashMap<>();
+        for (int i = 0; i < apps.getItemCount(); i++) {
+            AppEntry e = apps.get(i);
+            if (e.layers != null) out.put(e.key, e.layers);
+        }
+        return out;
+    }
+
+    /** Sends Fire OS's broadcast for {@code pkg} and waits for the apps it loads again. */
+    private static void broadcast(TestHome h, String pkg) throws Exception {
+        AppAdapter apps = (AppAdapter) h.grid.getAdapter();
+        AppEntry first = apps.get(0);
+        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_CHANGED, Uri.parse("package:" + pkg)));
+        for (int i = 0; i < 400 && apps.get(0) == first; i++) {
+            Thread.sleep(25);
+            TestHome.idle();
+        }
+        assertFalse("the apps were loaded again", apps.get(0) == first);
+        TestHome.settle();
     }
 }

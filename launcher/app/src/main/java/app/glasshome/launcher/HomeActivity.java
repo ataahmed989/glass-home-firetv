@@ -258,7 +258,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final BroadcastReceiver packageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            loadApps();
+            android.net.Uri data = intent.getData();
+            loadApps(data == null ? null : data.getSchemeSpecificPart());
         }
     };
 
@@ -882,7 +883,32 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     // ---- Apps -------------------------------------------------------------------------------
 
+    /** Tile art already decoded, by app key, with the stamp it was decoded under (worker thread only). */
+    private final Map<String, CachedArt> artCache = new HashMap<>();
+
+    private static final class CachedArt {
+        final Bitmap art;
+        final TileLayers layers;
+        final String stamp;
+
+        CachedArt(Bitmap art, TileLayers layers, String stamp) {
+            this.art = art;
+            this.layers = layers;
+            this.stamp = stamp;
+        }
+    }
+
     private void loadApps() {
+        loadApps(null);
+    }
+
+    /**
+     * Loads the apps and their tiles' art. Art decoded before is used again while its files, the
+     * app's name and its update time stay the same (see {@link ArtLoader#stamp}), so the broadcasts
+     * that come as apps update (during playback, often) decode only what changed; {@code changed}
+     * is the app a broadcast named, decoded again regardless, or null.
+     */
+    private void loadApps(String changed) {
         final int generation = ++appsGeneration;
         final int artWidth = Math.round(Ui.tileW() * Ui.FOCUS_SCALE);
         final List<String> arranged = settings.appOrder();
@@ -896,11 +922,23 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 everyApp.put(app.key, app);
                 if (!hiddenHere.contains(app.key)) apps.add(app);
             }
+            // The app a broadcast was about is decoded again whatever its stamp says
+            if (changed != null) artCache.remove(changed);
             for (AppEntry app : apps) {
+                String stamp = ArtLoader.stamp(this, app, artWidth);
+                CachedArt cached = artCache.get(app.key);
+                if (cached != null && cached.stamp.equals(stamp)) {
+                    app.layers = cached.layers;
+                    app.art = cached.art;
+                    continue;
+                }
                 // A layered tile never draws the flat picture: only apps without layers decode one
                 app.layers = ArtLoader.loadLayers(this, app, artWidth);
                 app.art = app.layers == null ? ArtLoader.load(this, app, artWidth) : null;
+                artCache.put(app.key, new CachedArt(app.art, app.layers, stamp));
             }
+            // Gone apps' art goes (never recycled: a tile still bound may be drawing it); hidden ones' stays
+            artCache.keySet().retainAll(everyApp.keySet());
             main.post(() -> {
                 if (generation != appsGeneration) return;
                 // Not under a tile being moved (the order loaded would undo the move): once it is put down

@@ -39,6 +39,31 @@ final class ArtLoader {
         return list.size() >= 2 ? TileLayers.of(list) : null;
     }
 
+    /**
+     * What the app's art is decoded from, as one string: the same while the size wanted, the supplied
+     * pictures (each file's time and length), the name and launch target (a banner's text and
+     * source) and the app's last update all stay the same.
+     */
+    static String stamp(Context context, AppEntry app, int targetWidth) {
+        StringBuilder s = new StringBuilder().append(targetWidth);
+        File dir = context.getExternalFilesDir("icons");
+        s.append('|').append(fileStamp(new File(dir, app.key + ".png")));
+        for (int i = 0; i < 4; i++) s.append('|').append(fileStamp(new File(dir, app.key + ".l" + i + ".png")));
+        ComponentName component = app.launchIntent == null ? null : app.launchIntent.getComponent();
+        s.append('|').append(app.label).append('|').append(component == null ? "" : component.flattenToShortString());
+        long updated = 0;
+        try {
+            updated = context.getPackageManager().getPackageInfo(app.key, 0).lastUpdateTime;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // Settings and similar entries have no package of their own
+        }
+        return s.append('|').append(updated).toString();
+    }
+
+    private static String fileStamp(File f) {
+        return f.isFile() ? f.lastModified() + ":" + f.length() : "x";
+    }
+
     static Bitmap load(Context context, AppEntry app, int targetWidth) {
         File custom = new File(context.getExternalFilesDir("icons"), app.key + ".png");
         Bitmap art = custom.isFile() ? decodeFile(custom, targetWidth) : null;
