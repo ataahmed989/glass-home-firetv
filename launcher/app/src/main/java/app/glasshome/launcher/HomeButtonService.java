@@ -272,6 +272,12 @@ public final class HomeButtonService extends AccessibilityService {
         s.handler.postDelayed(s.readyCover, COVER_READY_MS);
     }
 
+    /** The cover is up for a trip back to Glass Home (main thread). */
+    static boolean tripInProgress() {
+        HomeButtonService s = connected;
+        return s != null && (s.covering || s.homeCovering);
+    }
+
     static void snapshotChanged() {
         HomeButtonService s = connected;
         if (s == null || HomeSnapshot.latest() == null) return;

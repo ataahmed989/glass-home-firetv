@@ -57,6 +57,10 @@ final class WidgetPanel extends View {
 
     private final Glass glass;
     private final ImageCache images;
+    /** The team logos drawn last (as the image cache knows them), for {@link #warm}. */
+    private final String[] drawnLogos = new String[4];
+    private final int[] drawnLogoSizes = new int[4];
+    private int nextLogo;
     private final Runnable invalidator = this::invalidate;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint art = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -684,8 +688,20 @@ final class WidgetPanel extends View {
         c.drawText(team.score, cx, y, t);
     }
 
+    /** Adds the team logos last drawn, while the image cache still has them, to {@code out} (see HomeActivity#trimGpuCache). */
+    void warm(java.util.List<Bitmap> out) {
+        for (int i = 0; i < drawnLogos.length; i++) {
+            Bitmap b = images.peek(drawnLogos[i], drawnLogoSizes[i]);
+            if (b != null) out.add(b);
+        }
+    }
+
     private void drawLogo(Canvas c, String url, float cx, float cy, float size) {
-        Bitmap b = images.get(Sports.logo(url, 200), Math.round(size), true, invalidator);
+        String key = Sports.logo(url, 200);
+        drawnLogos[nextLogo] = key;
+        drawnLogoSizes[nextLogo] = Math.round(size);
+        nextLogo = (nextLogo + 1) % drawnLogos.length;
+        Bitmap b = images.get(key, Math.round(size), true, invalidator);
         if (b == null) return;
         float sc = size / Math.max(b.getWidth(), b.getHeight());
         box.set(cx - b.getWidth() * sc / 2f, cy - b.getHeight() * sc / 2f, cx + b.getWidth() * sc / 2f, cy + b.getHeight() * sc / 2f);

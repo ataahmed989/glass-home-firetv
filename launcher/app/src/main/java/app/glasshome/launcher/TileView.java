@@ -134,6 +134,18 @@ final class TileView extends View {
         invalidate();
     }
 
+    /** Adds the pictures this tile draws to {@code out} (see HomeActivity#trimGpuCache). */
+    void warm(java.util.List<Bitmap> out) {
+        if (layers != null) {
+            for (int i = 0; i < layers.layers.length; i++) {
+                out.add(layers.layers[i]);
+                if (layers.shadows[i] != null) out.add(layers.shadows[i]);
+            }
+        } else if (art != null) {
+            out.add(art);
+        }
+    }
+
     /** Puts a recycled tile back to its resting state without animating. */
     void resetFocusState() {
         animate().cancel();

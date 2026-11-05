@@ -65,6 +65,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private Runnable linkWait;
     /** How long after another app takes the screen Glass Home's given-up pictures are collected. */
     private static final long COLLECT_AFTER_MS = 10_000;
+    /**
+     * Behind another app, Glass Home's GPU cache is emptied of what it has not drawn lately (see
+     * {@link #trimGpuCache}). One switch: should the Home button come back slower for it, false.
+     */
+    static final boolean TRIM_GPU_WHEN_HIDDEN = true;
+    /** After the collection, once what it freed has gone unused for the GPU cache's 30 s, and a second more. */
+    static final long GPU_TRIM_AFTER_MS = COLLECT_AFTER_MS + 31_000;
     /** The cover over the trip back goes after this regardless (it also goes on any key). */
     private static final long SHOWN_FALLBACK_MS = 1500;
     /** Once the screen has been still this long (focus and the tile's sway settled), its frame is kept for the Home button. */
@@ -2792,6 +2799,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     protected void onStart() {
         super.onStart();
         main.removeCallbacks(collect);
+        main.removeCallbacks(gpuTrim);
     }
 
     /**
@@ -2810,6 +2818,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         titleDetail.trimMemory();
         main.removeCallbacks(collect);
         main.postDelayed(collect, COLLECT_AFTER_MS);
+        // Only from Home as it is with nothing open: what goes back on the GPU is what that draws
+        main.removeCallbacks(gpuTrim);
+        if (TRIM_GPU_WHEN_HIDDEN && page == HOME && !titleDetail.isOpen() && !panel.isOpen() && !control.isOpen()) {
+            main.postDelayed(gpuTrim, GPU_TRIM_AFTER_MS);
+        }
         HomeButtonService.glassHomeHidden();
     }
 
@@ -2818,6 +2831,42 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * app sitting idle behind another may not do for hours. Not at once: the app just opened is starting.
      */
     private final Runnable collect = () -> worker.execute(() -> Runtime.getRuntime().gc());
+
+    private final Runnable gpuTrim = this::trimGpuCache;
+    /** Tests stand in for the GPU here: given what would be put back on it. Null on the TV. */
+    static java.util.function.Consumer<List<Bitmap>> gpuTrimmer;
+
+    /**
+     * Nothing ever trims Glass Home's GPU cache behind another app (Fire OS sends no onTrimMemory,
+     * see onStop), so the textures of everything it once drew stay there, memory the app in front
+     * may need. Making and destroying a renderer of its own has HWUI let go of every resource unused
+     * for 30 s; what the way back to Home draws first (its snapshot, the background, the glass's
+     * backdrop, the tiles on screen, the widgets' logos, the avatar) is then put back at once, so
+     * the trip back has nothing to upload. Not the clock: the minute redraws it while hidden.
+     */
+    private void trimGpuCache() {
+        if (!stopped || resumed || isDestroyed() || HomeButtonService.tripInProgress()) return;
+        List<Bitmap> warm = new ArrayList<>();
+        warm.add(HomeSnapshot.latest());
+        HeroSlide slide = stage.current();
+        if (slide != null) warm.add(slide.background);
+        warm.add(homeBackdrop);
+        for (AppAdapter.Holder h : holders()) h.tile.warm(warm);
+        weather.warm(warm);
+        capsule.warm(warm);
+        List<Bitmap> drawn = new ArrayList<>();
+        for (Bitmap b : warm) if (b != null && !b.isRecycled() && !drawn.contains(b)) drawn.add(b);
+        if (gpuTrimmer != null) {
+            gpuTrimmer.accept(drawn);
+            return;
+        }
+        try {
+            new android.graphics.HardwareRenderer().destroy();
+        } catch (Throwable t) {
+            return;
+        }
+        for (Bitmap b : drawn) b.prepareToDraw();
+    }
 
     @Override
     public void onTrimMemory(int level) {
@@ -2839,6 +2888,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(resumeRefresh);
         main.removeCallbacks(weatherRetry);
         main.removeCallbacks(pauseSnapshot);
+        main.removeCallbacks(gpuTrim);
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         worker.shutdownNow();

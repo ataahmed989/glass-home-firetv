@@ -103,6 +103,11 @@ final class ClockCapsule extends View {
         focusAnim.start();
     }
 
+    /** Adds the avatar, if there is one, to {@code out} (see HomeActivity#trimGpuCache). */
+    void warm(java.util.List<Bitmap> out) {
+        if (avatar != null) out.add(avatar);
+    }
+
     void setProfile(Bitmap image, String fallbackInitial) {
         avatar = image;
         initial = fallbackInitial == null ? "" : fallbackInitial;

@@ -77,6 +77,7 @@ final class TestHome {
     TestHome(boolean withBackground, boolean withTmdb) throws Exception {
         TileView.swayEnabled = false;   // every render shows the focused tile at rest
         TileView.jiggleEnabled = false;
+        HomeActivity.gpuTrimmer = warm -> {};   // the JVM has no GPU cache to trim
         ImageCache.reset();
         Fixtures.install();
         Application app = RuntimeEnvironment.getApplication();
