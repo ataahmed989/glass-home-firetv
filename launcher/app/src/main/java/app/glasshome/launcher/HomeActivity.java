@@ -12,6 +12,10 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
@@ -247,14 +251,19 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     private final Runnable takeSnapshot = () -> {
         if (!resumed || !homeAsTheHomeButtonLeavesIt()) return;
+        snapshotSlide = stage.current();
         HomeSnapshot.capture(this);
         snapshotDue = false;
         snapshotStale = false;
     };
     /** Home's snapshot as Glass Home is paused, copied once onPause has returned (see onPause). */
     private final Runnable pauseSnapshot = () -> {
-        if (!stopped && !resumed) HomeSnapshot.capture(this);
+        if (stopped || resumed) return;
+        snapshotSlide = stage.current();
+        HomeSnapshot.capture(this);
     };
+    /** The slide on the stage when Home's snapshot was last copied (see {@link #retimeSnapshot}). */
+    private HeroSlide snapshotSlide;
     /** The tiles were rearranged since the snapshot was copied: it can't stand in for Home until copied again. */
     private boolean snapshotStale;
     /** Home has been drawn since its snapshot was last copied (see {@link #snapshotLater}). */
@@ -300,6 +309,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             capsule.updateTime();
             clock.timeChanged();
             weather.invalidate();   // re-checks staleness
+            retimeSnapshot();
         }
     };
 
@@ -342,6 +352,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         IntentFilter time = new IntentFilter(Intent.ACTION_TIME_TICK);
         time.addAction(Intent.ACTION_TIME_CHANGED);
         time.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+        time.addAction(Intent.ACTION_DATE_CHANGED);
         registerReceiver(timeReceiver, time);
     }
 
@@ -810,6 +821,121 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void snapshotLater(long ms) {
         main.removeCallbacks(takeSnapshot);
         main.postDelayed(takeSnapshot, ms);
+    }
+
+    /**
+     * The minute turned (or the time, the zone or the date changed): Home's snapshot shows the time
+     * again, so that the Home button's cover never brings back the time Home was left at (an hour
+     * old, after a film) only for the right one to fade in a second later. Behind another app nothing
+     * else copies it again; in front, with no slideshow and no key pressed, the next copy can be
+     * long in coming too, and the cover kept ready over Home shows the snapshot as it is.
+     *
+     * Only the clock and the capsule are drawn again, in software, into the snapshot itself: in each
+     * one's box the stage as it lies beneath (so no old digits remain), then the view as it is now,
+     * with whatever lies over the box (the tab bar, over the clock's) left as copied. The rest of the
+     * frame stays as copied. A few ms a minute; never while a cover is up for a trip, or a copy is
+     * being made into the frame, and only while Home is as the snapshot shows it (the same slide,
+     * settled). Each box is drawn into a copy of its own first: should anything fail, the snapshot
+     * stays as it was.
+     */
+    private void retimeSnapshot() {
+        if (isDestroyed() || HomeButtonService.tripInProgress()) return;
+        Bitmap shot = HomeSnapshot.drawable();
+        View decor = getWindow().peekDecorView();
+        if (shot == null || decor == null || shot.getWidth() != decor.getWidth() || shot.getHeight() != decor.getHeight()) return;
+        HeroSlide slide = stage.current();
+        if (slide == null || slide != snapshotSlide || stage.hiddenSlide() != null || !homeAsTheHomeButtonLeavesIt()) return;
+        try {
+            Rect clockBox = windowRect(clock), capsuleBox = windowRect(capsule);
+            if (capsule.isLayoutRequested()) {
+                // A time of another width: Glass Home out of sight lays nothing out, so the capsule is
+                // measured here as its parent would (by its right edge), and drawn over both its boxes
+                capsule.measure(View.MeasureSpec.makeMeasureSpec(decor.getWidth(), View.MeasureSpec.AT_MOST),
+                        View.MeasureSpec.makeMeasureSpec(capsule.getHeight(), View.MeasureSpec.EXACTLY));
+                capsule.layout(capsule.getRight() - capsule.getMeasuredWidth(), capsule.getTop(), capsule.getRight(), capsule.getBottom());
+                capsuleBox.union(windowRect(capsule));
+            }
+            Bitmap clockPatch = retimed(shot, clock, clockBox), capsulePatch = retimed(shot, capsule, capsuleBox);
+            if (clockPatch == null && capsulePatch == null) return;
+            Canvas c = new Canvas(shot);
+            Paint copy = new Paint();
+            copy.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC));
+            if (clockPatch != null) c.drawBitmap(clockPatch, clockBox.left, clockBox.top, copy);
+            if (capsulePatch != null) c.drawBitmap(capsulePatch, capsuleBox.left, capsuleBox.top, copy);
+            HomeSnapshot.redrawn();
+        } catch (RuntimeException | OutOfMemoryError e) {
+            // the snapshot stays as it was copied
+        }
+    }
+
+    /**
+     * {@code box} of the snapshot (window coordinates, clipped to the snapshot here) with {@code view}
+     * drawn again over the stage, and what lies over it as copied; null when something other than
+     * the stage lies beneath it, or something covers it whole.
+     */
+    private Bitmap retimed(Bitmap shot, View view, Rect box) {
+        ViewGroup root = (ViewGroup) view.getParent();
+        if (!shows(view) || view.getAlpha() != 1f || !box.intersect(0, 0, shot.getWidth(), shot.getHeight())) return null;
+        int index = root.indexOfChild(view);
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View other = root.getChildAt(i);
+            if (i == index || other == stage || !shows(other)) continue;
+            if (other == grid) {
+                // Only its cells: the rows above the dock are faded out, and the dock is far below
+                for (int j = 0; j < grid.getChildCount(); j++) {
+                    View cell = grid.getChildAt(j);
+                    if (i < index && shows(cell) && Rect.intersects(windowRect(cell), box)) return null;
+                }
+                continue;
+            }
+            Rect r = windowRect(other);
+            if (Rect.intersects(r, box) && (i < index || r.contains(box))) return null;
+        }
+        Bitmap patch = Bitmap.createBitmap(box.width(), box.height(), Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(patch);
+        c.translate(-box.left, -box.top);
+        c.drawBitmap(shot, 0, 0, null);
+        c.clipRect(box);
+        // What lies over the box stays as copied
+        for (int i = index + 1; i < root.getChildCount(); i++) {
+            View above = root.getChildAt(i);
+            if (!shows(above)) continue;
+            if (above == grid) {
+                for (int j = 0; j < grid.getChildCount(); j++) if (shows(grid.getChildAt(j))) c.clipOutRect(windowRect(grid.getChildAt(j)));
+            } else {
+                c.clipOutRect(windowRect(above));
+            }
+        }
+        if (root.getBackground() != null) drawAt(c, root, true);
+        drawAt(c, stage, false);
+        drawAt(c, view, false);
+        return patch;
+    }
+
+    /** {@code view}, or only its background, drawn where it is on screen. */
+    private static void drawAt(Canvas c, View view, boolean backgroundOnly) {
+        int[] at = new int[2];
+        view.getLocationInWindow(at);
+        int saved = c.save();
+        c.translate(at[0], at[1]);
+        if (backgroundOnly) {
+            view.getBackground().draw(c);
+        } else {
+            // A view in a layer of its own (the capsule) is drawn into one here too, then laid over what is beneath, as on screen
+            if (view.getLayerType() != View.LAYER_TYPE_NONE) c.saveLayer(0, 0, view.getWidth(), view.getHeight(), null);
+            view.draw(c);
+        }
+        c.restoreToCount(saved);
+    }
+
+    private static boolean shows(View v) {
+        return v.getVisibility() == View.VISIBLE && v.getAlpha() > 0f;
+    }
+
+    private static Rect windowRect(View v) {
+        int[] at = new int[2];
+        v.getLocationInWindow(at);
+        return new Rect(at[0], at[1], at[0] + v.getWidth(), at[1] + v.getHeight());
     }
 
     private void refreshHomeBackdrop() {

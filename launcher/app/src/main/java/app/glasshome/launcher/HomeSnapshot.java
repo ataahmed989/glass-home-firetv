@@ -15,19 +15,45 @@ import android.view.View;
  * through Amazon's home (a black screen while it starts) never shows.
  *
  * One full-size bitmap, rewritten in place: a frame partly replaced while it is on show differs
- * from the old one only where Home itself changed. Main thread only.
+ * from the old one only where Home itself changed. Between copies, the minute turning draws the
+ * clock and the capsule again into it (HomeActivity#retimeSnapshot). Main thread only.
  */
 final class HomeSnapshot {
     private static Bitmap frame;
     private static boolean copying, complete;
     /** Copies asked for so far, made or not (tests). */
     static int requests;
+    /** Times the clock and the capsule were drawn again into the frame (tests; see {@link #redrawn}). */
+    static int retimes;
 
     private HomeSnapshot() {}
 
     /** The latest complete frame, or null before the first copy. */
     static Bitmap latest() {
         return complete ? frame : null;
+    }
+
+    /**
+     * The latest complete frame, to be drawn into in place (see HomeActivity#retimeSnapshot); null
+     * while a copy is being made into it, or when it is not a bitmap that software can draw into.
+     */
+    static Bitmap drawable() {
+        Bitmap f = latest();
+        if (f == null || copying || f.isRecycled() || !f.isMutable() || f.getConfig() != Bitmap.Config.ARGB_8888) return null;
+        return f;
+    }
+
+    /** Parts of the frame were drawn again in place: onto the GPU again, and into the covers made ready. */
+    static void redrawn() {
+        retimes++;
+        frame.prepareToDraw();
+        HomeButtonService.snapshotChanged();
+    }
+
+    /** Tests start with no frame. */
+    static void forget() {
+        frame = null;
+        copying = complete = false;
     }
 
     /** Copies what the activity's window shows now. */

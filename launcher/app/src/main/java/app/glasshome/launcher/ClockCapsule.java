@@ -125,7 +125,10 @@ final class ClockCapsule extends View {
     }
 
     void updateTime() {
-        String now = DateFormat.getTimeFormat(getContext()).format(new Date());
+        // The same clock as Home's big one (see HomeClock#render)
+        java.text.DateFormat format = DateFormat.getTimeFormat(getContext());
+        format.setTimeZone(java.util.TimeZone.getTimeZone(Clock.zone()));
+        String now = format.format(new Date(Clock.now()));
         if (now.equals(time)) return;
         boolean widthChanged = timePaint.measureText(now) != timePaint.measureText(time);
         time = now;
