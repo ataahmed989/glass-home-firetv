@@ -9,6 +9,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.robolectric.Shadows.shadowOf;
@@ -123,6 +124,36 @@ public class SettingsTest {
         SharedPreferences prefs = h.activity.getSharedPreferences("home", 0);
         assertEquals("3-glow.jpg", prefs.getString("background", ""));
         h.capture("10-glow-appletv.png");
+    }
+
+    /** Once a change of background or slide has settled, the layer hidden beneath lets go of the old picture. */
+    @Test
+    public void theHiddenLayerLetsGoOfItsPicture() throws Exception {
+        TestHome h = new TestHome();
+        TestHome.settle();
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_CENTER);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);
+        TestHome.advance(Ui.CONTENT_FADE_MS + 100);
+        TestHome.settle();
+        assertTrue(h.panel.option(2).checked);
+        assertNull("the old background is let go", h.stage.hiddenSlide());
+
+        h.back();
+        h.back();
+        h.injectFeaturedSlide(h.focusedKey(), "Netflix");
+        TestHome.advance(Ui.CONTENT_FADE_MS + 100);
+        TestHome.settle();
+        assertTrue(h.stage.current().isFeatured());
+        assertNull(h.stage.hiddenSlide());
+        h.press(KEYCODE_DPAD_RIGHT);
+        TestHome.advance(Ui.HERO_DWELL_MS + Ui.CONTENT_FADE_MS + 100);
+        TestHome.settle();
+        assertFalse(h.stage.current().isFeatured());
+        assertNull("the featured title is let go", h.stage.hiddenSlide());
     }
 
     @Test

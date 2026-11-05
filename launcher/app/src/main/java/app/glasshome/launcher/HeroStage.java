@@ -2,7 +2,6 @@ package app.glasshome.launcher;
 
 import android.content.Context;
 import android.graphics.Rect;
-import android.view.View;
 import android.widget.FrameLayout;
 
 /**
@@ -54,14 +53,25 @@ final class HeroStage extends FrameLayout {
         front.bringToFront();
         if (fadeMs <= 0 || back.getSlide() == null) {
             front.setAlpha(1f);
-            back.setVisibility(INVISIBLE);
+            hide(back);
             return;
         }
         front.setAlpha(0f);
-        final View outgoing = back;
+        final HeroLayer outgoing = back;
         // withLayer: the slide is rendered once into a GPU layer and only its alpha changes per frame
         front.animate().alpha(1f).setDuration(fadeMs).withLayer()
-                .withEndAction(() -> { if (outgoing != front) outgoing.setVisibility(INVISIBLE); })
+                .withEndAction(() -> { if (outgoing != front) hide(outgoing); })
                 .start();
+    }
+
+    /** Hidden, a layer lets go of its slide too, so its picture (and that picture's copy on the GPU) can go. */
+    private static void hide(HeroLayer layer) {
+        layer.setVisibility(INVISIBLE);
+        layer.setSlide(null);
+    }
+
+    /** The hidden layer's slide: null once a change has settled (tests). */
+    HeroSlide hiddenSlide() {
+        return back.getSlide();
     }
 }
