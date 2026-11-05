@@ -3,12 +3,15 @@ package app.glasshome.launcher;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Application;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.RectF;
+import android.view.KeyEvent;
 import android.view.View;
 
 import org.junit.Test;
@@ -133,7 +136,48 @@ public class ClockTest {
     private static Bitmap clock(HeroSlide slide, Backgrounds.DepthMask mask, int w, int h) {
         HomeClock clock = new HomeClock(RuntimeEnvironment.getApplication());
         clock.setScreen(w, h);
-        clock.setSlide(slide, mask);
+        clock.setSlide(slide, mask, null);
         return clock.drawnBitmap();
+    }
+
+    /**
+     * From a featured title back to the background, the clock's frost and the glass's backdrop are
+     * the ones made with the background: nothing is worked out again, and the clock is as it was.
+     */
+    @Test
+    public void backFromAFeaturedTitleNothingIsWorkedOutAgain() throws Exception {
+        TestHome h = new TestHome();
+        TestHome.settle();
+        HomeClock clock = TestHome.find(h.activity.getWindow().getDecorView(), HomeClock.class);
+        Bitmap frost = clock.frost(), backdrop = h.activity.homeBackdrop();
+        assertNotNull(frost);
+        assertNotNull(backdrop);
+        Bitmap drawn = clock.drawnBitmap().copy(Bitmap.Config.ARGB_8888, false);
+
+        for (int key : new int[] {KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT}) {
+            h.injectFeaturedSlide(h.focusedKey(), "Netflix");
+            TestHome.settle();
+            assertTrue(h.stage.current().isFeatured());
+            assertNotSame(backdrop, h.activity.homeBackdrop());
+            h.press(key);
+            TestHome.advance(Ui.HERO_DWELL_MS + 50);
+            TestHome.settle();
+            assertFalse(h.stage.current().isFeatured());
+            assertSame("the background's own frost", frost, clock.frost());
+            assertSame("the background's own backdrop", backdrop, h.activity.homeBackdrop());
+            assertTrue("the clock as it was", clock.drawnBitmap().sameAs(drawn));
+        }
+
+        // Another background: its own
+        h.press(KeyEvent.KEYCODE_DPAD_UP);
+        h.press(KeyEvent.KEYCODE_DPAD_UP);
+        h.press(KeyEvent.KEYCODE_DPAD_RIGHT);
+        h.press(KeyEvent.KEYCODE_DPAD_CENTER);
+        h.press(KeyEvent.KEYCODE_DPAD_DOWN);
+        h.press(KeyEvent.KEYCODE_DPAD_CENTER);
+        TestHome.settle();
+        assertTrue(h.panel.option(2).checked);
+        assertNotSame(frost, clock.frost());
+        assertNotSame(backdrop, h.activity.homeBackdrop());
     }
 }

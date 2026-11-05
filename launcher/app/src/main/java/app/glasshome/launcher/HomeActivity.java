@@ -89,6 +89,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private Bitmap background;
     /** The background's depth mask, for the ones whose picture stands in front of the clock; else null. */
     private Backgrounds.DepthMask backgroundDepth;
+    /**
+     * Built with the background, once per choice: its slide, its glass backdrop and the clock's
+     * frost (the backdrop blurred again), so coming back to it from a featured title redraws nothing.
+     * Never recycled: the glass holds the backdrop.
+     */
+    private HeroSlide backgroundSlide;
+    private Bitmap backgroundSmall, backgroundFrost;
     private String backgroundName;
     private HomeClock clock;
     private final java.util.Map<String, Bitmap> thumbnails = new java.util.HashMap<>();
@@ -667,7 +674,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (background == null) return;   // still decoding: it shows once ready
         HeroSlide current = stage.current();
         if (current != null && !current.isFeatured() && current.background == background) return;
-        showSlide(HeroSlide.backdrop(background), Ui.CONTENT_FADE_MS);
+        showSlide(backgroundSlide, Ui.CONTENT_FADE_MS);
     }
 
     /** Decodes the chosen background off the main thread, then re-presents the current app over it. */
@@ -676,11 +683,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         worker.execute(() -> {
             Bitmap b = Backgrounds.decode(this, entry, screenW);
             Backgrounds.DepthMask depthMask = Backgrounds.depth(this, entry, HomeClock.frame(), screenW, screenH);
+            HeroSlide slide = b == null ? null : HeroSlide.backdrop(b);
+            Bitmap small = slide == null ? null : Backdrop.render(slide);
+            Bitmap frost = small == null ? null : HomeClock.frost(small);
             main.post(() -> {
                 Backgrounds.Entry chosen = Backgrounds.find(backgrounds, settings.backgroundName());
                 if (b == null || chosen == null || !chosen.name.equals(entry.name)) return;
                 background = b;
                 backgroundDepth = depthMask;
+                backgroundSlide = slide;
+                backgroundSmall = small;
+                backgroundFrost = frost;
                 backgroundName = entry.name;
                 // The browse pages settle on the same picture once their banner scrolls away
                 for (int p = MOVIES; p <= SPORTS; p++) pages[p].setHomeBackground(b);
@@ -741,6 +754,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return featuredGeneration;
     }
 
+    /** The backdrop the Home glass shows now (tests). */
+    Bitmap homeBackdrop() {
+        return homeBackdrop;
+    }
+
     private void scheduleSlides() {
         main.removeCallbacks(advanceSlide);
         if (resumed && page == HOME && !Ui.reducedMotion) main.postDelayed(advanceSlide, Ui.SLIDE_INTERVAL_MS);
@@ -749,7 +767,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Crossfades only the content; the glass picks up the new background once its blur is ready. */
     private void showSlide(HeroSlide slide, long fadeMs) {
         stage.show(slide, Ui.reducedMotion ? 0 : fadeMs);
-        clock.setSlide(slide, slide.background != null && slide.background == background ? backgroundDepth : null);
+        clock.setSlide(slide, slide.background != null && slide.background == background ? backgroundDepth : null,
+                slide == backgroundSlide ? backgroundFrost : null);
         refreshHomeBackdrop();
         // Home's snapshot follows the slideshow once the new slide has settled
         snapshotLater(fadeMs + SNAPSHOT_IDLE_MS);
@@ -768,20 +787,32 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         HeroSlide slide = stage.current();
         if (slide == null) return;
         final int generation = ++backdropGeneration;
+        // The background's own is ready-made: only another slide's is rendered
+        if (slide == backgroundSlide && backgroundSmall != null) {
+            Bitmap small = backgroundSmall;
+            main.post(() -> applyHomeBackdrop(small, generation));
+            return;
+        }
         worker.execute(() -> {
             Bitmap small = Backdrop.render(slide);
-            main.post(() -> {
-                if (generation != backdropGeneration) return;
-                dockGlass.setBackdrop(small, screenW, screenH);
-                menuGlass.setBackdrop(small, screenW, screenH);
-                tileMenu.invalidate();
-                weatherGlass.setBackdrop(small, screenW, screenH);
-                if (page == HOME) setBarBackdrop(small);
-                grid.invalidate();
-                weather.invalidate();
-                detail.invalidate();
-            });
+            main.post(() -> applyHomeBackdrop(small, generation));
         });
+    }
+
+    /** The backdrop the Home glass shows now. */
+    private Bitmap homeBackdrop;
+
+    private void applyHomeBackdrop(Bitmap small, int generation) {
+        if (generation != backdropGeneration) return;
+        homeBackdrop = small;
+        dockGlass.setBackdrop(small, screenW, screenH);
+        menuGlass.setBackdrop(small, screenW, screenH);
+        tileMenu.invalidate();
+        weatherGlass.setBackdrop(small, screenW, screenH);
+        if (page == HOME) setBarBackdrop(small);
+        grid.invalidate();
+        weather.invalidate();
+        detail.invalidate();
     }
 
     /** The tab bar and the capsule sample whatever page is behind them. */
@@ -2142,7 +2173,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             return;
         } else {
             settings.setBackground(option.value);
-            if (!option.value.equals(backgroundName)) background = null;
+            if (!option.value.equals(backgroundName)) {
+                background = null;
+                backgroundSlide = null;
+                backgroundSmall = backgroundFrost = null;
+            }
         }
         representCurrentApp();
     }

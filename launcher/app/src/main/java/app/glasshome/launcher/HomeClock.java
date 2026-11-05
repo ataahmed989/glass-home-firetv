@@ -74,16 +74,22 @@ final class HomeClock extends View {
 
     /**
      * The slide on Home now: the clock shows over the user's background (standing behind it where
-     * {@code depthMask} says), and fades away over a featured title.
+     * {@code depthMask} says), and fades away over a featured title. {@code readyFrost} is the
+     * slide's frost when it is ready-made ({@link #frost(Bitmap)} of its backdrop); null works it out
+     * here. Nothing is worked out or drawn again while the picture and the mask stay.
      */
-    void setSlide(HeroSlide s, Backgrounds.DepthMask depthMask) {
+    void setSlide(HeroSlide s, Backgrounds.DepthMask depthMask, Bitmap readyFrost) {
         boolean featured = s != null && s.isFeatured();
         show(!featured);
         if (featured) return;
         if (s == slide && depthMask == depth) return;
-        if (s != slide) frost = s != null && s.background != null ? frosted(s) : null;
+        Bitmap picture = s == null ? null : s.background;
+        boolean newPicture = slide == null || s == null || picture != slide.background || (frost == null && picture != null);
+        if (newPicture) frost = readyFrost != null ? readyFrost : picture != null ? frosted(s) : null;
+        boolean changed = newPicture || depthMask != depth;
         slide = s;
         depth = depthMask;
+        if (!changed) return;
         dirty = true;
         render();
     }
@@ -110,6 +116,18 @@ final class HomeClock extends View {
         Bitmap small = Backdrop.render(s);
         Backdrop.blur(small, 8);
         return small;
+    }
+
+    /** The frost from a slide's glass backdrop ({@link Backdrop#render}), which stays as it is. */
+    static Bitmap frost(Bitmap backdrop) {
+        Bitmap small = backdrop.copy(Bitmap.Config.ARGB_8888, true);
+        Backdrop.blur(small, 8);
+        return small;
+    }
+
+    /** The frost the numerals show now (tests). */
+    Bitmap frost() {
+        return frost;
     }
 
     /** The clock as last drawn (tests). */
