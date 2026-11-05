@@ -45,7 +45,7 @@ final class HomeClock extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Runnable tick = this::tickNow;
     private HeroSlide slide;
-    private Bitmap depth;
+    private Backgrounds.DepthMask depth;
     /** The slide, small and blurred hard: what the frosted numerals show of the scene behind. */
     private Bitmap frost;
     private Bitmap drawn;
@@ -76,7 +76,7 @@ final class HomeClock extends View {
      * The slide on Home now: the clock shows over the user's background (standing behind it where
      * {@code depthMask} says), and fades away over a featured title.
      */
-    void setSlide(HeroSlide s, Bitmap depthMask) {
+    void setSlide(HeroSlide s, Backgrounds.DepthMask depthMask) {
         boolean featured = s != null && s.isFeatured();
         show(!featured);
         if (featured) return;
@@ -110,6 +110,11 @@ final class HomeClock extends View {
         Bitmap small = Backdrop.render(s);
         Backdrop.blur(small, 8);
         return small;
+    }
+
+    /** The clock as last drawn (tests). */
+    Bitmap drawnBitmap() {
+        return drawn;
     }
 
     /** Keeps the time while Home is in front: redrawn on the minute. */
@@ -344,19 +349,22 @@ final class HomeClock extends View {
      * stage's own picture (the dune) shows there, fading with it whenever the background changes.
      */
     private void drawInFront(Canvas c, RectF frame, int w, int h) {
-        // The mask covers the picture as the picture covers the screen
-        float scale = Math.max(screenW / (float) depth.getWidth(), screenH / (float) depth.getHeight());
+        // The mask covers the picture as the picture covers the screen; the part kept sits at its origin in it
+        float scale = Math.max(screenW / (float) depth.fullW, screenH / (float) depth.fullH);
         Matrix m = new Matrix();
         m.setScale(scale, scale);
-        m.postTranslate((screenW - depth.getWidth() * scale) / 2f - frame.left, (screenH - depth.getHeight() * scale) / 2f - frame.top);
+        m.postTranslate(depth.originX * scale + (screenW - depth.fullW * scale) / 2f - frame.left,
+                depth.originY * scale + (screenH - depth.fullH * scale) / 2f - frame.top);
         Paint cut = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        // The mask's grey becomes alpha: white erases the glass, black keeps it
+        // The mask's grey becomes alpha (an ALPHA_8 mask's grey is its alpha already): white erases the glass,
+        // black keeps it. The filter stays for ALPHA_8 too, so the cut is worked out exactly as before, to the pixel
+        boolean alpha8 = depth.bitmap.getConfig() == Bitmap.Config.ALPHA_8;
         cut.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[] {
                 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0,
-                1, 0, 0, 0, 0})));
+                alpha8 ? 0 : 1, 0, 0, alpha8 ? 1 : 0, 0})));
         cut.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));
-        c.drawBitmap(depth, m, cut);
+        c.drawBitmap(depth.bitmap, m, cut);
     }
 }

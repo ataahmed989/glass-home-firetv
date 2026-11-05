@@ -88,7 +88,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private List<Backgrounds.Entry> backgrounds = new ArrayList<>();
     private Bitmap background;
     /** The background's depth mask, for the ones whose picture stands in front of the clock; else null. */
-    private Bitmap backgroundDepth;
+    private Backgrounds.DepthMask backgroundDepth;
     private String backgroundName;
     private HomeClock clock;
     private final java.util.Map<String, Bitmap> thumbnails = new java.util.HashMap<>();
@@ -675,7 +675,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (entry == null) return;
         worker.execute(() -> {
             Bitmap b = Backgrounds.decode(this, entry, screenW);
-            Bitmap depthMask = Backgrounds.depth(this, entry);
+            Backgrounds.DepthMask depthMask = Backgrounds.depth(this, entry, HomeClock.frame(), screenW, screenH);
             main.post(() -> {
                 Backgrounds.Entry chosen = Backgrounds.find(backgrounds, settings.backgroundName());
                 if (b == null || chosen == null || !chosen.name.equals(entry.name)) return;

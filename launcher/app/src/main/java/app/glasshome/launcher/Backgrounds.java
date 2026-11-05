@@ -3,6 +3,7 @@ package app.glasshome.launcher;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.RectF;
 
 import java.io.File;
 import java.io.IOException;
@@ -88,19 +89,55 @@ final class Backgrounds {
         return decode(context, e, o);
     }
 
+    /** A depth mask cut down to the part behind the clock: where that part sits in the whole mask, and the whole mask's size. */
+    static final class DepthMask {
+        final Bitmap bitmap;
+        final int originX, originY, fullW, fullH;
+
+        DepthMask(Bitmap bitmap, int originX, int originY, int fullW, int fullH) {
+            this.bitmap = bitmap;
+            this.originX = originX;
+            this.originY = originY;
+            this.fullW = fullW;
+            this.fullH = fullH;
+        }
+    }
+
     /**
      * The picture's depth mask, for the ones that come with one (assets/depth/, the background's
      * name as a PNG): white over what stands in front, the sky black, so Home's clock can stand
      * behind the dunes. Null for the others, which keep the clock in front.
+     *
+     * Only the clock reads it, so only what lies under {@code frame} (mapped as the picture covers a
+     * {@code screenW} x {@code screenH} screen, with 2 px to spare for filtering) is kept, and the grey
+     * PNG decodes as ALPHA_8, its grey the alpha: 0.3 MB rather than the whole 8 MB mask.
      */
-    static Bitmap depth(Context context, Entry e) {
+    static DepthMask depth(Context context, Entry e, RectF frame, int screenW, int screenH) {
         if (e == null || e.file != null) return null;
         String name = "depth/" + e.name.substring(0, e.name.lastIndexOf('.')) + ".png";
+        Bitmap full;
         try (InputStream in = context.getAssets().open(name)) {
-            return BitmapFactory.decodeStream(in);
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inPreferredConfig = Bitmap.Config.ALPHA_8;
+            full = BitmapFactory.decodeStream(in, null, o);
         } catch (IOException ex) {
             return null;
         }
+        if (full == null) return null;
+        int mw = full.getWidth(), mh = full.getHeight();
+        float scale = Math.max(screenW / (float) mw, screenH / (float) mh);
+        float offX = (screenW - mw * scale) / 2f, offY = (screenH - mh * scale) / 2f;
+        int l = Math.max(0, (int) Math.floor((frame.left - offX) / scale) - 2);
+        int t = Math.max(0, (int) Math.floor((frame.top - offY) / scale) - 2);
+        int r = Math.min(mw, (int) Math.ceil((frame.right - offX) / scale) + 2);
+        int b = Math.min(mh, (int) Math.ceil((frame.bottom - offY) / scale) + 2);
+        if (r <= l || b <= t) {
+            full.recycle();
+            return null;
+        }
+        Bitmap crop = Bitmap.createBitmap(full, l, t, r - l, b - t);
+        if (crop != full) full.recycle();
+        return new DepthMask(crop, l, t, mw, mh);
     }
 
     private static Bitmap decode(Context context, Entry e, BitmapFactory.Options o) {
