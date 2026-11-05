@@ -9,7 +9,7 @@ final class AppEntry {
     final String key;          // package name, or SETTINGS
     final String label;
     final Intent launchIntent;
-    Bitmap art;               // flat composite, for hero cards and non-layered tiles
+    Bitmap art;               // flat composite, only for apps without layers
     TileLayers layers;        // back-to-front layers for the focus effect, when the art provides them
 
     AppEntry(String key, String label, Intent launchIntent) {

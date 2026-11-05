@@ -897,8 +897,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 if (!hiddenHere.contains(app.key)) apps.add(app);
             }
             for (AppEntry app : apps) {
-                app.art = ArtLoader.load(this, app, artWidth);
+                // A layered tile never draws the flat picture: only apps without layers decode one
                 app.layers = ArtLoader.loadLayers(this, app, artWidth);
+                app.art = app.layers == null ? ArtLoader.load(this, app, artWidth) : null;
             }
             main.post(() -> {
                 if (generation != appsGeneration) return;

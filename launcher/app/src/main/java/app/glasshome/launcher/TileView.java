@@ -126,6 +126,14 @@ final class TileView extends View {
         invalidate();
     }
 
+    /** Holds the tile at {@code focus} (0..1) and tilt, as the focus and sway would (tests). */
+    void pose(float focus, float tiltX, float tiltY) {
+        this.focus = focus;
+        this.tiltX = tiltX;
+        this.tiltY = tiltY;
+        invalidate();
+    }
+
     /** Puts a recycled tile back to its resting state without animating. */
     void resetFocusState() {
         animate().cancel();
@@ -191,16 +199,16 @@ final class TileView extends View {
     /** Back to front: each foreground layer first casts its shadow, then draws, each offset by its depth. */
     private void drawLayers(Canvas canvas, float w, float h) {
         int n = layers.layers.length;
-        float base = w / layers.layers[0].getWidth();
+        float base = w / layers.width;
         float shift = Ui.px(MAX_SHIFT) * focus;
         for (int i = 0; i < n; i++) {
-            Bitmap layer = layers.layers[i];
             float depth = i / (float) (n - 1);              // 0 = back, 1 = front
             float travel = (depth - 0.3f) * 2f;             // the back drifts slightly against the tilt
             float dx = tiltX * shift * travel, dy = tiltY * shift * travel;
             // The back layer is enlarged a touch while focused so its edges never show as it moves
             float s = base * (i == 0 ? 1f + 0.05f * focus : 1f);
-            float ox = (w - layer.getWidth() * s) / 2f + dx, oy = (h - layer.getHeight() * s) / 2f + dy;
+            // Placed by the whole layer's size; a cut-down one then sits at its place within it
+            float ox = (w - layers.sizes[i][0] * s) / 2f + dx, oy = (h - layers.sizes[i][1] * s) / 2f + dy;
 
             if (i > 0 && shadowShaders[i] != null) {
                 int[] off = layers.shadowOffsets[i];
@@ -214,7 +222,7 @@ final class TileView extends View {
                 canvas.drawRoundRect(bounds, radius, radius, shadowPaint);
             }
             matrix.setScale(s, s);
-            matrix.postTranslate(ox, oy);
+            matrix.postTranslate(ox + layers.origins[i][0] * s, oy + layers.origins[i][1] * s);
             layerShaders[i].setLocalMatrix(matrix);
             canvas.drawRoundRect(bounds, radius, radius, layerPaints[i]);
         }
