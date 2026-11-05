@@ -11,7 +11,9 @@ import android.os.Handler;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * FirePlayer's Continue Watching: the films and episodes played there lately and not finished
@@ -62,8 +64,8 @@ final class ContinueWatching {
         String caption() {
             String left = "";
             if (durationMs > 0) {
-                long minutes = Math.max(1, Math.round(Math.max(0, durationMs - positionMs) / 60000.0));
-                left = Tmdb.duration((int) minutes) + " left";
+                long minutes = Math.max(1, Math.round(Math.max(0, durationMs - Math.max(0, positionMs)) / 60000.0));
+                left = Tmdb.duration((int) Math.min(minutes, 100 * 60)) + " left";   // nothing runs 100 hours
             }
             if (!episode) return left;
             String where = season > 0 && number > 0 ? "S" + season + " E" + number : number > 0 ? "E" + number : "";
@@ -87,7 +89,12 @@ final class ContinueWatching {
             try (Cursor c = client.query(ITEMS, null, null, null, null)) {
                 if (c == null) return out;
                 while (c.moveToNext()) {
-                    Item item = read(c);
+                    Item item;
+                    try {
+                        item = read(c);
+                    } catch (RuntimeException e) {
+                        continue;   // a row FirePlayer filled oddly (text where a number goes): the others still show
+                    }
                     if (item != null) out.add(item);
                 }
             }
@@ -120,11 +127,12 @@ final class ContinueWatching {
         return i < 0 || c.isNull(i) ? 0 : c.getLong(i);
     }
 
-    /** The films (or, with {@code episodes}, the shows) among {@code items}, in their order. */
+    /** The films (or, with {@code episodes}, the shows) among {@code items}, in their order; an id once. */
     static List<Item> of(List<Item> items, boolean episodes) {
         List<Item> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
         for (Item i : items) {
-            if (i.episode == episodes && out.size() < MAX) out.add(i);
+            if (i.episode == episodes && out.size() < MAX && seen.add(i.id)) out.add(i);
         }
         return Collections.unmodifiableList(out);
     }

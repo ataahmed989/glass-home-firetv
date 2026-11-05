@@ -361,4 +361,104 @@ public class ContinueWatchingTest {
         assertNull(h.page(MOVIES).topShelf());
         assertEquals("Top 10 Movies This Week", first(h, MOVIES).title);
     }
+
+    @Test
+    public void oddRowsAreSkippedOrMadeSenseOf() throws Exception {
+        long t = Fixtures.RECORDED_AT;
+        Collections.addAll(FakeFirePlayer.rows,
+                new Object[] {"x1", "movie", "No Length", 0, 0, 0, null, null, 5 * MIN, 0, t},
+                new Object[] {"x2", "movie", "Back To Front", 0, 0, 0, null, 0, -4 * MIN, 30 * MIN, t},
+                new Object[] {"x3", "movie", "Past The End", 0, 0, 0, null, 0, Long.MAX_VALUE, 30 * MIN, t},
+                new Object[] {"x4", "movie", "Forever", 0, 0, 0, null, 0, 0, Long.MAX_VALUE, t},
+                new Object[] {"x5", "movie", "Garbled", "a year", 0, 0, null, "not a number", 0, 30 * MIN, t},
+                new Object[] {null, "movie", "No Id", 0, 0, 0, null, 0, 0, 30 * MIN, t},
+                new Object[] {"x6", "live", "A Channel", 0, 0, 0, null, 0, 0, 30 * MIN, t},
+                new Object[] {"x7", "movie", null, 0, 0, 0, null, 0, 0, 30 * MIN, t},
+                new Object[] {"x1", "movie", "No Length Again", 0, 0, 0, null, 0, 0, 30 * MIN, t},
+                new Object[] {"y1", "episode", "A Show", 0, 0, 0, null, 0, 0, 0, t});
+        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        List<ContinueWatching.Item> all = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
+        List<ContinueWatching.Item> films = ContinueWatching.of(all, false);
+        List<String> ids = new ArrayList<>();
+        for (ContinueWatching.Item i : films) ids.add(i.id);
+        assertEquals("no id, no title, not a film or episode, garbled or seen before: left out",
+                java.util.Arrays.asList("x1", "x2", "x3", "x4"), ids);
+        assertEquals("no length: no bar, no time left", -1f, films.get(0).progress(), 0f);
+        assertEquals("", films.get(0).caption());
+        assertEquals(0f, films.get(1).progress(), 0f);
+        assertEquals("30 min left", films.get(1).caption());
+        assertEquals(1f, films.get(2).progress(), 0f);
+        assertEquals("1 min left", films.get(2).caption());
+        assertEquals(0f, films.get(3).progress(), 0f);
+        assertEquals("100 hr left", films.get(3).caption());
+        ContinueWatching.Item show = ContinueWatching.of(all, true).get(0);
+        assertEquals("no season or episode, no length: nothing to say", "", show.caption());
+        assertNull(show.artKey());
+
+        // And the page shows them without trouble
+        TestHome h = open(MOVIES);
+        assertEquals(4, first(h, MOVIES).cards.size());
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        for (int i = 0; i < 4; i++) h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("x4", h.page(MOVIES).focusedCard().id);
+    }
+
+    @Test
+    public void theMenuIsAsWideAsItsCardAndGoesWhenTheCardMoves() throws Exception {
+        withFirePlayer();
+        TestHome h = open(MOVIES);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_RIGHT);
+        holdSelect(h);
+        TileMenu menu = h.activity.tileMenu();
+        assertTrue(menu.isOpen());
+        android.graphics.RectF card = new android.graphics.RectF(), box = new android.graphics.RectF();
+        h.page(MOVIES).focusedCardBounds(card);
+        menu.cardBounds(box);
+        assertEquals("as wide as its card, as a tile's is", card.width(), box.width(), 1f);
+        assertEquals(Math.round(card.width()), menu.getWidth());
+
+        // Something played meanwhile comes in ahead of it: its card moves on, and the menu goes
+        FakeFirePlayer.rows.add(0, movie("m6", "Masterplan II", 2026, 0, 6 * MIN, 100 * MIN, Fixtures.RECORDED_AT));
+        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        settleRow();
+        assertFalse(menu.isOpen());
+        assertEquals(Zone.PAGE, h.zone());
+        assertEquals("m2", h.page(MOVIES).focusedCard().id);
+        assertTrue(FakeFirePlayer.deleted.isEmpty());
+
+        // Home's tiles keep their own size of menu
+        h.menu();
+        for (int i = 0; i < MOVIES; i++) h.press(android.view.KeyEvent.KEYCODE_DPAD_LEFT);
+        assertEquals(HomeActivity.HOME, h.activity.page());
+        h.press(KEYCODE_DPAD_DOWN);
+        holdSelect(h);
+        assertTrue(menu.isOpen());
+        assertArrayEquals(TileMenu.LABELS, menu.labels());
+        assertEquals(TileMenu.width(), menu.getWidth());
+    }
+
+    @Test
+    public void aRefreshOfTheSameCardsLetsTheGapFinishClosing() throws Exception {
+        withFirePlayer();
+        TestHome h = open(MOVIES);
+        ShelfPage movies = h.page(MOVIES);
+        PageModel.Shelf row = movies.topShelf();
+        PageModel.Shelf fewer = new PageModel.Shelf(row.title, row.style), again = new PageModel.Shelf(row.title, row.style);
+        for (PageModel.Card c : row.cards) {
+            if (c.id.equals("m2")) continue;
+            fewer.cards.add(c);
+            again.cards.add(c);
+        }
+        movies.setTopShelf(fewer);
+        assertTrue(movies.closingGap());
+        // FirePlayer's answer to the Remove, or artwork arriving, before the gap has closed
+        movies.setTopShelf(again);
+        assertTrue("still closing", movies.closingGap());
+        TestHome.settle();
+        assertFalse(movies.closingGap());
+        assertEquals(java.util.Arrays.asList("m1", "m3", "m4", "m5"), ids(first(h, MOVIES)));
+    }
 }

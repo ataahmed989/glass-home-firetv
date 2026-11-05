@@ -11,6 +11,7 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.text.TextPaint;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.view.animation.PathInterpolator;
 
@@ -85,7 +86,8 @@ final class TileMenu extends View {
 
     /** Where the card is on screen, for tests. */
     void cardBounds(RectF out) {
-        out.set(restX, restY, restX + getWidth(), restY + getHeight());
+        ViewGroup.LayoutParams lp = getLayoutParams();
+        out.set(restX, restY, restX + (lp != null ? lp.width : getWidth()), restY + height());
     }
 
     private float rowY(int i) {
@@ -97,16 +99,26 @@ final class TileMenu extends View {
      * it instead where there is no room below.
      */
     void show(float tileCx, float tileTop, float tileBottom, Runnable move, Runnable more) {
-        show(tileCx, tileTop, tileBottom, LABELS, new Runnable[] {move, more});
+        show(tileCx, tileTop, tileBottom, width(), LABELS, new Runnable[] {move, more});
     }
 
-    /** As above, with rows of its own: {@code labels[i]} runs {@code chosen[i]} (two rows, as the card is sized for). */
-    void show(float tileCx, float tileTop, float tileBottom, String[] labels, Runnable[] chosen) {
+    /**
+     * As above, under something {@code tileWidth} wide (a Continue Watching card, wider than a tile:
+     * the card is as wide as it), with rows of its own: {@code labels[i]} runs {@code chosen[i]} (two
+     * rows, as the card is sized for).
+     */
+    void show(float tileCx, float tileTop, float tileBottom, float tileWidth, String[] labels, Runnable[] chosen) {
         this.labels = labels;
         actions = chosen;
         View parent = (View) getParent();
         int screenW = parent.getWidth(), screenH = parent.getHeight();
-        float w = width(), h = height(), edge = Ui.px(EDGE);
+        int wide = Math.max(width(), Math.round(tileWidth));
+        ViewGroup.LayoutParams lp = getLayoutParams();
+        if (lp != null && lp.width != wide) {
+            lp.width = wide;
+            setLayoutParams(lp);
+        }
+        float w = wide, h = height(), edge = Ui.px(EDGE);
         restX = Math.max(edge, Math.min(tileCx - w / 2f, screenW - edge - w));
         restY = tileBottom + Ui.px(GAP);
         boolean flip = restY + h > screenH - edge;

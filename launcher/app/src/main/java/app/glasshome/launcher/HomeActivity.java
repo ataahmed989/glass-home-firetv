@@ -135,6 +135,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** The page whose Continue Watching card has its menu open, and that card's entry; or null. */
     private ShelfPage menuPage;
     private ContinueWatching.Item menuItem;
+    /** The menu's glass frosts a page (a card's menu was last open), not Home. */
+    private boolean menuGlassOnPage;
     private DetailView titleDetail;
     private ControlCenter control;
     private Glass controlGlass, panelGlass, sourceGlass, sourcesGlass;
@@ -833,7 +835,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (generation != backdropGeneration) return;
         homeBackdrop = small;
         dockGlass.setBackdrop(small, screenW, screenH);
-        menuGlass.setBackdrop(small, screenW, screenH);
+        if (menuPage == null) {
+            menuGlass.setBackdrop(small, screenW, screenH);
+            menuGlassOnPage = false;
+        }
         tileMenu.invalidate();
         weatherGlass.setBackdrop(small, screenW, screenH);
         if (page == HOME) setBarBackdrop(small);
@@ -1268,8 +1273,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void showContinue(List<ContinueWatching.Item> items) {
+        if (menuPage != null) {
+            // Its card gone from FirePlayer meanwhile, or moved from under the menu: the menu goes
+            int was = indexOf(ContinueWatching.of(continueItems, menuItem.episode), menuItem.id);
+            if (indexOf(ContinueWatching.of(items, menuItem.episode), menuItem.id) != was) closeTileMenu(true, false);
+        }
         continueItems = items;
-        if (menuPage != null && indexOf(items, menuItem.id) < 0) closeTileMenu(true, false);   // gone from FirePlayer meanwhile
         pages[MOVIES].setTopShelf(continueShelf(false));
         pages[TV].setTopShelf(continueShelf(true));
     }
@@ -1310,6 +1319,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     Tmdb.Title t = tmdb.byId(item.tmdbId, item.episode);
                     String url = t == null ? null : t.backdropUrl("w780");
                     found.put(item.artKey(), url == null ? "" : url);
+                } catch (java.io.IOException e) {
+                    // TMDB has no such title: a title card, without asking again each time
+                    if (String.valueOf(e.getMessage()).startsWith("HTTP 404")) found.put(item.artKey(), "");
+                    // otherwise looked up again next time
                 } catch (Exception ignored) {
                     // looked up again next time
                 }
@@ -1368,9 +1381,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         menuPage = sp;
         menuItem = item;
         sp.setMenuOpen(true, true);
-        // Its glass frosts the page behind it, not Home
+        // Its glass frosts the page behind it, not Home (until a tile's menu opens on Home again)
         menuGlass.setBackdrop(sp.sceneBackdrop(), screenW, screenH);
-        tileMenu.show(card.centerX(), card.top, card.bottom, new String[] {"Resume", "Remove"}, new Runnable[] {
+        menuGlassOnPage = true;
+        tileMenu.show(card.centerX(), card.top, card.bottom, card.width(), new String[] {"Resume", "Remove"}, new Runnable[] {
                 () -> {
                     closeTileMenu(true, false);
                     resumeContinue(item);
@@ -1386,7 +1400,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         menuPage.setMenuOpen(false, animate);
         menuPage = null;
         menuItem = null;
-        if (homeBackdrop != null) menuGlass.setBackdrop(homeBackdrop, screenW, screenH);
+        // Its glass keeps the page's frost while it folds away; Home's comes back with Home's own menu
     }
 
     /** While browsing the shelves, the tab bar and the capsule slide up out of the way. */
@@ -1921,6 +1935,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         for (AppAdapter.Holder x : holders()) x.tile.setMenuState(x == h, x != h, true);
         h.name.animate().cancel();
         h.name.animate().alpha(0f).setDuration(Ui.reducedMotion ? 0 : 120).setInterpolator(Ui.EASE).start();
+        if (menuGlassOnPage && homeBackdrop != null) menuGlass.setBackdrop(homeBackdrop, screenW, screenH);
+        menuGlassOnPage = false;
         float cx = grid.getX() + h.itemView.getLeft() + h.tile.getLeft() + h.tile.getWidth() / 2f;
         float cy = grid.getY() + h.itemView.getTop() + h.tile.getTop() + h.tile.getHeight() / 2f - Ui.px(Ui.MENU_RISE);
         float half = h.tile.getHeight() * Ui.FOCUS_SCALE / 2f;

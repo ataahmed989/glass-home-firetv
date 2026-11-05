@@ -428,6 +428,12 @@ final class ShelfPage extends ViewGroup {
     /** The top shelf's cards changed; one taken away closes its gap. */
     private void replaceTop(PageModel.Shelf old, PageModel.Shelf s) {
         model.shelves.set(0, s);
+        if (sameCards(old, s)) {
+            // Only what they show changed (artwork come, FirePlayer's answer after a Remove): a gap
+            // still closing, or the shelf sliding, carries on
+            invalidateRow(0);
+            return;
+        }
         endGap();
         int k = removedIndex(old, s);
         int col = cols[0];
@@ -468,6 +474,14 @@ final class ShelfPage extends ViewGroup {
         invalidateRow(0);
     }
 
+    private static boolean sameCards(PageModel.Shelf a, PageModel.Shelf b) {
+        if (a.cards.size() != b.cards.size()) return false;
+        for (int i = 0; i < a.cards.size(); i++) {
+            if (!java.util.Objects.equals(a.cards.get(i).id, b.cards.get(i).id)) return false;
+        }
+        return true;
+    }
+
     /** The index of the one card {@code s} lacks of {@code old}'s, the others the same in order; else -1. */
     private static int removedIndex(PageModel.Shelf old, PageModel.Shelf s) {
         if (old.cards.size() != s.cards.size() + 1) return -1;
@@ -483,6 +497,11 @@ final class ShelfPage extends ViewGroup {
         if (gapAnim != null) gapAnim.cancel();
         gone = null;
         gapT = 1f;
+    }
+
+    /** A card taken off the top shelf is still fading while the gap closes (tests). */
+    boolean closingGap() {
+        return gone != null;
     }
 
     /** The top shelf (Continue Watching), or null. */
