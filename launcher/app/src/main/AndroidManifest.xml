@@ -79,8 +79,6 @@
     </queries>
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Home Screen settings > Free Up Memory closes apps left running in the background (see MemoryCleaner) -->
-    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <!-- Glass Home updates itself from its GitHub releases, through Fire OS's installer (see Updater) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Optional ADB grant; used only to repair the Home service settings. -->

@@ -1,2 +1,4 @@
 com.amazon.tv.launcher
 com.amazon.aca
+com.netflix.ninja
+com.amazon.firebat
