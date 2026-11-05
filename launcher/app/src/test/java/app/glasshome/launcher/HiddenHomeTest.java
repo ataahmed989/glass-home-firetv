@@ -2,6 +2,8 @@ package app.glasshome.launcher;
 
 import static org.junit.Assert.assertEquals;
 
+import android.view.KeyEvent;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -12,7 +14,10 @@ import org.robolectric.annotation.LooperMode;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** What Glass Home does once another app has the screen: no network retries pile up. */
+/**
+ * What Glass Home does once another app has the screen: no network retries pile up, and its
+ * snapshot is copied after the pause rather than in it.
+ */
 @RunWith(RobolectricTestRunner.class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @LooperMode(LooperMode.Mode.PAUSED)
@@ -48,5 +53,37 @@ public class HiddenHomeTest {
         h.controller.pause().stop();
         for (int i = 0; i < 6; i++) pass(5 * 60 * 1000L);
         assertEquals("none while another app is in front", 2, fetches.get());
+    }
+
+    /** The pause asks for no copy itself: it is asked for right after, once something was drawn since the last. */
+    @Test
+    public void theSnapshotIsCopiedJustAfterThePause() throws Exception {
+        TestHome h = new TestHome();
+        TestHome.advance(3000);   // Home at rest: its snapshot is copied
+        TestHome.settle();
+        h.press(KeyEvent.KEYCODE_DPAD_RIGHT);
+        drawn(h);   // the move drawn since the snapshot was copied
+        int before = HomeSnapshot.requests;
+        h.controller.pause();
+        assertEquals("nothing copied in onPause itself", before, HomeSnapshot.requests);
+        TestHome.idle();
+        assertEquals("copied once the pause is over", before + 1, HomeSnapshot.requests);
+
+        // Back, and settled: copied while resting; nothing drawn since, so the next pause copies nothing
+        h.controller.resume();
+        TestHome.advance(3000);
+        TestHome.settle();
+        int rested = HomeSnapshot.requests;
+        h.controller.pause();
+        TestHome.idle();
+        assertEquals(rested, HomeSnapshot.requests);
+    }
+
+    /** The window's draw, as the TV makes it (Robolectric draws no frames of its own here). */
+    private static void drawn(TestHome h) throws Exception {
+        android.view.ViewTreeObserver observer = h.activity.getWindow().getDecorView().getViewTreeObserver();
+        java.lang.reflect.Method dispatch = android.view.ViewTreeObserver.class.getDeclaredMethod("dispatchOnDraw");
+        dispatch.setAccessible(true);
+        dispatch.invoke(observer);
     }
 }

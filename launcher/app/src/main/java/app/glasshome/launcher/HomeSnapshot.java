@@ -20,6 +20,8 @@ import android.view.View;
 final class HomeSnapshot {
     private static Bitmap frame;
     private static boolean copying, complete;
+    /** Copies asked for so far, made or not (tests). */
+    static int requests;
 
     private HomeSnapshot() {}
 
@@ -30,6 +32,7 @@ final class HomeSnapshot {
 
     /** Copies what the activity's window shows now. */
     static void capture(Activity activity) {
+        requests++;
         View decor = activity.getWindow().peekDecorView();
         if (copying || decor == null || decor.getWidth() == 0 || decor.getHeight() == 0) return;
         int w = decor.getWidth(), h = decor.getHeight();

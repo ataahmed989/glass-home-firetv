@@ -220,6 +220,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         snapshotDue = false;
         snapshotStale = false;
     };
+    /** Home's snapshot as Glass Home is paused, copied once onPause has returned (see onPause). */
+    private final Runnable pauseSnapshot = () -> {
+        if (!stopped && !resumed) HomeSnapshot.capture(this);
+    };
     /** The tiles were rearranged since the snapshot was copied: it can't stand in for Home until copied again. */
     private boolean snapshotStale;
     /** Home has been drawn since its snapshot was last copied (see {@link #snapshotLater}). */
@@ -2568,6 +2572,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onResume() {
         super.onResume();
+        main.removeCallbacks(pauseSnapshot);
         boolean back = stopped;
         stopped = false;
         resumed = true;
@@ -2691,10 +2696,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         // Leaving without opening anything is the Home button, as a rule: Home's snapshot covers Amazon's home at once
         HomeButtonService.leftUnexpectedly(showingHomeAsTheHomeButtonLeavesIt());
         // The snapshot shows Home as it is now: copied again only if Home has been drawn since (focus
-        // moved on to the app just opened, the clock turned…), as its stand-in on the way back must match it
+        // moved on to the app just opened, the clock turned…), as its stand-in on the way back must match it.
+        // Just after the pause rather than in it: the copy waits on the GPU, and the app being opened
+        // only comes up once Glass Home has said it is paused
         if (snapshotDue && showingHomeAsTheHomeButtonLeavesIt()) {
-            HomeSnapshot.capture(this);
             snapshotDue = false;
+            main.post(pauseSnapshot);
         }
         if (zone() != Zone.UPDATE) lastZone = zone();   // showPrompt kept the zone under the alert
         selectArmed = false;
@@ -2757,6 +2764,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(collect);
         main.removeCallbacks(resumeRefresh);
         main.removeCallbacks(weatherRetry);
+        main.removeCallbacks(pauseSnapshot);
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         worker.shutdownNow();
