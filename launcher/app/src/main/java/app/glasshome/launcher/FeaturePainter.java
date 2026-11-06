@@ -374,7 +374,8 @@ final class FeaturePainter {
         y -= Ui.px(18);
         if (!f.meta.isEmpty()) {
             c.drawText(TextUtils.ellipsize(f.meta, meta, textWidth, TextUtils.TruncateAt.END).toString(), left, y, meta);
-            y -= Ui.px(30);
+            // A title in text ("Jaguars at Ravens") hangs below its line: room for that, clear of this one
+            y -= Ui.px(logo != null ? 30 : 46);
         }
         if (logo != null) {
             float maxW = Ui.px(600), maxH = Ui.px(190);
