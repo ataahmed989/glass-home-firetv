@@ -192,6 +192,21 @@ public class CoverTimeTest {
 
     /** Left from a browse page, Home is not as its snapshot shows it: the snapshot is left alone. */
     @Test
+    public void onABrowsePageTheOldTimeComesOutAtTheNextMinute() throws Exception {
+        TestHome h = rested();
+        Rect clockBox = box(clock(h)), capsuleBox = box(h.capsule);
+        Bitmap withTime = HomeSnapshot.latest().copy(Bitmap.Config.ARGB_8888, false);
+        h.menu();
+        h.press(android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
+        assertNotEquals(HomeActivity.HOME, h.activity.page());
+        tick(h, Fixtures.RECORDED_AT + 1 * MINUTE);
+        Bitmap after = HomeSnapshot.latest();
+        assertTrue("the old time came out of the clock's box", differing(withTime, after, true, clockBox) > 1000);
+        assertTrue("and the capsule's", differing(withTime, after, true, capsuleBox) > 100);
+        assertEquals("the rest as copied", 0, differing(withTime, after, false, clockBox, capsuleBox));
+    }
+
+    @Test
     public void leftFromABrowsePageTheTimeComesOutToo() throws Exception {
         TestHome h = rested();
         Rect clockBox = box(clock(h)), capsuleBox = box(h.capsule);

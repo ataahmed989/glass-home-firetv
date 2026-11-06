@@ -311,7 +311,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             capsule.updateTime();
             clock.timeChanged();
             weather.invalidate();   // re-checks staleness
-            if (resumed) retimeSnapshot(true);
+            // In front: the time drawn into the snapshot again; where Home doesn't look as the snapshot does
+            // (a browse page, a panel), the time it has is old from now on and comes out
+            if (resumed && !retimeSnapshot(true)) blankSnapshot();
         }
     };
 
