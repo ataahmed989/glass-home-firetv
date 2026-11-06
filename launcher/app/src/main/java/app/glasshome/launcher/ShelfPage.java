@@ -53,6 +53,8 @@ final class ShelfPage extends ViewGroup {
     private static final int HERO_BOTTOM = 800;         // bottom of the hero's button row
     private static final int FIRST_ROW_TOP = 880;       // the first shelf peeks below the hero
     private static final int FOCUS_ROW_TOP = 170;       // a focused shelf settles here
+    /** How dark the background gets at the top edge once the page is down among the shelves. */
+    private static final int TOP_DIM = 0x33000000;
     private static final int TITLE_H = 56, CAPTION_H = 78, ROW_GAP = 30;
     private static final int CARD_W = 372, CARD_H = 209, CARD_GAP = 32;
     private static final int POSTER_W = 222, POSTER_H = 333, RANK_W = 124, POSTER_GAP = 22;
@@ -909,9 +911,18 @@ final class ShelfPage extends ViewGroup {
     private Bitmap shelvesBackdrop() {
         if (shelvesFrost != null) return shelvesFrost;
         Bitmap small = Bitmap.createBitmap(Backdrop.W, Backdrop.H, Bitmap.Config.ARGB_8888);
-        drawHome(new Canvas(small), Backdrop.W, Backdrop.H, SHELF_DIM);
+        Canvas c = new Canvas(small);
+        drawHome(c, Backdrop.W, Backdrop.H, SHELF_DIM);
         // Made for the small size: the screen's own is made again for the next frame
         homeShader = null;
+        // The same darker top as on the page, under the bar
+        if (getHeight() > 0) {
+            float k = Backdrop.H / (float) getHeight();
+            c.save();
+            c.scale(Backdrop.W / (float) getWidth(), k);
+            drawTopDim(c, getWidth(), Ui.px(FOCUS_ROW_TOP - 10), 1f);
+            c.restore();
+        }
         Backdrop.blur(small, Backdrop.RADIUS);
         // Graphite until Home's background has loaded: not kept, so the picture is used once it is there
         if (home != null) shelvesFrost = small;
@@ -1058,16 +1069,38 @@ final class ShelfPage extends ViewGroup {
         }
         float scrolled = shelvesShown();
         if (scrolled > 0f) {
-            // The shelf above the focused one fades into the top edge instead of being cut off
+            // The shelf above the focused one fades into the background at the top edge instead of
+            // being cut off: the background is drawn again over it there, clear toward the shelves
             float fadeH = Ui.px(FOCUS_ROW_TOP - 10);
+            int layer = c.saveLayerAlpha(0, 0, w, fadeH, Math.round(255 * scrolled));
+            c.clipRect(0, 0, w, fadeH);
+            drawChild(c, backdropLayer, getDrawingTime());
             topFade.setShader(cached("topfade" + fadeH, () -> new LinearGradient(0, 0, 0, fadeH,
                     new int[] {0xFF000000, 0xF2000000, 0x00000000}, new float[] {0f, 0.6f, 1f}, Shader.TileMode.CLAMP)));
-            topFade.setAlpha(Math.round(255 * scrolled));
             c.drawRect(0, 0, w, fadeH, topFade);
+            c.restoreToCount(layer);
+            drawTopDim(c, w, fadeH, scrolled);
         }
     }
 
+    /** Keeps the background where the gradient is, so it covers the shelf above with itself. */
     private final Paint topFade = new Paint();
+    {
+        topFade.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
+    }
+
+    private final Paint topDim = new Paint();
+
+    /**
+     * The background a little darker toward the top edge, under the bar, but not black: the
+     * picture still shows there. The bar's glass frosts the same ({@link #shelvesBackdrop}).
+     */
+    private void drawTopDim(Canvas c, int w, float fadeH, float alpha) {
+        topDim.setShader(cached("topdim" + fadeH, () -> new LinearGradient(0, 0, 0, fadeH,
+                TOP_DIM, 0x00000000, Shader.TileMode.CLAMP)));
+        topDim.setAlpha(Math.round(255 * alpha));
+        c.drawRect(0, 0, w, fadeH, topDim);
+    }
 
     private void drawHeroText(Canvas c, float alpha) {
         if (model.hero.isEmpty()) return;

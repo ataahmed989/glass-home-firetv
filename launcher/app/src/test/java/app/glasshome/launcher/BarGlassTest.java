@@ -70,8 +70,15 @@ public class BarGlassTest {
         }
         h.capture("tv-bar-over-shelves.png");
 
-        // Back up to the hero: its picture again
+        // A shelf further down: the one above fades into the background, which is dimmed at the top, not black
         h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(1, tv.focusedRow());
+        TestHome.settle();
+        TestHome.settleImages();
+        h.capture("tv-shelves-second-row.png");
+
+        // Back up to the hero: its picture again
         while (tv.focusedRow() >= 0) h.press(KEYCODE_DPAD_UP);
         TestHome.settle();
         assertTrue("over the hero again, the hero's picture", samePicture(tv.backdrop(), barScene(h, "tabGlass")));
