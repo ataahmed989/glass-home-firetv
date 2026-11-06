@@ -176,7 +176,7 @@ public class ClockTest {
         h.press(KeyEvent.KEYCODE_DPAD_DOWN);
         h.press(KeyEvent.KEYCODE_DPAD_CENTER);
         TestHome.settle();
-        assertTrue(h.panel.option(2).checked);
+        assertTrue(h.panel.option(4).checked);
         assertNotSame(frost, clock.frost());
         assertNotSame(backdrop, h.activity.homeBackdrop());
     }

@@ -118,12 +118,12 @@ public class WidgetsTest {
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals(Zone.SETTINGS, h.zone());
-        while (h.panel.focusedIndex() < 6) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("Glances", h.panel.option(6).title);
+        while (h.panel.focusedIndex() < 8) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("Glances", h.panel.option(8).title);
         h.press(KEYCODE_DPAD_CENTER);
-        assertTrue(h.panel.option(6).checked);
-        assertFalse(h.panel.option(5).checked);
-        assertTrue("the background choice is untouched", h.panel.option(1).checked);
+        assertTrue(h.panel.option(8).checked);
+        assertFalse(h.panel.option(7).checked);
+        assertTrue("the background choice is untouched", h.panel.option(3).checked);
         h.capture("settings-widgets.png");
         h.back();
         h.back();

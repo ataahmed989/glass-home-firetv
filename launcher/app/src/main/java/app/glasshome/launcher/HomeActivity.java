@@ -1951,6 +1951,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         boolean tmdb = !config.tmdbApiKey.isEmpty();
         Backgrounds.Entry chosen = Backgrounds.find(backgrounds, settings.backgroundName());
         List<SettingsPanel.Option> options = new ArrayList<>();
+        // Checking for an update and clearing the cache come first, as the most used
+        Updater.Release known = Updater.latest;
+        options.add(SettingsPanel.Option.action("UPDATES", "Glass Home " + Updater.installedName(this),
+                Updater.isNewer(this, known) ? known.name + " is ready to install"
+                        : known != null ? "Up to date: select to check again" : "Select to check for an update"));
+        options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache",
+                "Glass Home's saved pictures, pages and scores"));
         options.add(SettingsPanel.Option.toggle("FEATURED TITLES", "Featured on streaming apps",
                 tmdb ? "Popular titles behind each streaming app" : "Needs a TMDB token, which isn't set",
                 tmdb, featuredTitles()));
@@ -2001,13 +2008,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         boolean arranged = !settings.appOrder().isEmpty();
         options.add(SettingsPanel.Option.action("APPS", "Original Order",
                 arranged ? "Puts the apps back in Glass Home's order" : "Hold Select on an app to move it", arranged));
-        options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache",
-                "Glass Home's saved pictures, pages and scores"));
         options.add(SettingsPanel.Option.action("FIRE OS", "Amazon Apps Turned Off", cleanupSummary()));
-        Updater.Release known = Updater.latest;
-        options.add(SettingsPanel.Option.action("UPDATES", "Glass Home " + Updater.installedName(this),
-                Updater.isNewer(this, known) ? known.name + " is ready to install"
-                        : known != null ? "Up to date: select to check again" : "Select to check for an update"));
         panel.setOptions(options, start);
         panel.setVisibility(View.VISIBLE);
         panel.setAlpha(Ui.reducedMotion ? 1f : 0f);
