@@ -1976,10 +1976,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         options.add(SettingsPanel.Option.toggle("FEATURED TITLES", "Featured on streaming apps",
                 tmdb ? "Popular titles behind each streaming app" : "Needs a TMDB token, which isn't set",
                 tmdb, featuredTitles()));
+        // Opens on the first row, Updates, not on the chosen background
         int start = 0;
         for (Backgrounds.Entry e : backgrounds) {
             boolean isChosen = chosen != null && e.name.equals(chosen.name);
-            if (isChosen) start = options.size();
             options.add(SettingsPanel.Option.choice("BACKGROUND", e.title, "Behind every app", e.name,
                     thumbnails.computeIfAbsent(e.name, n -> Backgrounds.thumbnail(this, e)), isChosen));
         }

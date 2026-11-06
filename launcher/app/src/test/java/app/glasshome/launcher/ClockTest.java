@@ -173,7 +173,7 @@ public class ClockTest {
         h.press(KeyEvent.KEYCODE_DPAD_UP);
         h.press(KeyEvent.KEYCODE_DPAD_RIGHT);
         h.press(KeyEvent.KEYCODE_DPAD_CENTER);
-        h.press(KeyEvent.KEYCODE_DPAD_DOWN);
+        while (h.panel.focusedIndex() < 4) h.press(KeyEvent.KEYCODE_DPAD_DOWN);
         h.press(KeyEvent.KEYCODE_DPAD_CENTER);
         TestHome.settle();
         assertTrue(h.panel.option(4).checked);

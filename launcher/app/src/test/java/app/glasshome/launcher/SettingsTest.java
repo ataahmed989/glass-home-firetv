@@ -63,15 +63,17 @@ public class SettingsTest {
 
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals(Zone.SETTINGS, h.zone());
-        // Row 0 is the featured switch (no token here, so unavailable); rows 1-5 are the backgrounds
+        // Updates and Clear Cache first; then the featured switch (no token here, so unavailable) and the backgrounds
         assertFalse(h.panel.option(2).enabled);
         assertEquals("Night Dunes", h.panel.option(3).title);
         assertEquals("Glow", h.panel.option(4).title);
         assertEquals("Blue Apple", h.panel.option(6).title);
-        assertEquals("starts on the chosen background", 3, h.panel.focusedIndex());
+        assertEquals("starts at the top, on Updates", 0, h.panel.focusedIndex());
         assertTrue(h.panel.option(3).checked);
-        h.press(KEYCODE_DPAD_UP);
-        assertEquals("the unavailable switch is skipped, up to Clear Cache", 1, h.panel.focusedIndex());
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(1, h.panel.focusedIndex());
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("the unavailable switch is skipped", 3, h.panel.focusedIndex());
         assertEquals("Smart Stack", h.panel.option(7).title);
         assertEquals("Glances", h.panel.option(8).title);
         assertTrue("Smart Stack is the default", h.panel.option(7).checked);
@@ -103,7 +105,7 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        h.press(KEYCODE_DPAD_DOWN);
+        while (h.panel.focusedIndex() < 4) h.press(KEYCODE_DPAD_DOWN);
         assertEquals("Glow", h.panel.option(4).title);
         h.press(KEYCODE_DPAD_CENTER);
         TestHome.settle();
@@ -135,7 +137,7 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        h.press(KEYCODE_DPAD_DOWN);
+        while (h.panel.focusedIndex() < 4) h.press(KEYCODE_DPAD_DOWN);   // Glow, after the chosen Night Dunes
         h.press(KEYCODE_DPAD_CENTER);
         TestHome.advance(Ui.CONTENT_FADE_MS + 100);
         TestHome.settle();
@@ -175,7 +177,7 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_CENTER);
         assertTrue(h.panel.option(2).enabled);
         assertTrue("on by default", h.panel.option(2).checked);
-        h.press(KEYCODE_DPAD_UP);
+        while (h.panel.focusedIndex() < 2) h.press(KEYCODE_DPAD_DOWN);
         assertEquals(2, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
         assertFalse(h.panel.option(2).checked);
@@ -222,7 +224,7 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals("Clear Cache", h.panel.option(1).title);
-        while (h.panel.focusedIndex() > 1) h.press(KEYCODE_DPAD_UP);
+        while (h.panel.focusedIndex() < 1) h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_CENTER);
         for (int i = 0; i < 5; i++) TestHome.settle();
         assertFalse(junk.exists());
