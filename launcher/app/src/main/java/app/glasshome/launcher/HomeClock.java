@@ -36,7 +36,7 @@ import java.util.Locale;
  */
 final class HomeClock extends View {
     /** Where it sits, in design px: centred on the screen, the date's baseline and the numerals' top and height. */
-    static final int CENTER_X = 960, DATE_BASELINE = 176, DIGITS_TOP = 200, DIGITS_H = 150, WIDTH = 760, HEIGHT = 420;
+    static final int CENTER_X = 960, DATE_BASELINE = 176, DIGITS_TOP = 190, DIGITS_H = 150, WIDTH = 760, HEIGHT = 420;
     /** Inter Display's numerals drawn this much taller, to the kit's proportions (the 9 is 1.33 times as tall as wide). */
     private static final float STRETCH = 1.06f;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("EEE MMM d", Locale.US);
