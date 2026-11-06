@@ -44,6 +44,9 @@ final class HomeSnapshot {
     }
 
     /** Parts of the frame were drawn again in place: onto the GPU again, and into the covers made ready. */
+    /** Run on the main thread once a copy has come in, before the cover can show it. */
+    static Runnable copied;
+
     static void redrawn() {
         retimes++;
         frame.prepareToDraw();
@@ -74,6 +77,8 @@ final class HomeSnapshot {
                 // was: the last complete frame still stands in, rather than none
                 if (result != PixelCopy.SUCCESS) return;
                 complete = true;
+                // No time in it: by the time it covers a trip back it could be an old one
+                if (copied != null) copied.run();
                 frame.prepareToDraw();   // onto the GPU now, so the cover has nothing to upload when it is needed
                 HomeButtonService.snapshotChanged();
             }, new Handler(Looper.getMainLooper()));

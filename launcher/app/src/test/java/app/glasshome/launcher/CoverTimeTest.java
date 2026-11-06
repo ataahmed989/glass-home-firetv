@@ -108,52 +108,31 @@ public class CoverTimeTest {
         System.out.println("SCREENSHOT " + new File(dir, name));
     }
 
-    /** An hour behind another app: the snapshot's clock and capsule read as Home does now, and the rest is as copied. */
+    /**
+     * Each copy of Home for the cover is made without the time: the clock's place shows the stage,
+     * the capsule its glass without the time, and nothing else changes. A minute turning later draws
+     * nothing into it, so an hour behind another app the cover still shows no time, never an old one.
+     */
     @Test
-    public void behindAnotherAppTheSnapshotKeepsTheTime() throws Exception {
+    public void theSnapshotHasNoTime() throws Exception {
         TestHome h = rested();
-        Rect clockBox = box(clock(h)), capsuleBefore = box(h.capsule);
+        Rect clockBox = box(clock(h)), capsuleBox = box(h.capsule);
         assertEquals("7:30", clock(h).time());
+        assertNotNull("Home has each copy blanked as it comes in", HomeSnapshot.copied);
+        Bitmap shot = HomeSnapshot.latest(), live = render(h);
+        save(shot, "cover-time-blank.png");
+        assertTrue("the cover has no clock digits where Home shows them", differing(shot, live, true, clockBox) > 1000);
+        assertTrue("nor the capsule's time", differing(shot, live, true, capsuleBox) > 100);
+
+        // An hour behind another app: nothing is drawn into it, and it still shows no time
         h.controller.pause().stop();
         TestHome.idle();
-        Bitmap shot = HomeSnapshot.latest();
-        Bitmap before = shot.copy(Bitmap.Config.ARGB_8888, false);
-        save(before, "cover-time-before.png");
-        int retimes = HomeSnapshot.retimes;
-
+        Bitmap blank = HomeSnapshot.latest().copy(Bitmap.Config.ARGB_8888, false);
+        int then = HomeSnapshot.retimes;
         tick(h, Fixtures.RECORDED_AT + 61 * MINUTE);
         assertEquals("8:31", clock(h).time());
-        assertEquals("drawn again once", retimes + 1, HomeSnapshot.retimes);
-        Bitmap after = HomeSnapshot.latest();
-        assertTrue("in place", after == shot);
-        save(after, "cover-time-after.png");
-
-        Rect capsuleBox = new Rect(capsuleBefore);
-        capsuleBox.union(box(h.capsule));
-        Bitmap fresh = render(h);
-        assertTrue("the clock changed", differing(before, after, true, clockBox) > 1000);
-        assertTrue("the capsule changed", differing(before, after, true, capsuleBox) > 100);
-        assertEquals("the clock as Home draws it now", 0, differing(after, fresh, true, clockBox));
-        assertEquals("the capsule as Home draws it now", 0, differing(after, fresh, true, capsuleBox));
-        assertEquals("everything else as copied", 0, differing(before, after, false, clockBox, capsuleBox));
-    }
-
-    /** Sitting on Home with nothing pressed, the snapshot (and so the cover kept over Home) follows the minute too. */
-    @Test
-    public void inFrontTheSnapshotKeepsTheTime() throws Exception {
-        TestHome h = rested();
-        Rect clockBox = box(clock(h)), capsuleBefore = box(h.capsule);
-        Bitmap before = HomeSnapshot.latest().copy(Bitmap.Config.ARGB_8888, false);
-        int retimes = HomeSnapshot.retimes;
-        tick(h, Fixtures.RECORDED_AT + 31 * MINUTE);
-        assertEquals("8:01", clock(h).time());
-        assertEquals(retimes + 1, HomeSnapshot.retimes);
-        Rect capsuleBox = new Rect(capsuleBefore);
-        capsuleBox.union(box(h.capsule));
-        Bitmap after = HomeSnapshot.latest(), fresh = render(h);
-        assertEquals(0, differing(after, fresh, true, clockBox));
-        assertEquals(0, differing(after, fresh, true, capsuleBox));
-        assertEquals(0, differing(before, after, false, clockBox, capsuleBox));
+        assertEquals(then, HomeSnapshot.retimes);
+        assertEquals(0, differing(blank, HomeSnapshot.latest(), true, clockBox, capsuleBox));
     }
 
     /** The cover up for a trip back: the snapshot under it is left alone. */

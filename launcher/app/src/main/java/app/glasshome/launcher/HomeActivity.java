@@ -309,13 +309,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             capsule.updateTime();
             clock.timeChanged();
             weather.invalidate();   // re-checks staleness
-            retimeSnapshot();
         }
     };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Each copy of Home for the Home button's cover is made without the time (see retimeSnapshot)
+        HomeSnapshot.copied = this::retimeSnapshot;
         Rect window = getWindowManager().getCurrentWindowMetrics().getBounds();
         screenW = window.width();
         screenH = window.height();
@@ -830,8 +831,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * else copies it again; in front, with no slideshow and no key pressed, the next copy can be
      * long in coming too, and the cover kept ready over Home shows the snapshot as it is.
      *
+     * Now each copy is made without the time instead (as soon as it comes in): the cover shows the
+     * clock's place empty and the capsule without its time, and the time is there once Home is.
+     *
      * Only the clock and the capsule are drawn again, in software, into the snapshot itself: in each
-     * one's box the stage as it lies beneath (so no old digits remain), then the view as it is now,
+     * one's box the stage as it lies beneath (so no old digits remain), then the view (not the time),
      * with whatever lies over the box (the tab bar, over the clock's) left as copied. The rest of the
      * frame stays as copied. A few ms a minute; never while a cover is up for a trip, or a copy is
      * being made into the frame, and only while Home is as the snapshot shows it (the same slide,
@@ -908,7 +912,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         if (root.getBackground() != null) drawAt(c, root, true);
         drawAt(c, stage, false);
-        drawAt(c, view, false);
+        // Without the time: the clock leaves the stage beneath it, the capsule its glass and avatar
+        if (view == capsule) {
+            capsule.timeHidden = true;
+            try {
+                drawAt(c, view, false);
+            } finally {
+                capsule.timeHidden = false;
+            }
+        } else if (view != clock) {
+            drawAt(c, view, false);
+        }
         return patch;
     }
 
