@@ -65,6 +65,11 @@ final class Glass {
         glowPaint.setStrokeWidth(glowWidth);
     }
 
+    /** The frosted scene it shows now (tests). */
+    Bitmap scene() {
+        return scene;
+    }
+
     void setBackdrop(Bitmap small, int screenWidth, int screenHeight) {
         screenW = screenWidth;
         screenH = screenHeight;

@@ -199,6 +199,7 @@ final class ShelfPage extends ViewGroup {
         if (b == home) return;
         home = b;
         homeShader = null;
+        shelvesFrost = null;
         teamColours.clear();   // a game's colours are clear where this shows through
         backdropLayer.invalidate();
         if (listener != null && model != null) listener.onHeroShown(this);
@@ -890,6 +891,30 @@ final class ShelfPage extends ViewGroup {
             painter.drawBackground(c, Backdrop.W, Backdrop.H, f, f == null ? null : images.peek(f.imageUrl, getWidth()));
         }
         Backdrop.blur(small, Backdrop.RADIUS);
+        return small;
+    }
+
+    /**
+     * What the glass of the bars above the page shows: the hero's background while the hero is up, and once the page
+     * has scrolled down to the shelves, what is behind them there (Home's own background, darkened), not the hero's
+     * picture that has scrolled away.
+     */
+    Bitmap barBackdrop() {
+        return intoShelves && model != null ? shelvesBackdrop() : backdrop();
+    }
+
+    /** The shelves' background, blurred small; made once for each background. */
+    private Bitmap shelvesFrost;
+
+    private Bitmap shelvesBackdrop() {
+        if (shelvesFrost != null) return shelvesFrost;
+        Bitmap small = Bitmap.createBitmap(Backdrop.W, Backdrop.H, Bitmap.Config.ARGB_8888);
+        drawHome(new Canvas(small), Backdrop.W, Backdrop.H, SHELF_DIM);
+        // Made for the small size: the screen's own is made again for the next frame
+        homeShader = null;
+        Backdrop.blur(small, Backdrop.RADIUS);
+        // Graphite until Home's background has loaded: not kept, so the picture is used once it is there
+        if (home != null) shelvesFrost = small;
         return small;
     }
 

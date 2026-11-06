@@ -1254,7 +1254,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         } else {
             main.removeCallbacks(advanceSlide);   // Home's slideshow rests while it is covered
             ShelfPage sp = pages[p];
-            if (sp.hasModel()) setBarBackdrop(sp.backdrop());
+            if (sp.hasModel()) setBarBackdrop(sp.barBackdrop());
             if (!sp.hasModel() || sp.age() > (p == SPORTS ? SPORTS_LIVE_MS : CATALOG_REFRESH_MS)) loadPage(p);
             else if (p == SPORTS) scheduleSports();
             if (isContinuePage(p)) refreshContinue();
@@ -1655,14 +1655,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     public void onHeroShown(ShelfPage source) {
         if (source != currentPage()) return;
-        setBarBackdrop(source.backdrop());
+        setBarBackdrop(source.barBackdrop());
         PageModel.Feature hero = source.currentHero();
         if (hero != null) prefetchLinks(hero.ref);
     }
 
     @Override
     public void onScrolled(ShelfPage source, boolean intoShelves) {
-        if (source == currentPage()) setBarHidden(intoShelves);
+        if (source != currentPage()) return;
+        setBarHidden(intoShelves);
+        // Down among the shelves the bars are over Home's background, not the hero's (they show there when chosen)
+        setBarBackdrop(source.barBackdrop());
     }
 
     /** Opens the detail page at once with what is known, then fills in where to watch. */
