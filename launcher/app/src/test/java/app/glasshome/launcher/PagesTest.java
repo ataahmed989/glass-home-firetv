@@ -147,7 +147,7 @@ public class PagesTest {
         assertEquals("Home is whole at once, beneath Movies", 1f, h.stage.getAlpha(), 0.001f);
         assertEquals(View.VISIBLE, h.page(MOVIES).getVisibility());
         assertEquals("Movies fades out over it", 1f, h.page(MOVIES).getAlpha(), 0.001f);
-        TestHome.advance(Ui.PAGE_FADE_MS + 50);
+        TestHome.advance(Ui.PAGE_BACK_FADE_MS + 50);
         assertEquals(View.GONE, h.page(MOVIES).getVisibility());
         assertEquals("having faded out", 0f, h.page(MOVIES).getAlpha(), 0.001f);
         assertEquals(1f, h.stage.getAlpha(), 0.001f);

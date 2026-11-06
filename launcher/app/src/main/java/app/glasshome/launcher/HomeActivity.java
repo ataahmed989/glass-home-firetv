@@ -1231,7 +1231,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (p == page) return;
         int old = page;
         page = p;
-        long fade = Ui.reducedMotion || atOnce ? 0 : Ui.PAGE_FADE_MS;
+        // Back towards Home a page fades away over what is beneath for longer: its first frames go on
+        // readying the page to be blended, and a short fade then reads as a cut
+        long fade = Ui.reducedMotion || atOnce ? 0 : p < old ? Ui.PAGE_BACK_FADE_MS : Ui.PAGE_FADE_MS;
         // Each page covers the whole screen, the browse pages over Home in tab order. Only what lies
         // over the other fades (the new page in over the old, or the old out over the new) while the
         // one beneath stays as it is, so the screen never dims towards black on the way and only one

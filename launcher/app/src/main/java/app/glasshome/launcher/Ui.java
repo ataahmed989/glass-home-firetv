@@ -55,6 +55,7 @@ final class Ui {
     static final int SLIDE_INTERVAL_MS = 9000;
     static final int TAB_DWELL_MS = 300;        // a tab passed over quickly does not load its page
     static final int PAGE_FADE_MS = 180;
+    static final int PAGE_BACK_FADE_MS = 300;   // a page fading away towards Home (see HomeActivity.showPage)
     static final int BAR_HIDE_Y = 150;          // the top bar slides up this far while browsing shelves
 
     /** System animations off, or "reduce_motion" in apps.json: no fades, slides or animated scrolling. */
