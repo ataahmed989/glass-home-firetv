@@ -1,4 +1,6 @@
-# Next Glass Home update (to do)
+# Next Glass Home update
+
+Done in 1.0.20 (checked on the Fire TV Stick 4K Max): items 1-4 below.
 
 Check each on the TV (ADB on) before releasing.
 
