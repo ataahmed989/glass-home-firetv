@@ -1971,54 +1971,53 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         options.add(SettingsPanel.Option.action("UPDATES", "Glass Home " + Updater.installedName(this),
                 Updater.isNewer(this, known) ? known.name + " is ready to install"
                         : known != null ? "Up to date: select to check again" : "Select to check for an update"));
-        options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache",
-                "Glass Home's saved pictures, pages and scores"));
+        // Only what the title doesn't already say goes under it: a state, or why a switch can't be used
+        options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache", ""));
         options.add(SettingsPanel.Option.toggle("FEATURED TITLES", "Featured on streaming apps",
-                tmdb ? "Popular titles behind each streaming app" : "Needs a TMDB token, which isn't set",
+                tmdb ? "" : "Needs a TMDB token, which isn't set",
                 tmdb, featuredTitles()));
         // Opens on the first row, Updates, not on the chosen background
         int start = 0;
         for (Backgrounds.Entry e : backgrounds) {
             boolean isChosen = chosen != null && e.name.equals(chosen.name);
-            options.add(SettingsPanel.Option.choice("BACKGROUND", e.title, "Behind every app", e.name,
+            options.add(SettingsPanel.Option.choice("BACKGROUND", e.title, "", e.name,
                     thumbnails.computeIfAbsent(e.name, n -> Backgrounds.thumbnail(this, e)), isChosen));
         }
         String layout = settings.widgetLayout();
         options.add(SettingsPanel.Option.choice("WIDGETS", "Smart Stack",
-                "One card that turns between your widgets", WidgetPanel.STACK, null,
+                "", WidgetPanel.STACK, null,
                 WidgetPanel.STACK.equals(layout)));
         options.add(SettingsPanel.Option.choice("WIDGETS", "Glances",
-                "Four small squares, all at once", WidgetPanel.GLANCES, null,
+                "", WidgetPanel.GLANCES, null,
                 WidgetPanel.GLANCES.equals(layout)));
         String sourcesLook = settings.sourcesLook();
         options.add(SettingsPanel.Option.choice("SOURCES", "Tiles",
-                "Glass tiles, like Control Center", SourcesPanel.TILES, null,
+                "", SourcesPanel.TILES, null,
                 !SourcesPanel.LIST.equals(sourcesLook)));
         options.add(SettingsPanel.Option.choice("SOURCES", "List",
-                "One panel, like this one", SourcesPanel.LIST, null,
+                "", SourcesPanel.LIST, null,
                 SourcesPanel.LIST.equals(sourcesLook)));
         // Sleep can be turned off here, which gives its grant back (if it was given over ADB), so the launcher can always be uninstalled
         boolean sleepAvailable = SystemControls.sleepAvailable(this);
         options.add(SettingsPanel.Option.toggle("CONTROL CENTER", "Allow Sleep",
-                sleepAvailable ? "Lets Control Center put the TV to sleep" : "Needs the Home service, set up over ADB",
+                sleepAvailable ? "" : "Needs the Home service, set up over ADB",
                 sleepAvailable, SystemControls.canSleep(this)));
         options.add(SettingsPanel.Option.toggle("CONTROL CENTER", MEMORY_ROW,
-                "Free memory and storage, under the shortcuts", true, settings.showSystemStats()));
+                "", true, settings.showSystemStats()));
         // Glass Home can turn its service back on itself when allowed to (see HomeServiceRecovery)
         boolean redirect = homeButtonServiceOn() || HomeServiceRecovery.allowed(this);
-        options.add(SettingsPanel.Option.toggle("HOME BUTTON", "Opens Glass Home",
-                redirect ? "Off: the Home button shows Amazon's home" : "Turned on during setup over ADB",
+        options.add(SettingsPanel.Option.toggle("HOME BUTTON", "Home Button Opens Glass Home",
+                redirect ? "" : "Turned on during setup over ADB",
                 redirect, redirect && settings.homeButtonOpensGlassHome()));
         // Held Menu is seen by the Home service, so it needs that too (or the grant to turn it back on)
         boolean tivimate = HomeButtonService.launchIntent(this, HomeButtonService.TIVIMATE) != null;
         boolean hold = tivimate && (homeButtonServiceOn() || HomeServiceRecovery.allowed(this));
         options.add(SettingsPanel.Option.toggle("REMOTE", "Hold Menu for TiviMate",
-                !tivimate ? "TiviMate isn't installed" : hold ? "From any app; a short press works as usual"
-                        : "Needs the Home service, set up over ADB",
+                !tivimate ? "TiviMate isn't installed" : hold ? "" : "Needs the Home service, set up over ADB",
                 hold, hold && settings.menuHoldOpensTiviMate()));
         Set<String> hiddenHere = settings.hiddenApps();
         options.add(SettingsPanel.Option.action("APPS", "Hidden Apps",
-                hiddenHere.isEmpty() ? "None. Hold Select on an app to hide it" : hiddenHere.size() + " hidden: select to show them again",
+                hiddenHere.isEmpty() ? "None" : hiddenHere.size() + " hidden: select to show them again",
                 !hiddenHere.isEmpty()));
         boolean arranged = !settings.appOrder().isEmpty();
         options.add(SettingsPanel.Option.action("APPS", "Original Order",

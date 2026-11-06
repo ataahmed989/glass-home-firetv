@@ -200,7 +200,7 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Opens Glass Home", h.panel.option(13).title);
+        assertEquals("Home Button Opens Glass Home", h.panel.option(13).title);
         assertTrue(h.panel.option(13).enabled);
         assertFalse(h.panel.option(13).checked);
         while (h.panel.focusedIndex() < 13) h.press(KEYCODE_DPAD_DOWN);

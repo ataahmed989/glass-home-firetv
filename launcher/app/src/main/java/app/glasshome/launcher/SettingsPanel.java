@@ -165,21 +165,24 @@ final class SettingsPanel extends View {
     @Override
     protected void onDraw(Canvas c) {
         c.drawRect(0, 0, getWidth(), getHeight(), scrim);
-        float rowH = Ui.px(76), pad = Ui.px(32), sectionH = Ui.px(46), header = Ui.px(92), footer = Ui.px(20);
-        // Where each row sits in the list, with a heading wherever the section changes
-        float[] rowY = new float[options.size()];
+        float pad = Ui.px(32), sectionH = Ui.px(46), header = Ui.px(92), footer = Ui.px(20);
+        // Where each row sits in the list, with a heading wherever the group changes; a row with nothing to
+        // add under its title is a single line
+        float[] rowY = new float[options.size()], rowHs = new float[options.size()];
         boolean[] headed = new boolean[options.size()];
         float listH = 0;
         String last = null;
         for (int i = 0; i < options.size(); i++) {
             Option o = options.get(i);
-            if (!o.section.equals(last)) {
+            String group = groupOf(o.section);
+            if (!group.equals(last)) {
                 listH += sectionH;
                 headed[i] = true;
-                last = o.section;
+                last = group;
             }
             rowY[i] = listH;
-            listH += rowH;
+            rowHs[i] = rowHeight(o);
+            listH += rowHs[i];
         }
         // Hangs under the status capsule, like Control Center; a longer list scrolls inside it
         float top = Ui.px(138), margin = Ui.px(40);
@@ -192,7 +195,7 @@ final class SettingsPanel extends View {
         if (!options.isEmpty() && focused < rowY.length) {
             float rowTop = rowY[focused] - (headed[focused] ? sectionH : 0);
             if (rowTop - scroll < edge) scroll = rowTop - edge;
-            if (rowY[focused] + rowH - scroll > view - edge) scroll = rowY[focused] + rowH - view + edge;
+            if (rowY[focused] + rowHs[focused] - scroll > view - edge) scroll = rowY[focused] + rowHs[focused] - view + edge;
         }
         scroll = Math.max(0, Math.min(scroll, listH - view));
         rect.set(left, top, right, bottom);
@@ -204,8 +207,9 @@ final class SettingsPanel extends View {
         for (int i = 0; i < options.size(); i++) {
             Option o = options.get(i);
             float y = listTop + rowY[i] - scroll;
+            float rowH = rowHs[i];
             if (headed[i]) {
-                c.drawText(o.section, left + pad, y - sectionH + Ui.px(32), section);
+                c.drawText(groupOf(o.section), left + pad, y - sectionH + Ui.px(32), section);
             }
             if (y > listBottom || y + rowH < listTop) continue;
             boolean f = i == focused;
@@ -219,11 +223,17 @@ final class SettingsPanel extends View {
             subtitle.setColor(f ? 0xB3111317 : (o.enabled ? 0xA6FFFFFF : 0x4DFFFFFF));
             float textLeft = left + pad + Ui.px(44);
             float textRight = right - pad - (o.toggle ? Ui.px(76) : o.thumb != null ? Ui.px(124) : 0);
-            c.drawText(TextUtils.ellipsize(o.title, title, textRight - textLeft, TextUtils.TruncateAt.END).toString(),
-                    textLeft, y + Ui.px(31), title);
-            c.drawText(TextUtils.ellipsize(o.subtitle, subtitle, textRight - textLeft, TextUtils.TruncateAt.END).toString(),
-                    textLeft, y + Ui.px(56), subtitle);
             float midY = y + (rowH - Ui.px(8)) / 2f;
+            if (hasSubtitle(o)) {
+                c.drawText(TextUtils.ellipsize(o.title, title, textRight - textLeft, TextUtils.TruncateAt.END).toString(),
+                        textLeft, y + Ui.px(31), title);
+                c.drawText(TextUtils.ellipsize(o.subtitle, subtitle, textRight - textLeft, TextUtils.TruncateAt.END).toString(),
+                        textLeft, y + Ui.px(56), subtitle);
+            } else {
+                Paint.FontMetrics fm = title.getFontMetrics();
+                c.drawText(TextUtils.ellipsize(o.title, title, textRight - textLeft, TextUtils.TruncateAt.END).toString(),
+                        textLeft, midY - (fm.ascent + fm.descent) / 2f, title);
+            }
             if (o.toggle) {
                 drawSwitch(c, right - pad - Ui.px(60), midY, o.checked, o.enabled, f);
             } else {
@@ -246,6 +256,37 @@ final class SettingsPanel extends View {
 
     private float scroll;
     private final Paint mask = new Paint();
+
+    /**
+     * The heading a row goes under: sections of a row or two share one, so the list has fewer
+     * headings (what each row does, and its section, stay the same).
+     */
+    static String groupOf(String section) {
+        switch (section) {
+            case "UPDATES":
+            case "STORAGE":
+                return "GLASS HOME";
+            case "FEATURED TITLES":
+                return "BACKGROUND";
+            case "HOME BUTTON":
+            case "REMOTE":
+            case "CONTROL CENTER":
+                return "REMOTE & CONTROL CENTER";
+            case "FIRE OS":
+                return "APPS";
+            default:
+                return section;
+        }
+    }
+
+    private static boolean hasSubtitle(Option o) {
+        return o.subtitle != null && !o.subtitle.isEmpty();
+    }
+
+    /** A row with a line under its title, or a picture beside it, is taller than one with its title alone. */
+    private static float rowHeight(Option o) {
+        return hasSubtitle(o) || o.thumb != null ? Ui.px(76) : Ui.px(60);
+    }
 
     {
         mask.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN));
