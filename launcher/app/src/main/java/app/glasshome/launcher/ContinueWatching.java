@@ -73,9 +73,14 @@ final class ContinueWatching {
             return left.isEmpty() ? where : where + "  ·  " + left;
         }
 
-        /** Its artwork's key in TMDB (a film's id or the show's), or null when FirePlayer didn't match it. */
+        /**
+         * Its artwork's key in TMDB: the film's or the show's id ("movie/1284186"), or, when
+         * FirePlayer didn't match it, the name and year it is searched for by ("tv?The Last of Us (2025)").
+         */
         String artKey() {
-            return tmdbId <= 0 ? null : (episode ? "tv/" : "movie/") + tmdbId;
+            String kind = episode ? "tv" : "movie";
+            if (tmdbId > 0) return kind + "/" + tmdbId;
+            return kind + "?" + title + (year > 0 ? " (" + year + ")" : "");
         }
     }
 
@@ -151,7 +156,7 @@ final class ContinueWatching {
     /** Opens FirePlayer's player on the entry, where it was left. */
     static Intent resumeIntent(String id) {
         return new Intent(ACTION_RESUME).setPackage(FirePlayerTitles.PACKAGE).putExtra(EXTRA_ID, id)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);   // a player left behind from another title never stands in for this one
     }
 
     /** Calls {@code onChange} (on {@code handler}'s thread) whenever FirePlayer's list changes. */

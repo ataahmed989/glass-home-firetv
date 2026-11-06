@@ -1420,7 +1420,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             c.title = item.title;
             c.subtitle = item.caption();
             c.progress = item.progress();
-            String art = item.artKey() == null ? null : continueArt.get(item.artKey());
+            String art = continueArt.get(item.artKey());
             c.imageUrl = art == null || art.isEmpty() ? null : art;
             c.ref = item;
             s.cards.add(c);
@@ -1428,13 +1428,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return s;
     }
 
-    /** The backdrops of entries not seen before, from TMDB by their ids; the rows take them as they come. */
+    /**
+     * The backdrops of entries not seen before, from TMDB by their ids, or by their names where
+     * FirePlayer sent without one (no TMDB key there, TMDB not sure, an older FirePlayer); the rows take
+     * them as they come.
+     */
     private void lookUpContinueArt(List<ContinueWatching.Item> items) {
         if (config.tmdbApiKey.isEmpty()) return;
         List<ContinueWatching.Item> missing = new ArrayList<>();
         for (ContinueWatching.Item item : items) {
             String key = item.artKey();
-            if (key != null && !continueArt.containsKey(key) && continueArtPending.add(key)) missing.add(item);
+            if (!continueArt.containsKey(key) && continueArtPending.add(key)) missing.add(item);
         }
         if (missing.isEmpty()) return;
         runOff(pagesNet, () -> {
@@ -1442,8 +1446,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             Map<String, String> found = new HashMap<>();
             for (ContinueWatching.Item item : missing) {
                 try {
-                    Tmdb.Title t = tmdb.byId(item.tmdbId, item.episode);
+                    Tmdb.Title t = item.tmdbId > 0 ? tmdb.byId(item.tmdbId, item.episode)
+                            : tmdb.find(item.title, item.year, item.episode);
                     String url = t == null ? null : t.backdropUrl("w780");
+                    // No artwork, or nothing by exactly its name: a title card, without asking again each time
                     found.put(item.artKey(), url == null ? "" : url);
                 } catch (java.io.IOException e) {
                     // TMDB has no such title: a title card, without asking again each time

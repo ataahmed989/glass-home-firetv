@@ -18,6 +18,10 @@ import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -27,9 +31,13 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.annotation.LooperMode;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import app.glasshome.launcher.HomeActivity.Zone;
 
@@ -106,12 +114,58 @@ public class ContinueWatchingTest {
         return new Object[] {id, "episode", show, 0, season, number, name, tmdb, position, duration, watched};
     }
 
+    /** An episode of a show FirePlayer didn't match to TMDB, from a year it knows. */
+    private static Object[] unmatched(String id, String show, int year, int season, int number, long position, long duration,
+            long watched) {
+        Object[] row = episode(id, show, season, number, null, 0, position, duration, watched);
+        row[3] = year;
+        return row;
+    }
+
+    /** The searches TMDB was asked, in order (see {@link #withSearchesByYear}). */
+    private static final List<String> searches = Collections.synchronizedList(new ArrayList<>());
+    private static final Pattern BY_YEAR = Pattern.compile("&(?:first_air_date_year|year)=(\\d{4})");
+    private static Net.Fetcher recorded;
+
     @Before
     public void reset() {
         FakeFirePlayer.rows.clear();
         FakeFirePlayer.deleted.clear();
         FakeFirePlayer.queries = 0;
+        searches.clear();
         org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(16));
+    }
+
+    @After
+    public void restore() {
+        if (recorded != null) Net.fetcher = recorded;
+        recorded = null;
+    }
+
+    /**
+     * TMDB as recorded, and its searches narrowed to a year too: those are answered from the
+     * recorded search by the same name, keeping what came out in that year, as TMDB does. Each
+     * search asked is noted in {@link #searches}. Once Home is up, which puts the recordings in place.
+     */
+    private static void withSearchesByYear() {
+        recorded = Net.fetcher;
+        Net.Fetcher fixtures = recorded;
+        Net.fetcher = (url, bearer) -> {
+            if (url.startsWith(Tmdb.API + "search/")) searches.add(url.substring(Tmdb.API.length()));
+            Matcher m = BY_YEAR.matcher(url);
+            if (!m.find()) return fixtures.get(url, bearer);
+            String year = m.group(1), date = url.contains("/search/tv?") ? "first_air_date" : "release_date";
+            try {
+                JSONObject all = new JSONObject(new String(fixtures.get(m.replaceFirst(""), bearer), StandardCharsets.UTF_8));
+                JSONArray results = all.getJSONArray("results"), kept = new JSONArray();
+                for (int i = 0; i < results.length(); i++) {
+                    if (results.getJSONObject(i).optString(date).startsWith(year)) kept.put(results.getJSONObject(i));
+                }
+                return all.put("results", kept).toString().getBytes(StandardCharsets.UTF_8);
+            } catch (JSONException e) {
+                throw new IOException(e);
+            }
+        };
     }
 
     /** FirePlayer with films and episodes on its list (TMDB ids the recorded responses have). */
@@ -131,7 +185,10 @@ public class ContinueWatchingTest {
 
     /** Home, then the tab bar along to page {@code p}, its content loaded and the row asked for. */
     private static TestHome open(int p) throws Exception {
-        TestHome h = TestHome.withTmdb();
+        return open(TestHome.withTmdb(), p);
+    }
+
+    private static TestHome open(TestHome h, int p) throws Exception {
         h.menu();
         for (int i = 0; i < p; i++) h.press(KEYCODE_DPAD_RIGHT);
         assertEquals(p, h.activity.page());
@@ -176,7 +233,7 @@ public class ContinueWatchingTest {
         assertEquals("1 hr 12 min left", sacrifice.subtitle);
         assertEquals(0.28f, sacrifice.progress, 0.001f);
         assertEquals("TMDB's backdrop, by its id", "https://image.tmdb.org/t/p/w780/oAUf1pvGlafCZVlEuPt1JyONHR1.jpg", sacrifice.imageUrl);
-        assertNull("no TMDB id: its title stands in for artwork", row.cards.get(3).imageUrl);
+        assertNull("no TMDB id, and none found by its name: its title stands in for artwork", row.cards.get(3).imageUrl);
         assertEquals("55 min left", row.cards.get(3).subtitle);
 
         h.press(KEYCODE_DPAD_DOWN);   // the hero
@@ -255,6 +312,7 @@ public class ContinueWatchingTest {
         assertEquals("app.fireplayer", started.getPackage());
         assertEquals("m2", started.getStringExtra(ContinueWatching.EXTRA_ID));
         assertTrue((started.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0);
+        assertTrue("a player left behind from another title is cleared away", (started.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TASK) != 0);
         assertEquals("no details page on the way", Zone.PAGE, h.zone());
     }
 
@@ -393,7 +451,7 @@ public class ContinueWatchingTest {
         assertEquals("100 hr left", films.get(3).caption());
         ContinueWatching.Item show = ContinueWatching.of(all, true).get(0);
         assertEquals("no season or episode, no length: nothing to say", "", show.caption());
-        assertNull(show.artKey());
+        assertEquals("not matched by FirePlayer: looked up by its name", "tv?A Show", show.artKey());
 
         // And the page shows them without trouble
         TestHome h = open(MOVIES);
@@ -460,5 +518,107 @@ public class ContinueWatchingTest {
         TestHome.settle();
         assertFalse(movies.closingGap());
         assertEquals(java.util.Arrays.asList("m1", "m3", "m4", "m5"), ids(first(h, MOVIES)));
+    }
+
+    /**
+     * An entry FirePlayer sent without a TMDB id (no key there, TMDB not sure, an older FirePlayer) has
+     * its cover all the same: the title TMDB has by exactly its name, searched for once.
+     */
+    @Test
+    public void entriesWithoutATmdbIdAreFoundByTheirNames() throws Exception {
+        long t = Fixtures.RECORDED_AT;
+        Collections.addAll(FakeFirePlayer.rows,
+                episode("e1", "Stranger Things", 4, 1, "The Hellfire Club", 0, 20 * MIN, 78 * MIN, t - 1000),
+                // Its second season's year: the show first aired two years before
+                unmatched("e2", "The Last of Us", 2025, 2, 3, 10 * MIN, 50 * MIN, t - 2000),
+                movie("m1", "Inside Out 2", 0, 0, 30 * MIN, 97 * MIN, t - 3000));
+        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        TestHome h = TestHome.withTmdb();
+        withSearchesByYear();
+        open(h, TV);
+        PageModel.Shelf shows = first(h, TV);
+        assertEquals(java.util.Arrays.asList("e1", "e2"), ids(shows));
+        assertEquals("TMDB's Stranger Things, by its name", "https://image.tmdb.org/t/p/w780/9P4IIMYY3HifqeruZq0ZZ9g7YUi.jpg",
+                shows.cards.get(0).imageUrl);
+        assertEquals("first aired before the year FirePlayer has", "https://image.tmdb.org/t/p/w780/lY2DhbA7Hy44fAKddr06UrXWWaQ.jpg",
+                shows.cards.get(1).imageUrl);
+        assertEquals("S2 E3  ·  40 min left", shows.cards.get(1).subtitle);
+        assertNull("TMDB has two films by that name (1992's and 2024's) and FirePlayer gave no year to tell them apart:"
+                + " its title card, not perhaps the wrong cover", h.page(MOVIES).topShelf().cards.get(0).imageUrl);
+        List<String> asked = java.util.Arrays.asList(
+                "search/tv?language=en-US&query=Stranger%20Things&include_adult=false&page=1",
+                "search/tv?language=en-US&query=The%20Last%20of%20Us&include_adult=false&first_air_date_year=2025&page=1",
+                "search/tv?language=en-US&query=The%20Last%20of%20Us&include_adult=false&page=1",
+                "search/movie?language=en-US&query=Inside%20Out%202&include_adult=false&page=1");
+        assertEquals("with the year when there is one, then without it", asked, new ArrayList<>(searches));
+
+        // Asked again (FirePlayer's list changed): the covers stay, and nothing is searched again
+        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        settleRow();
+        assertTrue(FakeFirePlayer.queries > 1);
+        assertEquals(asked, new ArrayList<>(searches));
+        assertEquals("https://image.tmdb.org/t/p/w780/9P4IIMYY3HifqeruZq0ZZ9g7YUi.jpg", first(h, TV).cards.get(0).imageUrl);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(0, h.page(TV).focusedRow());
+        TestHome.settleImages();
+        h.capture("continue-by-name.png");
+    }
+
+    /**
+     * Only a title by exactly its name, from about its year, is taken: anything else could put the
+     * wrong cover on it. Without one its title stands in, as before, and it isn't searched again.
+     */
+    @Test
+    public void nothingByExactlyItsNameKeepsItsTitleCard() throws Exception {
+        long t = Fixtures.RECORDED_AT;
+        Collections.addAll(FakeFirePlayer.rows,
+                // TMDB's The Last of Us first aired in 2023; from 2013 it has only "The Last of Us Development Series"
+                unmatched("e1", "The Last of Us", 2013, 1, 2, 10 * MIN, 50 * MIN, t - 1000),
+                // TMDB's films by that name are from 1992 and 2024
+                movie("m1", "Inside Out 2", 2010, 0, 30 * MIN, 97 * MIN, t - 2000));
+        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        TestHome h = TestHome.withTmdb();
+        withSearchesByYear();
+        open(h, MOVIES);
+        PageModel.Card film = first(h, MOVIES).cards.get(0), show = h.page(TV).topShelf().cards.get(0);
+        assertNull(film.imageUrl);
+        assertEquals("Inside Out 2", film.title);
+        assertEquals("1 hr 7 min left", film.subtitle);
+        assertNull(show.imageUrl);
+        assertEquals("The Last of Us", show.title);
+        assertEquals("S1 E2  ·  40 min left", show.subtitle);
+        assertEquals("each with its year, then without it", 4, searches.size());
+
+        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        settleRow();
+        assertTrue(FakeFirePlayer.queries > 1);
+        assertEquals("not searched again", 4, searches.size());
+        assertNull(first(h, MOVIES).cards.get(0).imageUrl);
+    }
+
+    @Test
+    public void aNameSharedByARemakeNeedsTheYearAndTheNearestYearWins() throws Exception {
+        org.json.JSONArray shows = new org.json.JSONArray()
+                .put(new org.json.JSONObject().put("id", 1).put("name", "Shōgun").put("first_air_date", "1980-09-15").put("popularity", 90.0))
+                .put(new org.json.JSONObject().put("id", 2).put("name", "Shogun").put("first_air_date", "2024-02-27").put("popularity", 40.0))
+                .put(new org.json.JSONObject().put("id", 3).put("name", "Shogun Assassin").put("first_air_date", "2024-01-01").put("popularity", 99.0));
+        assertNull("no year: two shows by that name, so neither", Tmdb.exact(shows, "Shogun", 0, true));
+        assertEquals("watched in 2024: the 2024 show, though the other is more popular",
+                2, Tmdb.exact(shows, "Shogun", 2024, true).optInt("id"));
+        assertEquals("a season from 1981: the 1980 show", 1, Tmdb.exact(shows, "Shogun", 1981, true).optInt("id"));
+        org.json.JSONArray one = new org.json.JSONArray()
+                .put(new org.json.JSONObject().put("id", 33880).put("name", "The Legend of Korra").put("first_air_date", "2012-04-14"))
+                .put(new org.json.JSONObject().put("id", 7).put("name", "Avatar: The Legend of Korra Recap").put("first_air_date", "2013-01-01"));
+        assertEquals("no year, but the only show by exactly that name", 33880,
+                Tmdb.exact(one, "The Legend of Korra", 0, true).optInt("id"));
+    }
+
+    @Test
+    public void namesAreComparedWrittenPlainly() {
+        assertEquals(Tmdb.plain("Law and Order"), Tmdb.plain("Law & Order"));
+        assertEquals(Tmdb.plain("Pokemon: Indigo League"), Tmdb.plain("Pokémon – Indigo League"));
+        assertEquals("thelegendofkorra", Tmdb.plain("The Legend of Korra"));
+        assertFalse("no word is left out", Tmdb.plain("Legend of Korra").equals(Tmdb.plain("The Legend of Korra")));
     }
 }

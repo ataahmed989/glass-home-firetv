@@ -7,10 +7,12 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -166,6 +168,89 @@ final class Tmdb {
         Title t = parse(d, series);
         if (t != null) fill(t, d);
         return t;
+    }
+
+    /**
+     * The film or series TMDB has by exactly this name, for a title FirePlayer sent without a TMDB
+     * id (it had no key, TMDB wasn't sure, or an older FirePlayer): its name or original name is
+     * {@code name} written plainly (see {@link #plain}), and when {@code year} is known (0 if not),
+     * a film is from within a year of it and a series first aired no later than the year after (the
+     * year can be a later season's); of those, the one from nearest the year. Without a year, only a
+     * name no other title has: a remake by the same name would give the wrong picture, and a title
+     * card is better than that. Null if there is none, or it has no artwork.
+     */
+    Title find(String name, int year, boolean series) throws Exception {
+        String query = "query=" + Uri.encode(name) + "&include_adult=false";
+        // With the year first, as it tells a title from others by its name; then without it, as a
+        // show's year may be a later season's and a film's a year off
+        for (int y : year > 0 ? new int[] {year, 0} : new int[] {0}) {
+            String q = y > 0 ? query + (series ? "&first_air_date_year=" : "&year=") + y : query;
+            JSONArray results = get(series ? "search/tv" : "search/movie", q + "&page=1", DETAIL_AGE).optJSONArray("results");
+            JSONObject best = exact(results, name, year, series);
+            if (best != null) return parse(best, series);
+        }
+        return null;
+    }
+
+    /**
+     * Of TMDB's search results, the one by exactly {@code name} from nearest {@code year} (the more
+     * popular when as near); with no year, the only one by that name, or null (see {@link #find}).
+     */
+    static JSONObject exact(JSONArray results, String name, int year, boolean series) {
+        String wanted = plain(name);
+        JSONObject best = null;
+        int matches = 0;
+        for (int i = 0; results != null && !wanted.isEmpty() && i < results.length(); i++) {
+            JSONObject r = results.optJSONObject(i);
+            if (r == null) continue;
+            boolean named = wanted.equals(plain(r.optString(series ? "name" : "title", "")))
+                    || wanted.equals(plain(r.optString(series ? "original_name" : "original_title", "")));
+            if (!named || !fromAbout(dateOf(r, series), year, series)) continue;
+            matches++;
+            if (best == null) {
+                best = r;
+                continue;
+            }
+            int d = distance(dateOf(r, series), year), bestD = distance(dateOf(best, series), year);
+            if (d < bestD || (d == bestD && r.optDouble("popularity", 0) > best.optDouble("popularity", 0))) best = r;
+        }
+        return year <= 0 && matches > 1 ? null : best;
+    }
+
+    private static String dateOf(JSONObject r, boolean series) {
+        return r.optString(series ? "first_air_date" : "release_date", "");
+    }
+
+    /** How many years {@code date} is from {@code year}; 0 when the year isn't known. */
+    private static int distance(String date, int year) {
+        if (year <= 0) return 0;
+        try {
+            return Math.abs(Integer.parseInt(date.substring(0, 4)) - year);
+        } catch (RuntimeException e) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    private static boolean fromAbout(String date, int year, boolean series) {
+        if (year <= 0) return true;
+        int y;
+        try {
+            y = Integer.parseInt(date.substring(0, 4));
+        } catch (RuntimeException e) {
+            return false;   // no date: nothing tells it from another title by that name
+        }
+        return series ? y <= year + 1 : Math.abs(y - year) <= 1;
+    }
+
+    /** A name written plainly, to compare: lower case, no accents, only letters and digits, "&" as "and". */
+    static String plain(String name) {
+        String s = Normalizer.normalize(name.toLowerCase(Locale.ROOT), Normalizer.Form.NFD).replace("&", "and");
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (Character.isLetterOrDigit(c)) out.append(c);   // accents come apart from their letters, and go here
+        }
+        return out.toString();
     }
 
     private JSONObject detailsOf(long id, boolean series) throws Exception {
