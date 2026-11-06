@@ -236,7 +236,10 @@ public final class HomeButtonService extends AccessibilityService {
      */
     static void glassHomeShown() {
         HomeButtonService s = connected;
-        if (s == null || !s.covering) return;
+        if (s == null || !s.covering || s.shownHold) return;
+        // From the first sign it is shown (its window's focus, or its enter animation, the later by
+        // some 0.3 s on the Max): a second sign doesn't put the lift off again
+        s.shownHold = true;
         s.handler.removeCallbacks(s.lift);
         s.handler.postDelayed(s.lift, SHOWN_HOLD_MS);
     }
@@ -653,12 +656,14 @@ public final class HomeButtonService extends AccessibilityService {
         if (homeCovering || (!covering && cover == null && home != null && home.ready())) {
             boolean across = fade == Fade.ACROSS && !homeCovering;   // over a browse page, Home crossfades in
             covering = homeCovering = true;
+            shownHold = false;
             home.show(across ? COVER_ACROSS_MS : 0);
             return;
         }
         if (cover == null && !addCover(fade, View.VISIBLE)) return;   // no overlay possible right now; the redirect still happens
         if (!covering && blackout == null && fade != coverFade && fade != Fade.FROM_BLACK) restyle(fade);
         covering = true;
+        shownHold = false;
         cover.show(shot);
         if (blackout != null) blackout.setVisibility(View.VISIBLE);
         cover.setVisibility(View.VISIBLE);
@@ -760,10 +765,16 @@ public final class HomeButtonService extends AccessibilityService {
      * Takes the cover away: the black at once, the snapshot faded out by Fire OS (over Glass Home,
      * once it is drawn). A cover made ready but not up stays ready.
      */
+    /** Told (on the main thread) each time a cover over Glass Home goes (see HomeActivity's time). */
+    static Runnable coverGone;
+    /** The cover's lift is already timed from Glass Home being shown. */
+    private boolean shownHold;
+
     private void lift() {
         handler.removeCallbacks(lift);
         if (!covering) return;
         covering = false;
+        if (coverGone != null) coverGone.run();
         if (homeCovering) {
             homeCovering = false;
             // Over Glass Home it fades out and stays, ready for the next press; over anything else it goes

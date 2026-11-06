@@ -319,6 +319,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // Each copy of Home for the Home button's cover is made without the time (see retimeSnapshot)
+        // The time comes in as the cover (which has none) goes
+        HomeButtonService.coverGone = () -> {
+            if (clock.timeAlpha() < 1f) {
+                main.removeCallbacks(timeIn);
+                main.post(timeIn);
+            }
+        };
         HomeSnapshot.copied = () -> {
             if (!resumed) retimeSnapshot(false);
         };
@@ -3064,12 +3071,21 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     public void onEnterAnimationComplete() {
         super.onEnterAnimationComplete();
+        windowShown();
+    }
+
+    /**
+     * The window has focus: it is in front and shown. The Fire TV Stick 4K Max doesn't always tell
+     * of the enter animation on a trip back (the cover then stayed its full 2 s), so this counts too.
+     */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) windowShown();
+    }
+
+    private void windowShown() {
         HomeButtonService.glassHomeShown();
-        // The time comes in as the cover (which has none) goes
-        if (clock.timeAlpha() < 1f) {
-            main.removeCallbacks(timeIn);
-            main.postDelayed(timeIn, HomeButtonService.SHOWN_HOLD_MS + HomeButtonService.COVER_OUT_MS);
-        }
     }
 
     /** After the Home button's trip, the time fades in once the cover (which shows none) has gone. */
