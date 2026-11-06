@@ -46,6 +46,10 @@ final class ShelfPage extends ViewGroup {
 
         /** Focus moved into the shelves (the top bar steps aside) or back to the hero. */
         void onScrolled(ShelfPage page, boolean intoShelves);
+
+        /** The hero's artwork has come in after it was shown: the glass above it needs its backdrop again. */
+        default void onBackdropChanged(ShelfPage page) {
+        }
     }
 
     // Geometry in design px (1920 wide)
@@ -127,6 +131,11 @@ final class ShelfPage extends ViewGroup {
         }
     };
     private final Runnable invalidator = this::invalidateAll;
+    /** The hero's artwork come in: the page draws it, and the bars' glass is frosted from it (it was graphite). */
+    private final Runnable heroArtIn = () -> {
+        invalidateAll();
+        if (listener != null && model != null) listener.onBackdropChanged(this);
+    };
 
     // The parts, and what each was last drawn with, so that only parts that change are redrawn
     private final Layer backdropLayer, heroLayer;
@@ -343,6 +352,7 @@ final class ShelfPage extends ViewGroup {
         applyScroll();
         invalidateAll();
         if (listener != null) listener.onHeroShown(this);
+        prefetchNextHero();
     }
 
     /** A part per shelf, after the backdrop and the hero's text. */
@@ -848,6 +858,14 @@ final class ShelfPage extends ViewGroup {
         backdropLayer.invalidate();
         heroLayer.invalidate();
         if (listener != null) listener.onHeroShown(this);
+        prefetchNextHero();
+    }
+
+    /** The next hero's artwork, decoded ahead (it turns every 8 s), so it and the glass above it are right as it shows. */
+    private void prefetchNextHero() {
+        if (model == null || model.hero.size() < 2 || getWidth() <= 0) return;
+        PageModel.Feature next = model.hero.get((hero + 1) % model.hero.size());
+        if (next.game == null && next.imageUrl != null) images.get(next.imageUrl, getWidth(), false, null);
     }
 
     /**
@@ -989,7 +1007,7 @@ final class ShelfPage extends ViewGroup {
     }
 
     private Bitmap heroArt(PageModel.Feature f, int w) {
-        return f == null || f.imageUrl == null ? null : images.get(f.imageUrl, w, false, invalidator);
+        return f == null || f.imageUrl == null ? null : images.get(f.imageUrl, w, false, heroArtIn);
     }
 
     /**

@@ -8,6 +8,8 @@ final class HeroSlide {
     final Brand brand;
     final Bitmap background;    // featured backdrop or the user's background; null until one has loaded
     final String label, title, meta, body;
+    /** Its glass frost (Backdrop.render), made before it is shown; null: made when it is shown. */
+    volatile Bitmap frost;
 
     private HeroSlide(String appKey, Brand brand, Bitmap background, String label, String title, String meta, String body) {
         this.appKey = appKey;

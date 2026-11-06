@@ -784,6 +784,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 } catch (Exception e) {
                     continue;
                 }
+                // Its glass frost is made now, with the picture, so the glass is right as soon as it shows
+                try {
+                    Bitmap frost = Backdrop.render(slide);
+                    frost.prepareToDraw();
+                    slide.frost = frost;
+                } catch (RuntimeException | OutOfMemoryError e) {
+                    // made when it is shown, as before
+                }
                 main.post(() -> addFeaturedSlide(slide, generation));
             }
         });
@@ -971,24 +979,29 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         HeroSlide slide = stage.current();
         if (slide == null) return;
         final int generation = ++backdropGeneration;
-        // The background's own is ready-made: only another slide's is rendered
-        if (slide == backgroundSlide && backgroundSmall != null) {
-            Bitmap small = backgroundSmall;
-            main.post(() -> applyHomeBackdrop(small, generation));
+        // A frost made already (the background's own, the one on now, or a featured slide's made as it
+        // loaded) goes on with the scene, in the same frame; only another is rendered first
+        Bitmap ready = slide == backgroundSlide && backgroundSmall != null ? backgroundSmall
+                : slide == homeBackdropSlide && homeBackdrop != null ? homeBackdrop : slide.frost;
+        if (ready != null) {
+            applyHomeBackdrop(ready, generation, slide);
             return;
         }
         worker.execute(() -> {
             Bitmap small = Backdrop.render(slide);
-            main.post(() -> applyHomeBackdrop(small, generation));
+            small.prepareToDraw();   // onto the GPU now, not in the first frame that draws it
+            main.post(() -> applyHomeBackdrop(small, generation, slide));
         });
     }
 
-    /** The backdrop the Home glass shows now. */
+    /** The backdrop the Home glass shows now, and the slide it was made from. */
     private Bitmap homeBackdrop;
+    private HeroSlide homeBackdropSlide;
 
-    private void applyHomeBackdrop(Bitmap small, int generation) {
+    private void applyHomeBackdrop(Bitmap small, int generation, HeroSlide slide) {
         if (generation != backdropGeneration) return;
         homeBackdrop = small;
+        homeBackdropSlide = slide;
         dockGlass.setBackdrop(small, screenW, screenH);
         if (menuPage == null) {
             menuGlass.setBackdrop(small, screenW, screenH);
@@ -1014,6 +1027,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         capsule.invalidate();
         sourceButton.invalidate();
         tabs.invalidate();
+        // Open panels drew their glass with the old frost (an invalidate on one that isn't shown does nothing)
+        control.invalidate();
+        panel.invalidate();
+        sources.invalidate();
+        prompt.invalidate();
     }
 
     // ---- Weather ----------------------------------------------------------------------------
@@ -1695,6 +1713,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         setBarBackdrop(source.barBackdrop());
         PageModel.Feature hero = source.currentHero();
         if (hero != null) prefetchLinks(hero.ref);
+    }
+
+    @Override
+    public void onBackdropChanged(ShelfPage source) {
+        if (source == currentPage()) setBarBackdrop(source.barBackdrop());
     }
 
     @Override
