@@ -375,7 +375,11 @@ public final class HomeButtonService extends AccessibilityService {
         // Glass Home going to the back for it is not the Home button
         if (HomeActivity.inFront) opening(TIVIMATE);
         try {
-            startActivity(open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            // As from the app row: a film player left in TiviMate's task is cleared (FirePlayer's finishOnTaskLaunch).
+            // Not from a film playing now: that would end it without giving TiviMate its place.
+            int flags = Intent.FLAG_ACTIVITY_NEW_TASK;
+            if (!FirePlayerTitles.PACKAGE.equals(front)) flags |= Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED;
+            startActivity(open.addFlags(flags));
         } catch (ActivityNotFoundException | SecurityException e) {
             // gone since it was looked up
         }

@@ -327,6 +327,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 main.removeCallbacks(timeIn);
                 main.post(timeIn);
             }
+            // Stopped while a cover was up (nothing is drawn into the snapshot during a trip): the time comes out now
+            if (stopped) main.post(() -> {
+                if (stopped) blankSnapshot();
+            });
         };
         HomeSnapshot.copied = () -> {
             if (resumed) makeBlanks();
