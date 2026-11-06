@@ -36,6 +36,14 @@ final class ClockCapsule extends View {
     private String time = "";
     /** Drawn without its time (Home's snapshot, which the Home button's cover shows: see HomeActivity). */
     boolean timeHidden;
+    /** How much of the time shows (after the Home button's trip it fades in: see HomeActivity). */
+    private float timeAlpha = 1f;
+
+    void setTimeAlpha(float a) {
+        if (a == timeAlpha) return;
+        timeAlpha = a;
+        invalidate();
+    }
     private String initial = "";
     private Bitmap avatar;
     private int item = CONTROL;
@@ -151,7 +159,12 @@ final class ClockCapsule extends View {
 
         Paint.FontMetrics fm = timePaint.getFontMetrics();
         float cy = getHeight() / 2f;
-        if (!timeHidden) canvas.drawText(time, padStart, cy - (fm.ascent + fm.descent) / 2f, timePaint);
+        if (!timeHidden && timeAlpha > 0f) {
+            int a = timePaint.getAlpha();
+            timePaint.setAlpha(Math.round(a * timeAlpha));
+            canvas.drawText(time, padStart, cy - (fm.ascent + fm.descent) / 2f, timePaint);
+            timePaint.setAlpha(a);
+        }
 
         // Control Center: two switches, on a white circle when focused or open
         float ccx = getWidth() - padEnd - size - between - size / 2f;

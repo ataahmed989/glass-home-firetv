@@ -264,6 +264,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     };
     /** The slide on the stage when Home's snapshot was last copied (see {@link #retimeSnapshot}). */
     private HeroSlide snapshotSlide;
+    /** Whether the snapshot is drawn again with the time (Glass Home in front) or without it. */
+    private boolean snapshotWithTime;
     /** The tiles were rearranged since the snapshot was copied: it can't stand in for Home until copied again. */
     private boolean snapshotStale;
     /** Home has been drawn since its snapshot was last copied (see {@link #snapshotLater}). */
@@ -309,6 +311,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             capsule.updateTime();
             clock.timeChanged();
             weather.invalidate();   // re-checks staleness
+            if (resumed) retimeSnapshot(true);
         }
     };
 
@@ -316,7 +319,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // Each copy of Home for the Home button's cover is made without the time (see retimeSnapshot)
-        HomeSnapshot.copied = this::retimeSnapshot;
+        HomeSnapshot.copied = () -> {
+            if (!resumed) retimeSnapshot(false);
+        };
         Rect window = getWindowManager().getCurrentWindowMetrics().getBounds();
         screenW = window.width();
         screenH = window.height();
@@ -842,8 +847,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * settled). Each box is drawn into a copy of its own first: should anything fail, the snapshot
      * stays as it was.
      */
-    private void retimeSnapshot() {
+    private void retimeSnapshot(boolean withTime) {
         if (isDestroyed() || HomeButtonService.tripInProgress()) return;
+        snapshotWithTime = withTime;
         Bitmap shot = HomeSnapshot.drawable();
         View decor = getWindow().peekDecorView();
         if (shot == null || decor == null || shot.getWidth() != decor.getWidth() || shot.getHeight() != decor.getHeight()) return;
@@ -913,7 +919,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (root.getBackground() != null) drawAt(c, root, true);
         drawAt(c, stage, false);
         // Without the time: the clock leaves the stage beneath it, the capsule its glass and avatar
-        if (view == capsule) {
+        if (snapshotWithTime) {
+            drawAt(c, view, false);
+        } else if (view == capsule) {
             capsule.timeHidden = true;
             try {
                 drawAt(c, view, false);
@@ -3057,6 +3065,45 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     public void onEnterAnimationComplete() {
         super.onEnterAnimationComplete();
         HomeButtonService.glassHomeShown();
+        // The time comes in as the cover (which has none) goes
+        if (clock.timeAlpha() < 1f) {
+            main.removeCallbacks(timeIn);
+            main.postDelayed(timeIn, HomeButtonService.SHOWN_HOLD_MS + HomeButtonService.COVER_OUT_MS);
+        }
+    }
+
+    /** After the Home button's trip, the time fades in once the cover (which shows none) has gone. */
+    private final Runnable timeIn = () -> fadeTime(1f);
+    private ValueAnimator timeAnim;
+    /** When Glass Home last went out of sight; a Home press on Home brings it back far sooner than this. */
+    private long stoppedAt = Long.MIN_VALUE / 2;
+    static final long FROM_APP_MS = 1500;
+    static final long TIME_IN_MS = 350;
+
+    private void fadeTime(float to) {
+        if (timeAnim != null) timeAnim.cancel();
+        float from = clock.timeAlpha();
+        if (to == from) return;
+        if (to == 0f || Ui.reducedMotion) {
+            clock.setTimeAlpha(to);
+            capsule.setTimeAlpha(to);
+            return;
+        }
+        timeAnim = ValueAnimator.ofFloat(from, to).setDuration(TIME_IN_MS);
+        timeAnim.setInterpolator(Ui.EASE);
+        timeAnim.addUpdateListener(a -> {
+            float v = (float) a.getAnimatedValue();
+            clock.setTimeAlpha(v);
+            capsule.setTimeAlpha(v);
+        });
+        timeAnim.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator a) {
+                // In front the cover may show the time again: it is the time now
+                if (resumed && clock.timeAlpha() == 1f) retimeSnapshot(true);
+            }
+        });
+        timeAnim.start();
     }
 
     /** Brought forward by the Home button (see HomeButtonService): back to Home with everything closed. */
@@ -3065,6 +3112,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         super.onNewIntent(intent);
         setIntent(intent);
         if (!intent.getBooleanExtra(HomeButtonService.EXTRA_HOME_BUTTON, false)) return;
+        // Back from another app the cover shows no time: none until the cover has gone
+        // (onEnterAnimationComplete), at the latest when it must have. Home pressed on Home keeps it.
+        if (SystemClock.uptimeMillis() - stoppedAt > FROM_APP_MS) {
+            fadeTime(0f);
+            main.removeCallbacks(timeIn);
+            main.postDelayed(timeIn, HomeButtonService.COVER_MAX_MS);
+        }
         cancelLinkWait();
         dropArranging();
         // Everything changes at once, under the snapshot of Home that covers the trip back (see HomeSnapshot)
@@ -3172,6 +3226,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     protected void onStop() {
         super.onStop();
         stopped = true;
+        stoppedAt = SystemClock.uptimeMillis();
+        // Behind another app the cover could come to show an old time: none at all, from now on
+        retimeSnapshot(false);
         main.removeCallbacks(teamsTick);
         ImageCache.get(this).trimMemory();
         for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();

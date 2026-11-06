@@ -182,10 +182,23 @@ final class HomeClock extends View {
         a.start();
     }
 
+    /** How much of the time shows (after the Home button's trip it fades in: see HomeActivity). */
+    private float timeAlpha = 1f;
+
+    void setTimeAlpha(float a) {
+        if (a == timeAlpha) return;
+        timeAlpha = a;
+        invalidate();
+    }
+
+    float timeAlpha() {
+        return timeAlpha;
+    }
+
     @Override
     protected void onDraw(Canvas canvas) {
-        if (drawn == null || presence <= 0f) return;
-        paint.setAlpha(Math.round(255 * presence));
+        if (drawn == null || presence <= 0f || timeAlpha <= 0f) return;
+        paint.setAlpha(Math.round(255 * presence * timeAlpha));
         canvas.drawBitmap(drawn, 0, 0, paint);
     }
 

@@ -118,21 +118,38 @@ public class CoverTimeTest {
         TestHome h = rested();
         Rect clockBox = box(clock(h)), capsuleBox = box(h.capsule);
         assertEquals("7:30", clock(h).time());
-        assertNotNull("Home has each copy blanked as it comes in", HomeSnapshot.copied);
-        Bitmap shot = HomeSnapshot.latest(), live = render(h);
+        // Behind another app: the time comes out of the snapshot, the rest stays as copied
+        Bitmap live = render(h);
+        h.controller.pause().stop();
+        TestHome.idle();
+        Bitmap shot = HomeSnapshot.latest();
         save(shot, "cover-time-blank.png");
         assertTrue("the cover has no clock digits where Home shows them", differing(shot, live, true, clockBox) > 1000);
         assertTrue("nor the capsule's time", differing(shot, live, true, capsuleBox) > 100);
 
-        // An hour behind another app: nothing is drawn into it, and it still shows no time
-        h.controller.pause().stop();
-        TestHome.idle();
-        Bitmap blank = HomeSnapshot.latest().copy(Bitmap.Config.ARGB_8888, false);
+        // An hour on: nothing is drawn into it, so it still shows no time, never an old one
+        Bitmap blank = shot.copy(Bitmap.Config.ARGB_8888, false);
         int then = HomeSnapshot.retimes;
         tick(h, Fixtures.RECORDED_AT + 61 * MINUTE);
         assertEquals("8:31", clock(h).time());
         assertEquals(then, HomeSnapshot.retimes);
         assertEquals(0, differing(blank, HomeSnapshot.latest(), true, clockBox, capsuleBox));
+    }
+
+    /** In front the cover (for Home pressed on Home) shows the time, kept to the minute: no blink. */
+    @Test
+    public void inFrontTheSnapshotKeepsTheTime() throws Exception {
+        TestHome h = rested();
+        Rect clockBox = box(clock(h)), capsuleBefore = box(h.capsule);
+        int retimes = HomeSnapshot.retimes;
+        tick(h, Fixtures.RECORDED_AT + 31 * MINUTE);
+        assertEquals("8:01", clock(h).time());
+        assertEquals(retimes + 1, HomeSnapshot.retimes);
+        Rect capsuleBox = new Rect(capsuleBefore);
+        capsuleBox.union(box(h.capsule));
+        Bitmap after = HomeSnapshot.latest(), fresh = render(h);
+        assertEquals(0, differing(after, fresh, true, clockBox));
+        assertEquals(0, differing(after, fresh, true, capsuleBox));
     }
 
     /** The cover up for a trip back: the snapshot under it is left alone. */
