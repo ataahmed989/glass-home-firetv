@@ -2743,6 +2743,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      */
     private boolean acceptStep(KeyEvent event) {
         long t = event.getEventTime();
+        freshPress = event.getRepeatCount() == 0;
         if (event.getRepeatCount() == 0) {
             lastStepTime = t;
             return true;
@@ -2845,6 +2846,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     /** Adjacent tile left/right, same column up/down, and no wrapping at row or grid edges. */
+    /** The arrow being handled was just pressed, not held: only then does a row of apps wrap round. */
+    private boolean freshPress = true;
+
     private void moveInGrid(int direction) {
         int count = adapter.getItemCount();
         if (count == 0) {
@@ -2859,10 +2863,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         int column = pos % Ui.COLUMNS, row = pos / Ui.COLUMNS, target = pos;
         switch (direction) {
             case View.FOCUS_LEFT:
+                // Past either end of a row of apps, round to its other end
                 if (column > 0) target = pos - 1;
+                else if (freshPress) target = Math.min(row * Ui.COLUMNS + Ui.COLUMNS - 1, count - 1);
                 break;
             case View.FOCUS_RIGHT:
                 if (column < Ui.COLUMNS - 1 && pos + 1 < count) target = pos + 1;
+                else if (freshPress) target = row * Ui.COLUMNS;
                 break;
             case View.FOCUS_UP:
                 if (row == 0) {

@@ -47,13 +47,17 @@ public class NavigationTest {
         assertEquals(Zone.GRID, h.zone());
 
         h.press(KEYCODE_DPAD_LEFT);
-        assertEquals("left edge stops", 0, h.focused());
+        assertEquals("Left from the first app goes round to the row's last", 5, h.focused());
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("and Right from the last round to the first", 0, h.focused());
         for (int i = 1; i <= 5; i++) {
             h.press(KEYCODE_DPAD_RIGHT);
             assertEquals(i, h.focused());
         }
         h.press(KEYCODE_DPAD_RIGHT);
-        assertEquals("right edge stops, no wrap to next row", 5, h.focused());
+        assertEquals("round within the row, never to the next row", 0, h.focused());
+        h.press(KEYCODE_DPAD_LEFT);
+        assertEquals(5, h.focused());
 
         h.press(KEYCODE_DPAD_DOWN);
         assertEquals("same column", 11, h.focused());

@@ -161,7 +161,7 @@ public class PagesTest {
         assertEquals("a move on Home", 1, h.activity.navTicks());
         h.press(KEYCODE_DPAD_LEFT);
         h.press(KEYCODE_DPAD_LEFT);
-        assertEquals("the second Left is at the edge: nothing moved", 2, h.activity.navTicks());
+        assertEquals("the second Left goes round to the row's end: a move too", 3, h.activity.navTicks());
 
         h.menu();
         int onTabs = h.activity.navTicks();
