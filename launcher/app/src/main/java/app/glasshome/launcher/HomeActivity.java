@@ -786,10 +786,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     continue;
                 }
                 // Its glass frost is made now, with the picture, so the glass is right as soon as it shows
+                // (not when focus has moved on meanwhile: the slide won't be shown)
+                if (generation != featuredGeneration) return;
                 try {
-                    Bitmap frost = Backdrop.render(slide);
-                    frost.prepareToDraw();
-                    slide.frost = frost;
+                    slide.frost = Backdrop.render(slide);
                 } catch (RuntimeException | OutOfMemoryError e) {
                     // made when it is shown, as before
                 }
@@ -3348,6 +3348,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(teamsTick);
         ImageCache.get(this).trimMemory();
         for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
+        // Frosts made ahead for featured titles go behind another app, but the one on now (others are made again when shown)
+        if (slides != null) {
+            HeroSlide on = stage.current();
+            for (HeroSlide sl : slides) if (sl != on) sl.frost = null;
+        }
         titleDetail.trimMemory();
         main.removeCallbacks(collect);
         main.postDelayed(collect, COLLECT_AFTER_MS);
