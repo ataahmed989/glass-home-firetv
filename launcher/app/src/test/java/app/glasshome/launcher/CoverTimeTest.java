@@ -192,17 +192,24 @@ public class CoverTimeTest {
 
     /** Left from a browse page, Home is not as its snapshot shows it: the snapshot is left alone. */
     @Test
-    public void leftFromABrowsePageNothingIsDrawn() throws Exception {
+    public void leftFromABrowsePageTheTimeComesOutToo() throws Exception {
         TestHome h = rested();
+        Rect clockBox = box(clock(h)), capsuleBox = box(h.capsule);
+        Bitmap withTime = HomeSnapshot.latest().copy(Bitmap.Config.ARGB_8888, false);
+        // Off to Movies (a Continue Watching card, say), and from there to another app
         h.menu();
         h.press(android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
         assertNotEquals(HomeActivity.HOME, h.activity.page());
         h.controller.pause().stop();
         TestHome.idle();
-        Bitmap before = HomeSnapshot.latest().copy(Bitmap.Config.ARGB_8888, false);
+        Bitmap left = HomeSnapshot.latest().copy(Bitmap.Config.ARGB_8888, false);
+        assertTrue("the time came out of the clock's box", differing(withTime, left, true, clockBox) > 1000);
+        assertTrue("and the capsule's", differing(withTime, left, true, capsuleBox) > 100);
+        assertEquals("the rest of the snapshot as copied", 0, differing(withTime, left, false, clockBox, capsuleBox));
+        // An hour on: nothing is drawn into it
         int retimes = HomeSnapshot.retimes;
         tick(h, Fixtures.RECORDED_AT + 61 * MINUTE);
         assertEquals(retimes, HomeSnapshot.retimes);
-        assertTrue(before.sameAs(HomeSnapshot.latest()));
+        assertTrue(left.sameAs(HomeSnapshot.latest()));
     }
 }

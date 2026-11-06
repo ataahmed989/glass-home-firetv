@@ -327,7 +327,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             }
         };
         HomeSnapshot.copied = () -> {
-            if (!resumed) retimeSnapshot(false);
+            if (resumed) makeBlanks();
+            else blankSnapshot();
         };
         Rect window = getWindowManager().getCurrentWindowMetrics().getBounds();
         screenW = window.width();
@@ -862,34 +863,104 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * settled). Each box is drawn into a copy of its own first: should anything fail, the snapshot
      * stays as it was.
      */
-    private void retimeSnapshot(boolean withTime) {
-        if (isDestroyed() || HomeButtonService.tripInProgress()) return;
-        snapshotWithTime = withTime;
+    private boolean retimeSnapshot(boolean withTime) {
+        if (isDestroyed() || HomeButtonService.tripInProgress()) return false;
         Bitmap shot = HomeSnapshot.drawable();
-        View decor = getWindow().peekDecorView();
-        if (shot == null || decor == null || shot.getWidth() != decor.getWidth() || shot.getHeight() != decor.getHeight()) return;
-        HeroSlide slide = stage.current();
-        if (slide == null || slide != snapshotSlide || stage.hiddenSlide() != null || !homeAsTheHomeButtonLeavesIt()) return;
+        Rect[] boxes = snapshotBoxes(shot);
+        if (boxes == null) return false;
+        Rect clockBox = boxes[0], capsuleBox = boxes[1];
         try {
-            Rect clockBox = windowRect(clock), capsuleBox = windowRect(capsule);
-            if (capsule.isLayoutRequested()) {
-                // A time of another width: Glass Home out of sight lays nothing out, so the capsule is
-                // measured here as its parent would (by its right edge), and drawn over both its boxes
-                capsule.measure(View.MeasureSpec.makeMeasureSpec(decor.getWidth(), View.MeasureSpec.AT_MOST),
-                        View.MeasureSpec.makeMeasureSpec(capsule.getHeight(), View.MeasureSpec.EXACTLY));
-                capsule.layout(capsule.getRight() - capsule.getMeasuredWidth(), capsule.getTop(), capsule.getRight(), capsule.getBottom());
-                capsuleBox.union(windowRect(capsule));
+            // The boxes without the time are kept too, before anything is drawn: whenever Glass Home is
+            // left later, from wherever, they take the time out (see blankSnapshot)
+            snapshotWithTime = false;
+            Bitmap clockNone = retimed(shot, clock, new Rect(clockBox)), capsuleNone = retimed(shot, capsule, new Rect(capsuleBox));
+            keepBlanks(clockNone, clockBox, capsuleNone, capsuleBox);
+            Bitmap clockPatch = clockNone, capsulePatch = capsuleNone;
+            if (withTime) {
+                snapshotWithTime = true;
+                clockPatch = retimed(shot, clock, new Rect(clockBox));
+                capsulePatch = retimed(shot, capsule, new Rect(capsuleBox));
             }
-            Bitmap clockPatch = retimed(shot, clock, clockBox), capsulePatch = retimed(shot, capsule, capsuleBox);
-            if (clockPatch == null && capsulePatch == null) return;
-            Canvas c = new Canvas(shot);
-            Paint copy = new Paint();
-            copy.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC));
-            if (clockPatch != null) c.drawBitmap(clockPatch, clockBox.left, clockBox.top, copy);
-            if (capsulePatch != null) c.drawBitmap(capsulePatch, capsuleBox.left, capsuleBox.top, copy);
-            HomeSnapshot.redrawn();
+            if (clockPatch == null && capsulePatch == null) return false;
+            drawPatches(shot, clockPatch, clockBox, capsulePatch, capsuleBox);
+            return true;
         } catch (RuntimeException | OutOfMemoryError e) {
-            // the snapshot stays as it was copied
+            return false;   // the snapshot stays as it was copied
+        }
+    }
+
+    /**
+     * The clock's and the capsule's boxes in the snapshot (window coordinates), when Home still looks
+     * as the snapshot shows it, so they can be drawn again over it; null otherwise.
+     */
+    private Rect[] snapshotBoxes(Bitmap shot) {
+        View decor = getWindow().peekDecorView();
+        if (shot == null || decor == null || shot.getWidth() != decor.getWidth() || shot.getHeight() != decor.getHeight()) return null;
+        HeroSlide slide = stage.current();
+        if (slide == null || slide != snapshotSlide || stage.hiddenSlide() != null || !homeAsTheHomeButtonLeavesIt()) return null;
+        Rect clockBox = windowRect(clock), capsuleBox = windowRect(capsule);
+        if (capsule.isLayoutRequested()) {
+            // A time of another width: Glass Home out of sight lays nothing out, so the capsule is
+            // measured here as its parent would (by its right edge), and drawn over both its boxes
+            capsule.measure(View.MeasureSpec.makeMeasureSpec(decor.getWidth(), View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(capsule.getHeight(), View.MeasureSpec.EXACTLY));
+            capsule.layout(capsule.getRight() - capsule.getMeasuredWidth(), capsule.getTop(), capsule.getRight(), capsule.getBottom());
+            capsuleBox.union(windowRect(capsule));
+        }
+        // Kept to the snapshot, so each box and what is drawn into it are the same size
+        if (!clockBox.intersect(0, 0, shot.getWidth(), shot.getHeight())) clockBox.setEmpty();
+        if (!capsuleBox.intersect(0, 0, shot.getWidth(), shot.getHeight())) capsuleBox.setEmpty();
+        return new Rect[] {clockBox, capsuleBox};
+    }
+
+    private void drawPatches(Bitmap shot, Bitmap clockPatch, Rect clockBox, Bitmap capsulePatch, Rect capsuleBox) {
+        Canvas c = new Canvas(shot);
+        Paint copy = new Paint();
+        copy.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC));
+        if (clockPatch != null) c.drawBitmap(clockPatch, Math.max(0, clockBox.left), Math.max(0, clockBox.top), copy);
+        if (capsulePatch != null) c.drawBitmap(capsulePatch, Math.max(0, capsuleBox.left), Math.max(0, capsuleBox.top), copy);
+        HomeSnapshot.redrawn();
+    }
+
+    /** The snapshot's clock and capsule boxes without the time, made while Home matched it, and for which copy. */
+    private Bitmap clockBlank, capsuleBlank;
+    private final Rect clockBlankAt = new Rect(), capsuleBlankAt = new Rect();
+    private int blanksFor = -1;
+
+    private void keepBlanks(Bitmap clockNone, Rect clockBox, Bitmap capsuleNone, Rect capsuleBox) {
+        clockBlank = clockNone;
+        capsuleBlank = capsuleNone;
+        clockBlankAt.set(clockBox);
+        capsuleBlankAt.set(capsuleBox);
+        blanksFor = HomeSnapshot.copies;
+    }
+
+    /** A copy has come in with Home in front (it keeps its time): its boxes without the time are made now. */
+    private void makeBlanks() {
+        Bitmap shot = HomeSnapshot.drawable();
+        Rect[] boxes = snapshotBoxes(shot);
+        if (boxes == null) return;
+        try {
+            snapshotWithTime = false;
+            keepBlanks(retimed(shot, clock, new Rect(boxes[0])), boxes[0], retimed(shot, capsule, new Rect(boxes[1])), boxes[1]);
+        } catch (RuntimeException | OutOfMemoryError e) {
+            // none kept: blankSnapshot can only do what retimeSnapshot can
+        }
+    }
+
+    /**
+     * Glass Home behind another app: no time in the snapshot, whatever Home shows by now (left from
+     * Movies, a Continue Watching card, a panel or the hero, Home no longer looks as the snapshot does,
+     * and the boxes kept while it did take the time out instead).
+     */
+    private void blankSnapshot() {
+        if (retimeSnapshot(false) || isDestroyed() || HomeButtonService.tripInProgress()) return;
+        Bitmap shot = HomeSnapshot.drawable();
+        if (shot == null || blanksFor != HomeSnapshot.copies || (clockBlank == null && capsuleBlank == null)) return;
+        try {
+            drawPatches(shot, clockBlank, clockBlankAt, capsuleBlank, capsuleBlankAt);
+        } catch (RuntimeException | OutOfMemoryError e) {
+            // the snapshot stays as it was
         }
     }
 
@@ -3273,7 +3344,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         stopped = true;
         stoppedAt = SystemClock.uptimeMillis();
         // Behind another app the cover could come to show an old time: none at all, from now on
-        retimeSnapshot(false);
+        blankSnapshot();
         main.removeCallbacks(teamsTick);
         ImageCache.get(this).trimMemory();
         for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
