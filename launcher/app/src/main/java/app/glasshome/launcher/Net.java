@@ -27,7 +27,29 @@ final class Net {
         byte[] get(String url, String bearer) throws IOException;
     }
 
-    static volatile Fetcher fetcher = Net::http;
+    /** A server's answer other than OK. A 4xx, but for Request Timeout and Too Many Requests, won't change if asked again. */
+    static final class HttpError extends IOException {
+        final int code;
+
+        HttpError(int code, String host) {
+            super("HTTP " + code + " from " + host);
+            this.code = code;
+        }
+
+        boolean lasting() {
+            return code / 100 == 4 && code != 408 && code != 429;
+        }
+    }
+
+    private static final Fetcher HTTP = Net::http;
+    static volatile Fetcher fetcher = HTTP;
+
+    /**
+     * Artwork gives up sooner than a page: a stalled download holds one of ImageCache's three loaders
+     * half as long, and is tried again later. (Finding the server's address takes as long as Fire OS
+     * lets it; these don't cover that.)
+     */
+    private static final int PICTURE_CONNECT_MS = 5_000, PICTURE_READ_MS = 10_000;
 
     private Net() {}
 
@@ -35,17 +57,27 @@ final class Net {
         return fetcher.get(url, bearer);
     }
 
+    /** A picture, over the network unless a test stands in for it. */
+    static byte[] picture(String url) throws IOException {
+        Fetcher f = fetcher;
+        return f == HTTP ? http(url, null, PICTURE_CONNECT_MS, PICTURE_READ_MS) : f.get(url, null);
+    }
+
     static byte[] http(String url, String bearer) throws IOException {
+        return http(url, bearer, 10_000, 20_000);
+    }
+
+    private static byte[] http(String url, String bearer, int connectMs, int readMs) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(10000);
-        c.setReadTimeout(20000);
+        c.setConnectTimeout(connectMs);
+        c.setReadTimeout(readMs);
         c.setRequestProperty("Accept-Encoding", "gzip");
         // ESPN turns away generic Java clients; name the app instead
         c.setRequestProperty("User-Agent", "GlassHome/1.0 (Linux; Android 11; Fire TV)");
         if (bearer != null) c.setRequestProperty("Authorization", "Bearer " + bearer);
         try {
             int code = c.getResponseCode();
-            if (code / 100 != 2) throw new IOException("HTTP " + code + " from " + c.getURL().getHost());
+            if (code / 100 != 2) throw new HttpError(code, c.getURL().getHost());
             try (InputStream in = c.getInputStream()) {
                 return gunzip(readAll(in));
             }
@@ -73,12 +105,25 @@ final class Net {
         }
     }
 
+    /**
+     * Writes {@code body} to {@code file} whole or not at all: into a temp file of its own, then
+     * moved into place, so two downloads of one picture (two sizes of it) can be written at once.
+     */
     static void write(File file, byte[] body) throws IOException {
-        File tmp = new File(file.getPath() + ".part");
-        try (OutputStream out = new FileOutputStream(tmp)) {
-            out.write(body);
+        File dir = file.getParentFile();
+        // Fire OS can empty an app's cache, folders and all, while it runs (storage running low)
+        if (dir != null) dir.mkdirs();
+        File tmp = File.createTempFile(file.getName() + ".", ".part", dir);
+        boolean moved = false;
+        try {
+            try (OutputStream out = new FileOutputStream(tmp)) {
+                out.write(body);
+            }
+            moved = tmp.renameTo(file);
+            if (!moved) throw new IOException("cache write failed");
+        } finally {
+            if (!moved) tmp.delete();
         }
-        if (!tmp.renameTo(file)) throw new IOException("cache write failed");
         file.setLastModified(Clock.now());
     }
 
