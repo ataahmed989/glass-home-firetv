@@ -82,7 +82,7 @@ public class SettingsTest {
         assertFalse("Sleep's permission is not granted here", h.panel.option(11).enabled);
         assertTrue("Updates, first", h.panel.option(0).action);
         for (int i = 0; i < 20; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option", 17, h.panel.focusedIndex());
+        assertEquals("stops at the last option", 18, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 

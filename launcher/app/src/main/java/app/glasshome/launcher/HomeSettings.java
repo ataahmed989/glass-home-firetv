@@ -26,6 +26,15 @@ final class HomeSettings {
         prefs.edit().putBoolean("featured", on).apply();
     }
 
+    /** Whether Home shows FirePlayer's Continue Watching beneath the apps. */
+    boolean homeContinue() {
+        return prefs.getBoolean("home_continue", true);
+    }
+
+    void setHomeContinue(boolean on) {
+        prefs.edit().putBoolean("home_continue", on).apply();
+    }
+
     /** The constant background behind every app; null until chosen, which means the first one. */
     String backgroundName() {
         return prefs.getString("background", null);

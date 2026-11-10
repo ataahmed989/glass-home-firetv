@@ -273,6 +273,7 @@ final class SettingsPanel extends View {
             case "CONTROL CENTER":
                 return "REMOTE & CONTROL CENTER";
             case "FIRE OS":
+            case "HOME ROW":
                 return "APPS";
             default:
                 return section;

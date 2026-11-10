@@ -65,8 +65,8 @@ final class ShelfPage extends ViewGroup {
     private static final int POSTER_W = 222, POSTER_H = 333, RANK_W = 124, POSTER_GAP = 22;
     private static final int RADIUS = 14;
     /**
-     * How much bigger the chosen card is. It grows from its left edge, which stays under the shelf's title, and the
-     * cards after it move along to make room (as Prime Video's rows do).
+     * How much bigger the chosen card is. It grows from its top-left corner, so it stays under the shelf's title and
+     * clear of it, and the cards after it move along to make room (as Prime Video's rows do).
      */
     private static final float CARD_SCALE = 1.14f;
     /** The white outline round the chosen card: its gap from the card, and its width. */
@@ -167,9 +167,20 @@ final class ShelfPage extends ViewGroup {
         }
     };
 
+    /**
+     * A single shelf laid into Home's own page (Home's Continue Watching): no backdrop, no hero and no scrolling of its
+     * own; Home places and moves it.
+     */
+    private final boolean embedded;
+
     ShelfPage(Context context, String name) {
+        this(context, name, false);
+    }
+
+    ShelfPage(Context context, String name, boolean embedded) {
         super(context);
         this.name = name;
+        this.embedded = embedded;
         painter = new FeaturePainter(context);
         images = ImageCache.get(context);
         setFocusable(true);
@@ -549,7 +560,7 @@ final class ShelfPage extends ViewGroup {
         float x = Ui.px(LEFT) + cols[row] * pitch(s) - rowX[row] + (poster ? Ui.px(RANK_W) : 0);
         float y = rowTop[row] - targetScroll() + Ui.px(TITLE_H);
         float grow = (CARD_SCALE - 1f) * focusT;
-        out.set(x, y - h * grow / 2f, x + w + w * grow, y + h + h * grow / 2f);
+        out.set(x, y, x + w + w * grow, y + h + h * grow);
         return true;
     }
 
@@ -587,6 +598,10 @@ final class ShelfPage extends ViewGroup {
         if (model == null) backdropLayer.invalidate();
     }
 
+    int shelfCount() {
+        return model == null ? 0 : model.shelves.size();
+    }
+
     boolean hasModel() {
         return model != null;
     }
@@ -618,7 +633,7 @@ final class ShelfPage extends ViewGroup {
     private void layoutRows() {
         int n = model.shelves.size();
         rowTop = new float[n];
-        float y = Ui.px(FIRST_ROW_TOP);
+        float y = embedded ? Ui.px(ROW_MARGIN) : Ui.px(FIRST_ROW_TOP);
         for (int i = 0; i < n; i++) {
             rowTop[i] = y;
             y += rowHeight(model.shelves.get(i));
@@ -719,6 +734,26 @@ final class ShelfPage extends ViewGroup {
         return true;
     }
 
+    /** An embedded shelf back at its first card, as when Home goes back to its top. */
+    void resetShelf() {
+        if (model == null || cols.length == 0) return;
+        if (rowAnim != null) rowAnim.cancel();
+        cols[0] = 0;
+        rowX[0] = 0f;
+        markFocus(false);
+        invalidateRow(0);
+    }
+
+    /** An embedded shelf's height, its room for the chosen card's growth included. */
+    static int embeddedHeight() {
+        return Ui.px(2 * ROW_MARGIN + TITLE_H + CARD_H + CAPTION_H + ROW_GAP);
+    }
+
+    /** How far below an embedded shelf's top its title's band starts. */
+    static int embeddedTitleTop() {
+        return Ui.px(ROW_MARGIN);
+    }
+
     /** Back to the hero's first button, scrolled to the top (when the tab is chosen again). */
     void reset() {
         if (model == null) return;
@@ -734,7 +769,7 @@ final class ShelfPage extends ViewGroup {
         markFocus(true);
         animateScroll();
         boolean into = r >= 0;
-        if (into != intoShelves) {
+        if (!embedded && into != intoShelves) {
             intoShelves = into;
             if (listener != null) listener.onScrolled(this, into);
         }
@@ -749,7 +784,7 @@ final class ShelfPage extends ViewGroup {
     }
 
     private float targetScroll() {
-        if (row < 0 || model == null) return 0f;
+        if (embedded || row < 0 || model == null) return 0f;
         return rowTop[row] - Ui.px(FOCUS_ROW_TOP);
     }
 
@@ -966,6 +1001,7 @@ final class ShelfPage extends ViewGroup {
      * banner scrolls away. Browsing the shelves then draws only that one picture behind them.
      */
     private void drawBackdrop(Canvas c) {
+        if (embedded) return;   // Home's own background shows through
         int w = getWidth(), h = getHeight();
         if (model == null) {
             painter.drawBackground(c, w, h, null, null);
@@ -1072,6 +1108,7 @@ final class ShelfPage extends ViewGroup {
 
     /** The hero's text, which scrolls up with it and fades on the way. */
     private void drawHero(Canvas c) {
+        if (embedded) return;
         float alpha = heroTextAlpha();
         drawnTextAlpha = alpha;
         if (model != null && alpha > 0f) drawHeroText(c, alpha);
@@ -1259,9 +1296,8 @@ final class ShelfPage extends ViewGroup {
             h = Ui.px(CARD_H);
         }
         float scale = 1f + (CARD_SCALE - 1f) * focus;
-        float cy = top + h / 2f;
         c.save();
-        c.scale(scale, scale, ix, cy);
+        c.scale(scale, scale, ix, top);
         // Cards draw in their own coordinates, so their gradients can be built once and reused
         c.translate(ix, top);
         rect.set(0, 0, w, h);
@@ -1314,7 +1350,7 @@ final class ShelfPage extends ViewGroup {
             cardSub.setAlpha(Math.round(0x99 * captions));
         }
         // Captions move down with the grown card instead of being covered by it
-        float capTop = top + h + (scale - 1f) * h / 2f;
+        float capTop = top + h * scale;
         c.drawText(TextUtils.ellipsize(card.title, cardTitle, w, TextUtils.TruncateAt.END).toString(), ix, capTop + Ui.px(34), cardTitle);
         if (!card.subtitle.isEmpty()) {
             c.drawText(TextUtils.ellipsize(card.subtitle, cardSub, w, TextUtils.TruncateAt.END).toString(), ix, capTop + Ui.px(62), cardSub);

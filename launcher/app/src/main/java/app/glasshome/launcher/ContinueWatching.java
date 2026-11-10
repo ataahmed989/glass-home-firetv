@@ -142,6 +142,16 @@ final class ContinueWatching {
         return Collections.unmodifiableList(out);
     }
 
+    /** Films and shows together for Home's row, in FirePlayer's order (most recently watched first); an id once. */
+    static List<Item> forHome(List<Item> items) {
+        List<Item> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Item i : items) {
+            if (out.size() < MAX && seen.add((i.episode ? "s:" : "f:") + i.id)) out.add(i);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
     /** Takes an entry off the list (for an episode, its show); false if FirePlayer couldn't be asked. Off the main thread. */
     static boolean delete(Context context, String id) {
         try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(ITEMS)) {

@@ -83,7 +83,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
     private static final long RESUME_REFRESH_MS = 600;
 
-    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE, TILE_MENU }
+    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE, TILE_MENU, HOME_ROW }
 
     static final int HOME = 0, MOVIES = 1, TV = 2, SPORTS = 3;
 
@@ -131,10 +131,25 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Map<String, String> continueArt = new HashMap<>();
     private final Set<String> continueArtPending = new HashSet<>();
     private ContinueWatching.Watcher continueWatcher;
+    /**
+     * Home's own Continue Watching row beneath the apps (films and episodes together), peeking under the dock while
+     * the last row of apps is in it; GONE when FirePlayer has nothing to continue or the row is switched off.
+     */
+    private ShelfPage homeRow;
+    /** Darkens Home's background while the page is moved up to its Continue Watching row. */
+    private View homeDim;
+    /** 0 with the apps in the dock, 1 with Home moved up to its Continue Watching row. */
+    private float homeLift;
+    private ValueAnimator liftAnim;
+    /** How far Home moves up for its Continue Watching row, and how dark its background gets then (as on the shelves). */
+    private static final int HOME_LIFT = 340;
+    /** The row's extra room under the dock once Home has moved up to it. */
+    private static final int HOME_ROW_ROOM = 14;
+    private static final float HOME_DIM = 0.6f;
     /** FirePlayer's list changed: asked again a moment later, once whatever changed it has settled. */
     private static final long CONTINUE_SETTLE_MS = 250;
     private final Runnable continueChanged = () -> {
-        if (this.resumed && isContinuePage(this.page)) refreshContinue();
+        if (this.resumed && wantsContinue(this.page)) refreshContinue();
     };
     /** The page whose Continue Watching card has its menu open, and that card's entry; or null. */
     private ShelfPage menuPage;
@@ -558,6 +573,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
         stage = new HeroStage(this);
         root.addView(stage, match());
+        homeDim = new View(this);
+        homeDim.setBackgroundColor(0xFF000000);
+        homeDim.setAlpha(0f);
+        root.addView(homeDim, match());
 
         // The Lock Screen's clock, over the background and under everything else
         clock = new HomeClock(this);
@@ -602,9 +621,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 Math.max(0, screenH - Ui.px(Ui.DOCK_ROW_TOP) - Ui.px(Ui.ROW_PITCH)));
         grid.getViewTreeObserver().addOnPreDrawListener(() -> {
             fadeRowsAboveDock();
+            placeHomeRow();
             return true;
         });
         root.addView(grid, match());
+        homeRow = new ShelfPage(this, "Continue Watching", true);
+        homeRow.setModel(new PageModel());
+        homeRow.setListener(this);
+        homeRow.setVisibility(View.GONE);
+        root.addView(homeRow, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ShelfPage.embeddedHeight(), Gravity.TOP));
         // Over the tiles, under everything else: a tile's menu
         menuGlass = new Glass(config.blurGlass, 0xE62A2E36);
         tileMenu = new TileMenu(this, menuGlass);
@@ -1383,7 +1408,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (sp.hasModel()) setBarBackdrop(sp.barBackdrop());
             if (!sp.hasModel() || sp.age() > (p == SPORTS ? SPORTS_LIVE_MS : CATALOG_REFRESH_MS)) loadPage(p);
             else if (p == SPORTS) scheduleSports();
-            if (isContinuePage(p)) refreshContinue();
+            if (wantsContinue(p)) refreshContinue();
         }
     }
 
@@ -1495,6 +1520,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return p == MOVIES || p == TV;
     }
 
+    /** Pages showing FirePlayer's Continue Watching: Movies, TV Shows, and Home unless its row is switched off. */
+    private boolean wantsContinue(int p) {
+        return isContinuePage(p) || (p == HOME && settings.homeContinue());
+    }
+
     /**
      * Asks FirePlayer for its Continue Watching (off the main thread: it is another app) and puts
      * it atop Movies and TV Shows, then looks up the artwork of entries new to it. Asked when one of
@@ -1527,17 +1557,37 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void showContinue(List<ContinueWatching.Item> items) {
         if (menuPage != null) {
             // Its card gone from FirePlayer meanwhile, or moved from under the menu: the menu goes
-            int was = indexOf(ContinueWatching.of(continueItems, menuItem.episode), menuItem.id);
-            if (indexOf(ContinueWatching.of(items, menuItem.episode), menuItem.id) != was) closeTileMenu(true, false);
+            boolean home = menuPage == homeRow;
+            int was = indexOf(continueRow(continueItems, menuItem, home), menuItem.id);
+            if (indexOf(continueRow(items, menuItem, home), menuItem.id) != was) closeTileMenu(true, false);
         }
         continueItems = items;
-        pages[MOVIES].setTopShelf(continueShelf(false));
-        pages[TV].setTopShelf(continueShelf(true));
+        pages[MOVIES].setTopShelf(continueShelf(ContinueWatching.of(items, false)));
+        pages[TV].setTopShelf(continueShelf(ContinueWatching.of(items, true)));
+        showHomeRow();
     }
 
-    /** The row for Movies (films) or, with {@code episodes}, TV Shows (one episode per show); null if there is none. */
-    private PageModel.Shelf continueShelf(boolean episodes) {
-        List<ContinueWatching.Item> items = ContinueWatching.of(continueItems, episodes);
+    private static List<ContinueWatching.Item> continueRow(List<ContinueWatching.Item> items, ContinueWatching.Item item, boolean home) {
+        return home ? ContinueWatching.forHome(items) : ContinueWatching.of(items, item.episode);
+    }
+
+    /** Home's row: films and shows together, one card per show; gone (and nothing peeks) when there's none or it's off. */
+    private void showHomeRow() {
+        PageModel.Shelf s = settings.homeContinue() ? continueShelf(ContinueWatching.forHome(continueItems)) : null;
+        PageModel m = new PageModel();
+        if (s != null) m.shelves.add(s);
+        homeRow.setModel(m);
+        if (s == null && (zone() == Zone.HOME_ROW || homeLift > 0f || homeZone == Zone.HOME_ROW)) {
+            boolean there = zone() == Zone.HOME_ROW;
+            leaveHomeRow(false);
+            if (there) focusGrid(lastFocused);
+        }
+        homeRow.setVisibility(s == null ? View.GONE : View.VISIBLE);
+        placeHomeRow();
+    }
+
+    /** A Continue Watching row of {@code items}; null if there are none. */
+    private PageModel.Shelf continueShelf(List<ContinueWatching.Item> items) {
         if (items.isEmpty()) return null;
         PageModel.Shelf s = new PageModel.Shelf("Continue Watching", PageModel.Style.CONTINUE);
         for (ContinueWatching.Item item : items) {
@@ -1618,9 +1668,107 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         return -1;
     }
 
+    /** Where the card under focus is: Home's Continue Watching row, or the page shown. */
+    private ShelfPage cardPage() {
+        return page == HOME && homeRow.isFocused() ? homeRow : currentPage();
+    }
+
+    // ---- Home's Continue Watching row -------------------------------------------------------
+
+    /** Whether Home has its row to go down to. */
+    private boolean homeRowShown() {
+        return homeRowHasCards();
+    }
+
+    private boolean homeRowHasCards() {
+        return homeRow != null && homeRow.getVisibility() == View.VISIBLE && homeRow.hasModel() && homeRow.shelfCount() > 0;
+    }
+
+    /**
+     * The row hangs beneath the last row of apps: its title and the tops of its cards peek under the dock while that
+     * row is in it, as the next row of apps does; further up the apps, it is below the screen.
+     */
+    private void placeHomeRow() {
+        if (homeRow == null || homeRow.getVisibility() != View.VISIBLE) return;
+        int count = adapter.getItemCount();
+        View last = count == 0 ? null : layoutManager.findViewByPosition(count - 1);
+        float y = last == null ? screenH
+                : grid.getTop() + last.getTop() + Ui.px(Ui.DOCK_BOTTOM - Ui.DOCK_ROW_TOP - 4) - ShelfPage.embeddedTitleTop();
+        y += grid.getTranslationY() + Ui.px(HOME_ROW_ROOM) * homeLift;
+        if (homeRow.getTranslationY() != y) homeRow.setTranslationY(y);
+    }
+
+    /** Down from the last row of apps: Home moves up, the background dims, the clock and widgets go, the first card has focus. */
+    private void enterHomeRow() {
+        homeRow.requestFocus();
+        lastZone = Zone.HOME_ROW;
+        homeZone = Zone.HOME_ROW;
+        setBarHidden(true);
+        animateLift(1f, false);
+    }
+
+    /** Back on the row (from the tabs, or Glass Home coming back). */
+    private void focusHomeRow() {
+        if (!homeRowHasCards()) {
+            homeZone = Zone.GRID;
+            focusGrid(lastFocused);
+            return;
+        }
+        enterHomeRow();
+    }
+
+    /** Home settles back down onto its apps (focus is moved by the caller). */
+    private void leaveHomeRow(boolean animate) {
+        if (homeZone == Zone.HOME_ROW) homeZone = Zone.GRID;
+        if (lastZone == Zone.HOME_ROW) lastZone = Zone.GRID;
+        setBarHidden(false, !animate);
+        animateLift(0f, !animate);
+    }
+
+    private void animateLift(float to, boolean atOnce) {
+        if (liftAnim != null) liftAnim.cancel();
+        if (atOnce || Ui.reducedMotion || homeLift == to) {
+            applyLift(to);
+            return;
+        }
+        liftAnim = ValueAnimator.ofFloat(homeLift, to);
+        liftAnim.setDuration(Ui.SCROLL_MS);
+        liftAnim.setInterpolator(Ui.EASE);
+        liftAnim.addUpdateListener(a -> applyLift((float) a.getAnimatedValue()));
+        liftAnim.start();
+    }
+
+    private void applyLift(float t) {
+        homeLift = t;
+        float dy = -Ui.px(HOME_LIFT) * t;
+        grid.setTranslationY(dy);
+        clock.setTranslationY(dy);
+        clock.setAlpha(1f - t);
+        weather.setTranslationY(dy);
+        weather.setAlpha(1f - t);
+        homeDim.setAlpha(HOME_DIM * t);
+        dock.dim = HOME_DIM * t;
+        grid.invalidate();
+        placeHomeRow();
+    }
+
+    /** How far Home is moved up for its Continue Watching row, 0 to 1 (tests). */
+    float homeLift() {
+        return homeLift;
+    }
+
+    ShelfPage homeRow() {
+        return homeRow;
+    }
+
+    /** How many apps the grid holds (tests). */
+    int appCount() {
+        return adapter.getItemCount();
+    }
+
     /** The Continue Watching entry under focus on the page shown, or null. */
     private ContinueWatching.Item focusedContinueItem() {
-        ShelfPage sp = currentPage();
+        ShelfPage sp = cardPage();
         PageModel.Card card = sp == null ? null : sp.focusedCard();
         return card != null && card.ref instanceof ContinueWatching.Item ? (ContinueWatching.Item) card.ref : null;
     }
@@ -1630,18 +1778,22 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * with Resume and Remove. The card keeps focus and the rest of the page dims back.
      */
     private void openCardMenu() {
-        ShelfPage sp = currentPage();
+        ShelfPage sp = cardPage();
         ContinueWatching.Item item = focusedContinueItem();
         android.graphics.RectF card = new android.graphics.RectF();
         if (item == null || !sp.focusedCardBounds(card)) return;
+        // Home's row sits wherever Home has moved it; a page fills the screen
+        if (sp == homeRow) card.offset(0, homeRow.getTop() + homeRow.getTranslationY());
         tileMenuShownAt = SystemClock.uptimeMillis();
         menuArmed = false;
         menuPage = sp;
         menuItem = item;
         sp.setMenuOpen(true, true);
-        // Its glass frosts the page behind it, not Home (until a tile's menu opens on Home again)
-        menuGlass.setBackdrop(sp.sceneBackdrop(), screenW, screenH);
-        menuGlassOnPage = true;
+        if (sp != homeRow) {
+            // Its glass frosts the page behind it, not Home (until a tile's menu opens on Home again)
+            menuGlass.setBackdrop(sp.sceneBackdrop(), screenW, screenH);
+            menuGlassOnPage = true;
+        }
         tileMenu.show(card.centerX(), card.top, card.bottom, card.width(), new String[] {"Resume", "Remove"}, new Runnable[] {
                 () -> {
                     closeTileMenu(true, false);
@@ -1886,6 +2038,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Back down from the tabs or the capsule to wherever focus last was on Home. */
     private void focusHomeContent() {
+        if (homeZone == Zone.HOME_ROW) {
+            focusHomeRow();
+            return;
+        }
         setBarHidden(false);
         if (homeZone == Zone.HERO && stage.hasAction()) focusHero();
         else if (homeZone == Zone.WEATHER) focusWeather();
@@ -1967,6 +2123,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (sourceButton.isFocused()) return Zone.SOURCE;
         if (page != HOME) return Zone.PAGE;
         if (stage.isFocused()) return Zone.HERO;
+        if (homeRow != null && homeRow.isFocused()) return Zone.HOME_ROW;
         if (weather.isFocused()) return Zone.WEATHER;
         return Zone.GRID;
     }
@@ -2115,6 +2272,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         options.add(SettingsPanel.Option.toggle("REMOTE", "Hold Menu for TiviMate",
                 !tivimate ? "TiviMate isn't installed" : hold ? "" : "Needs the Home service, set up over ADB",
                 hold, hold && settings.menuHoldOpensTiviMate()));
+        options.add(SettingsPanel.Option.toggle("HOME ROW", "Continue Watching on Home", "", true, settings.homeContinue()));
         Set<String> hiddenHere = settings.hiddenApps();
         options.add(SettingsPanel.Option.action("APPS", "Hidden Apps",
                 hiddenHere.isEmpty() ? "None" : hiddenHere.size() + " hidden: select to show them again",
@@ -2637,6 +2795,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 SystemControls.setSleepTimer(this, 0);
             }
             return;
+        } else if (option.toggle && option.section.equals("HOME ROW")) {
+            settings.setHomeContinue(option.checked);
+            if (option.checked) refreshContinue();
+            else showHomeRow();
+            return;
         } else if (option.toggle) {
             settings.setFeaturedTitles(option.checked);
         } else if (option.section.equals("WIDGETS")) {
@@ -2695,6 +2858,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 case CONTROL:
                     if (control.isOpen()) control.requestFocus();
                     else focusCapsule();
+                    break;
+                case HOME_ROW:
+                    if (page == HOME) focusHomeRow();
+                    else focusPage();
                     break;
                 case PAGE:
                     focusPage();
@@ -2757,7 +2924,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     selectArmed = false;
                     main.removeCallbacks(pressIn);
                     openTileMenu();
-                } else if (selectArmed && zone() == Zone.PAGE && focusedContinueItem() != null
+                } else if (selectArmed && (zone() == Zone.PAGE || zone() == Zone.HOME_ROW) && focusedContinueItem() != null
                         && event.getEventTime() - event.getDownTime() >= TILE_HOLD_MS) {
                     // Likewise on a Continue Watching card (other cards keep their press on release)
                     selectArmed = false;
@@ -2817,7 +2984,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Where focus is, as far as the arrows can move it: unchanged after a move, nothing moved. */
     private String focusSignature() {
         return zone() + "/" + focusedPosition() + "/" + capsule.item() + "/" + tabs.selected() + "/" + weather.focusedKind()
-                + "/" + panel.focusedIndex() + "/" + control.focusedItem() + "/" + tileMenu.isOpen() + tileMenu.focusedIndex();
+                + "/" + panel.focusedIndex() + "/" + control.focusedItem() + "/" + tileMenu.isOpen() + tileMenu.focusedIndex()
+                + "/" + (homeRow == null ? -1 : homeRow.focusedColumn());
     }
 
     private static int direction(int code) {
@@ -2893,6 +3061,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     sp.left();
                 } else {
                     sp.right(freshPress);
+                }
+                return;
+            case HOME_ROW:
+                if (direction == View.FOCUS_UP) {
+                    // Back to the last row of apps, where focus came from
+                    leaveHomeRow(true);
+                    focusGrid(lastFocused);
+                } else if (direction == View.FOCUS_LEFT) {
+                    homeRow.left();
+                } else if (direction == View.FOCUS_RIGHT) {
+                    homeRow.right(freshPress);
                 }
                 return;
             case HERO:
@@ -2983,6 +3162,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case View.FOCUS_DOWN:
                 if (pos + Ui.COLUMNS < count) target = pos + Ui.COLUMNS;
                 else if ((row + 1) * Ui.COLUMNS < count) target = count - 1;   // shorter row: its nearest tile
+                else if (homeRowShown()) {
+                    // Below the last row of apps: Home's Continue Watching
+                    enterHomeRow();
+                    return;
+                }
                 break;
             default:
                 break;
@@ -3022,6 +3206,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case PAGE:
                 currentPage().select();
+                return;
+            case HOME_ROW:
+                homeRow.select();
                 return;
             case PAGE_DETAIL:
                 PageModel.Action a = titleDetail.focusedAction();
@@ -3078,6 +3265,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case PAGE:
                 if (!currentPage().back()) focusTabs();
                 return;
+            case HOME_ROW:
+                // To the top of Home
+                leaveHomeRow(true);
+                homeRow.resetShelf();
+                focusGrid(lastDockColumn);
+                return;
             case TABS:
                 if (page != HOME) {
                     selectTab(HOME, false);
@@ -3124,7 +3317,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Runnable resumeRefresh = () -> {
         if (!resumed || isFinishing() || isDestroyed()) return;
         if (page != HOME && pages[page].hasModel()) loadPage(page);
-        if (isContinuePage(page)) refreshContinue();
+        if (wantsContinue(page)) refreshContinue();
         refreshMyTeams();
         HomeServiceRecovery.restore(this);
     };
@@ -3262,6 +3455,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             prompt.setVisibility(View.GONE);
         }
         if (page != HOME) showHomeAtOnce();
+        if (homeLift > 0f || zone() == Zone.HOME_ROW || homeZone == Zone.HOME_ROW) {
+            // From Home's Continue Watching row: the top of Home, at once, under the cover
+            leaveHomeRow(false);
+            homeRow.resetShelf();
+            lastFocused = lastDockColumn;
+            focusGrid(lastFocused);
+        }
         lastZone = Zone.GRID;
         homeZone = Zone.GRID;
     }

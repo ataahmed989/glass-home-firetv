@@ -134,6 +134,8 @@ public class ContinueWatchingTest {
         FakeFirePlayer.queries = 0;
         searches.clear();
         org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(16));
+        // These are the rows of Movies and TV Shows; Home's own row is tested in HomeContinueRowTest
+        new HomeSettings(org.robolectric.RuntimeEnvironment.getApplication()).setHomeContinue(false);
     }
 
     @After
