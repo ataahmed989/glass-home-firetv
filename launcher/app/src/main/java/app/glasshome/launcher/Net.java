@@ -27,6 +27,20 @@ final class Net {
         byte[] get(String url, String bearer) throws IOException;
     }
 
+    /** A server's answer other than OK. A 4xx, but for Request Timeout and Too Many Requests, won't change if asked again. */
+    static final class HttpError extends IOException {
+        final int code;
+
+        HttpError(int code, String host) {
+            super("HTTP " + code + " from " + host);
+            this.code = code;
+        }
+
+        boolean lasting() {
+            return code / 100 == 4 && code != 408 && code != 429;
+        }
+    }
+
     static volatile Fetcher fetcher = Net::http;
 
     private Net() {}
@@ -45,7 +59,7 @@ final class Net {
         if (bearer != null) c.setRequestProperty("Authorization", "Bearer " + bearer);
         try {
             int code = c.getResponseCode();
-            if (code / 100 != 2) throw new IOException("HTTP " + code + " from " + c.getURL().getHost());
+            if (code / 100 != 2) throw new HttpError(code, c.getURL().getHost());
             try (InputStream in = c.getInputStream()) {
                 return gunzip(readAll(in));
             }
@@ -73,12 +87,25 @@ final class Net {
         }
     }
 
+    /**
+     * Writes {@code body} to {@code file} whole or not at all: into a temp file of its own, then
+     * moved into place, so two downloads of one picture (two sizes of it) can be written at once.
+     */
     static void write(File file, byte[] body) throws IOException {
-        File tmp = new File(file.getPath() + ".part");
-        try (OutputStream out = new FileOutputStream(tmp)) {
-            out.write(body);
+        File dir = file.getParentFile();
+        // Fire OS can empty an app's cache, folders and all, while it runs (storage running low)
+        if (dir != null) dir.mkdirs();
+        File tmp = File.createTempFile(file.getName() + ".", ".part", dir);
+        boolean moved = false;
+        try {
+            try (OutputStream out = new FileOutputStream(tmp)) {
+                out.write(body);
+            }
+            moved = tmp.renameTo(file);
+            if (!moved) throw new IOException("cache write failed");
+        } finally {
+            if (!moved) tmp.delete();
         }
-        if (!tmp.renameTo(file)) throw new IOException("cache write failed");
         file.setLastModified(Clock.now());
     }
 
