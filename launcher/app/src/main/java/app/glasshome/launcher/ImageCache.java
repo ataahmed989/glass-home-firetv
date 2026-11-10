@@ -3,6 +3,7 @@ package app.glasshome.launcher;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -30,16 +31,24 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * A load that fails (the TV's DNS through Tailscale drops out now and then) is tried again on its
  * own while a view is waiting for it, a few seconds later and then less and less often, so a cover
- * comes in once it can without anything on screen having to ask again.
+ * comes in once it can without anything on screen having to ask again. A picture that comes over the
+ * network says the network is back: the others from there that failed are tried again at once.
  */
 final class ImageCache {
     /** A failed load is tried again 2 s later, then twice as long each time, up to 2 minutes apart... */
     private static final long RETRY_FIRST_MS = 2_000, RETRY_MAX_MS = 120_000;
-    /** ...for about half an hour; then it rests until it is drawn again, or Clear Cache. */
+    /** ...for about half an hour; then it rests until it is drawn again, or Clear Cache... */
     private static final int MAX_TRIES = 20;
+    /** ...but for want of the network, it is still tried this often while a view waits for it (a long outage). */
+    private static final long RETRY_SLOW_MS = 10 * 60_000;
+    /** Tried again at once when another from the same server comes in, so many at a time: each that comes brings on more. */
+    private static final int BRING_ON = 6;
     private static final long DISK_LIMIT = 160L * 1024 * 1024, DISK_TRIM_TO = 110L * 1024 * 1024;
-    /** Who the loaders take first: covers being drawn, then covers fetched ahead of a scroll, then tidying the disk. */
-    private static final int NOW = 0, AHEAD = 1, TIDY = 2;
+    /**
+     * Who the loaders take first: covers being drawn, then those being drawn that failed before (they
+     * may well fail again), then covers fetched ahead of a scroll, then tidying the disk.
+     */
+    private static final int NOW = 0, AGAIN = 1, AHEAD = 2, TIDY = 3;
     private static ImageCache instance;
 
     private final LruCache<String, Bitmap> memory;
@@ -121,10 +130,15 @@ final class ImageCache {
         if (onLoaded != null) load.waitFor(onLoaded);
         if (load.inPool) {
             if (onLoaded != null) promote(load);
-        } else if (!load.retryDue) {
+        } else {
             long wait = load.notBefore - SystemClock.uptimeMillis();
-            if (wait <= 0) start(load);
-            else if (onLoaded != null) tryAgainIn(load, wait);   // failed lately: when it may, not on every draw
+            if (wait <= 0) {
+                // First asked, or it failed long enough ago (it rests, or was only fetched ahead)
+                main.removeCallbacks(load.retry);
+                start(load);
+            } else if (onLoaded != null && !load.retryDue) {
+                tryAgainIn(load, wait);   // failed lately: when it may, not on every draw
+            }
         }
         return null;
     }
@@ -170,17 +184,21 @@ final class ImageCache {
 
     /** One image at one size, from first asked until it comes in. Main thread, but for {@link #run}. */
     private final class Load extends Job {
-        final String key, url;
+        final String key, url, host;
         final int width;
         final boolean alpha;
         /** Who is waiting for it, weakly, so that a view long gone isn't kept alive... */
         private final List<WeakReference<Runnable>> waiting = new ArrayList<>();
-        /** ...and for sure while it loads and is tried again (half an hour at most), however the caller keeps it. */
+        /** ...and for sure while it loads and is tried again (about half an hour from its last fresh start), however the caller keeps it. */
         final List<Runnable> held = new ArrayList<>();
-        final Runnable retry = () -> start(this);
+        final Runnable retry = () -> tryAgain(this);
         boolean inPool, retryDue;
+        /** It last failed for want of the network (no answer at all), not for what the server sent. */
+        boolean offline;
         int tries;
         long notBefore;
+        /** This try downloaded it, rather than finding it on disk. Loader thread. */
+        boolean fetched;
 
         Load(String key, String url, int width, boolean alpha) {
             super(AHEAD);
@@ -188,6 +206,7 @@ final class ImageCache {
             this.url = url;
             this.width = width;
             this.alpha = alpha;
+            host = String.valueOf(Uri.parse(url).getHost());
         }
 
         void waitFor(Runnable r) {
@@ -214,22 +233,24 @@ final class ImageCache {
         public void run() {
             Bitmap loaded = null;
             Throwable error = null;
+            fetched = false;
             try {
-                loaded = load(url, width, alpha);
+                loaded = load(this);
             } catch (Throwable e) {
                 // An OutOfMemoryError too: the load has to end either way, or it would stay "loading" for good
                 error = e;
             }
             Bitmap result = loaded;
             Throwable failure = error;
-            main.post(() -> finished(this, result, failure));
+            boolean overNetwork = fetched;
+            main.post(() -> finished(this, result, failure, overNetwork));
         }
     }
 
     private void start(Load load) {
         load.retryDue = false;
         load.inPool = true;
-        load.rank = load.held.isEmpty() ? AHEAD : NOW;
+        load.rank = load.held.isEmpty() ? AHEAD : load.tries == 0 ? NOW : AGAIN;
         load.order = Job.queued.incrementAndGet();
         try {
             pool.execute(load);
@@ -240,9 +261,9 @@ final class ImageCache {
 
     /** Fetched ahead and now being drawn: it goes before the others fetched ahead. */
     private void promote(Load load) {
-        if (load.rank == NOW) return;
+        if (load.rank != AHEAD) return;
         if (pool.getQueue().remove(load)) {
-            load.rank = NOW;
+            load.rank = load.tries == 0 ? NOW : AGAIN;
             try {
                 pool.execute(load);
             } catch (RejectedExecutionException e) {
@@ -256,33 +277,77 @@ final class ImageCache {
         main.postDelayed(load.retry, ms);
     }
 
-    private void finished(Load load, Bitmap loaded, Throwable error) {
+    /** Its time to try again came, or the network came back. */
+    private void tryAgain(Load load) {
+        load.retryDue = false;
+        if (load.held.isEmpty()) {
+            // It rests: tried only for a view still waiting for it, and held for sure while it loads
+            List<Runnable> live = load.waiters();
+            if (live.isEmpty()) {
+                loads.remove(load.key, load);
+                return;
+            }
+            for (Runnable r : live) load.hold(r);
+        }
+        start(load);
+    }
+
+    private void finished(Load load, Bitmap loaded, Throwable error, boolean overNetwork) {
         load.inPool = false;
         if (loaded != null) {
             loads.remove(load.key);
             memory.put(load.key, loaded);
             for (Runnable r : load.waiters()) r.run();
+            if (overNetwork) bringOn(load.host);
             return;
         }
         // Short of memory: give some back before it is tried again
         if (error instanceof OutOfMemoryError) memory.trimToSize(memory.maxSize() / 2);
         load.tries++;
+        load.offline = error instanceof IOException && !(error instanceof Net.HttpError);
         // A picture the server says isn't there rests at once; anything else is tried again, less often each time
         boolean lasting = error instanceof Net.HttpError && ((Net.HttpError) error).lasting();
         long wait = lasting ? RETRY_MAX_MS : Math.min(RETRY_MAX_MS, RETRY_FIRST_MS << Math.min(load.tries - 1, 16));
         load.notBefore = SystemClock.uptimeMillis() + wait;
         if (!lasting && load.tries < MAX_TRIES && !load.held.isEmpty()) {
             tryAgainIn(load, wait);
-        } else {
-            // Rests: whoever is waiting is kept only weakly until it is drawn again (or Clear Cache)
-            load.held.clear();
+            return;
+        }
+        // Rests: whoever is waiting is kept only weakly until it is drawn again (or Clear Cache)...
+        load.held.clear();
+        // ...but while the network is out, it is still tried now and then for a view still waiting for it:
+        // a shelf held still through a long outage (nothing drawn again) gets its covers once it is back
+        if (load.offline && !load.waiters().isEmpty()) tryAgainIn(load, RETRY_SLOW_MS);
+    }
+
+    /**
+     * A picture just came over the network from {@code host}, so the network is back: those from
+     * there that failed for want of it, and are still waited for, are tried again now and from the
+     * start, rather than when their wait is up (up to 2 minutes, or 10 once they rest).
+     */
+    private void bringOn(String host) {
+        List<Load> due = new ArrayList<>();
+        for (Load other : loads.values()) {
+            if (!other.retryDue || !other.offline || !other.host.equals(host)) continue;
+            due.add(other);
+            if (due.size() == BRING_ON) break;
+        }
+        for (Load other : due) {
+            main.removeCallbacks(other.retry);
+            other.tries = 0;
+            tryAgain(other);
         }
     }
 
     /** Downloads (once) and decodes; null if what came is no picture. On a loader thread. */
-    private Bitmap load(String url, int width, boolean alpha) throws IOException {
+    private Bitmap load(Load job) throws IOException {
+        String url = job.url;
+        int width = job.width;
         File file = new File(dir, Net.sha1(url));
-        if (!file.isFile()) Net.write(file, Net.get(url, null));
+        if (!file.isFile()) {
+            Net.write(file, Net.picture(url));
+            job.fetched = true;
+        }
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inJustDecodeBounds = true;
         BitmapFactory.decodeFile(file.getPath(), o);
@@ -294,7 +359,7 @@ final class ImageCache {
         while (o.outWidth / (sample * 2) >= width) sample *= 2;
         o.inJustDecodeBounds = false;
         o.inSampleSize = sample;
-        o.inPreferredConfig = alpha ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
+        o.inPreferredConfig = job.alpha ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
         Bitmap b = BitmapFactory.decodeFile(file.getPath(), o);
         if (b == null) {
             file.delete();

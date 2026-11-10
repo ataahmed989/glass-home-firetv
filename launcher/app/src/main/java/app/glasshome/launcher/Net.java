@@ -41,7 +41,15 @@ final class Net {
         }
     }
 
-    static volatile Fetcher fetcher = Net::http;
+    private static final Fetcher HTTP = Net::http;
+    static volatile Fetcher fetcher = HTTP;
+
+    /**
+     * Artwork gives up sooner than a page: a stalled download holds one of ImageCache's three loaders
+     * half as long, and is tried again later. (Finding the server's address takes as long as Fire OS
+     * lets it; these don't cover that.)
+     */
+    private static final int PICTURE_CONNECT_MS = 5_000, PICTURE_READ_MS = 10_000;
 
     private Net() {}
 
@@ -49,10 +57,20 @@ final class Net {
         return fetcher.get(url, bearer);
     }
 
+    /** A picture, over the network unless a test stands in for it. */
+    static byte[] picture(String url) throws IOException {
+        Fetcher f = fetcher;
+        return f == HTTP ? http(url, null, PICTURE_CONNECT_MS, PICTURE_READ_MS) : f.get(url, null);
+    }
+
     static byte[] http(String url, String bearer) throws IOException {
+        return http(url, bearer, 10_000, 20_000);
+    }
+
+    private static byte[] http(String url, String bearer, int connectMs, int readMs) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(10000);
-        c.setReadTimeout(20000);
+        c.setConnectTimeout(connectMs);
+        c.setReadTimeout(readMs);
         c.setRequestProperty("Accept-Encoding", "gzip");
         // ESPN turns away generic Java clients; name the app instead
         c.setRequestProperty("User-Agent", "GlassHome/1.0 (Linux; Android 11; Fire TV)");

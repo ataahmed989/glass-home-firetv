@@ -35,21 +35,23 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Covers come in on their own: one that fails (the TV's DNS through Tailscale drops out now and
  * then) is tried again a few seconds later, then less and less often, for the view still waiting
- * for it, without anything on screen having to ask again. Nothing can leave a cover loading for
- * good, two sizes of one picture load side by side, and covers being drawn go before the ones
- * fetched ahead of a scroll.
+ * for it, without anything on screen having to ask again, and the others follow at once when one
+ * comes in. Nothing can leave a cover loading for good, two sizes of one picture load side by side,
+ * and covers being drawn go before those that failed before, then the ones fetched ahead of a scroll.
  */
 @RunWith(RobolectricTestRunner.class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @LooperMode(LooperMode.Mode.PAUSED)
 @Config(sdk = 30)
 public class ImageCacheTest {
-    private static final String URL = "https://image.tmdb.org/t/p/w780/cover.jpg";
+    private static final String BASE = "https://image.tmdb.org/t/p/w780/";
+    private static final String URL = BASE + "cover.jpg";
     private static final byte[] COVER = picture(400, 225);
 
     private Net.Fetcher saved;
@@ -91,7 +93,7 @@ public class ImageCacheTest {
     }
 
     @Test
-    public void triesAgainLessOftenThenRestsUntilAskedAgain() {
+    public void triesAgainLessOftenThenOnlyNowAndThen() {
         Net.fetcher = (url, bearer) -> {
             fetches.incrementAndGet();
             throw new IOException("offline");
@@ -109,7 +111,8 @@ public class ImageCacheTest {
         int inAnHour = fetches.get();
         assertTrue("an hour offline is a bounded number of tries: " + inAnHour, inAnHour <= 25);
         after(60 * 60_000);
-        assertEquals("then it rests", inAnHour, fetches.get());
+        int nextHour = fetches.get() - inAnHour;
+        assertTrue("then only now and then: " + nextHour, nextHour >= 1 && nextHour <= 7);
 
         // Back online: Clear Cache tries again now for the view still showing it
         Net.fetcher = (url, bearer) -> COVER;
@@ -128,7 +131,7 @@ public class ImageCacheTest {
         finish();
         after(2 * 60 * 60_000);
         int tries = fetches.get();
-        assertTrue("it rested: " + tries, tries <= 25);
+        assertTrue("it slowed right down: " + tries, tries <= 30);
         Net.fetcher = (url, bearer) -> {
             fetches.incrementAndGet();
             return COVER;
@@ -295,6 +298,7 @@ public class ImageCacheTest {
     @Test
     public void aViewLongGoneIsNotKeptForever() throws Exception {
         Net.fetcher = (url, bearer) -> {
+            fetches.incrementAndGet();
             throw new IOException("offline");
         };
         Runnable gone = () -> arrivals++;
@@ -307,7 +311,94 @@ public class ImageCacheTest {
             System.gc();
             Thread.sleep(20);
         }
-        assertNull("once it stops trying, it lets go of the view", ref.get());
+        assertNull("once it slows down, it lets go of the view", ref.get());
+        int tries = fetches.get();
+        after(2 * 60 * 60_000);
+        assertEquals("and stops trying for it", tries, fetches.get());
+    }
+
+    @Test
+    public void coversThatFailedComeInAsSoonAsAnotherDoes() {
+        AtomicBoolean online = new AtomicBoolean();
+        Net.fetcher = (url, bearer) -> {
+            fetches.incrementAndGet();
+            if (!online.get()) throw new UnknownHostException("image.tmdb.org");
+            return COVER;
+        };
+        // A shelf of covers drawn while DNS is out
+        for (int i = 0; i < 12; i++) cache.get(BASE + "shelf" + i + ".jpg", 300, false, arrived);
+        finish();
+        after(3 * 60_000);   // tried a few times: the next tries are a minute or so away
+        assertEquals(0, arrivals);
+        online.set(true);   // DNS is back
+        cache.get(BASE + "new.jpg", 300, false, arrived);   // a cover scrolled into view comes straight in...
+        finish();   // (the clock doesn't move)
+        assertEquals("...and so do the ones that failed, without waiting out their time", 13, arrivals);
+    }
+
+    @Test
+    public void aCoverFromDiskIsNoSignTheNetworkIsBack() throws IOException {
+        Net.fetcher = (url, bearer) -> {
+            fetches.incrementAndGet();
+            throw new UnknownHostException("image.tmdb.org");
+        };
+        cache.get(URL, 300, false, arrived);
+        finish();
+        after(3 * 60_000);
+        int tries = fetches.get();
+        // Another cover comes in from disk, without the network
+        Net.write(new File(new File(RuntimeEnvironment.getApplication().getCacheDir(), "img"), Net.sha1(BASE + "kept.jpg")), COVER);
+        cache.get(BASE + "kept.jpg", 300, false, arrived);
+        finish();
+        assertEquals(1, arrivals);
+        assertEquals("the one that failed still waits its time", tries, fetches.get());
+    }
+
+    @Test
+    public void aCoverComesInAfterALongOutageWithoutBeingDrawnAgain() {
+        AtomicBoolean online = new AtomicBoolean();
+        Net.fetcher = (url, bearer) -> {
+            fetches.incrementAndGet();
+            if (!online.get()) throw new UnknownHostException("image.tmdb.org");
+            return COVER;
+        };
+        cache.get(URL, 300, false, arrived);
+        finish();
+        after(40 * 60_000);   // the router restarting, the internet out a while
+        assertEquals(0, arrivals);
+        online.set(true);
+        after(20 * 60_000);   // nobody touches the remote, so nothing is drawn again
+        assertEquals("the cover still came in", 1, arrivals);
+    }
+
+    @Test
+    public void aCoverTriedAgainGoesAfterOnesAskedForTheFirstTime() throws Exception {
+        CountDownLatch first = new CountDownLatch(1), rest = new CountDownLatch(1);
+        List<String> order = Collections.synchronizedList(new ArrayList<>());
+        Net.fetcher = (url, bearer) -> {
+            order.add(url);
+            try {
+                if (url.endsWith("busy0")) first.await(5, TimeUnit.SECONDS);
+                else if (url.contains("busy")) rest.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                throw new IOException(e);
+            }
+            if (url.contains("failed") && fetches.incrementAndGet() == 1) throw new UnknownHostException("image.tmdb.org");
+            return COVER;
+        };
+        cache.get(BASE + "failed", 300, false, arrived);
+        finish();   // tried again 2 s later
+        for (int i = 0; i < 3; i++) cache.get(BASE + "busy" + i, 300, false, arrived);
+        for (int i = 0; i < 200 && order.size() < 4; i++) Thread.sleep(10);
+        assertEquals("every loader is busy", 4, order.size());
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2_500));   // its time to try again comes
+        cache.get(BASE + "fresh", 300, false, arrived);   // then a cover scrolled into view for the first time
+        first.countDown();   // one loader comes free
+        for (int i = 0; i < 200 && order.size() < 6; i++) Thread.sleep(10);
+        assertEquals("the new cover goes first: " + order, Arrays.asList(BASE + "fresh", BASE + "failed"), order.subList(4, 6));
+        rest.countDown();
+        finish();
+        assertEquals(5, arrivals);
     }
 
     // ---- Helpers ------------------------------------------------------------------------------
