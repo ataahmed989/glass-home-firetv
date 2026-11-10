@@ -142,9 +142,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private float homeLift;
     private ValueAnimator liftAnim;
     /** How far Home moves up for its Continue Watching row, and how dark its background gets then (as on the shelves). */
-    private static final int HOME_LIFT = 340;
+    private static final int HOME_LIFT = 356;
     /** The row's extra room under the dock once Home has moved up to it. */
-    private static final int HOME_ROW_ROOM = 14;
+    private static final int HOME_ROW_ROOM = 30;
     private static final float HOME_DIM = 0.6f;
     /** FirePlayer's list changed: asked again a moment later, once whatever changed it has settled. */
     private static final long CONTINUE_SETTLE_MS = 250;
@@ -1693,7 +1693,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         int count = adapter.getItemCount();
         View last = count == 0 ? null : layoutManager.findViewByPosition(count - 1);
         float y = last == null ? screenH
-                : grid.getTop() + last.getTop() + Ui.px(Ui.DOCK_BOTTOM - Ui.DOCK_ROW_TOP - 4) - ShelfPage.embeddedTitleTop();
+                : grid.getTop() + last.getTop() + Ui.px(Ui.DOCK_BOTTOM - Ui.DOCK_ROW_TOP + 4) - ShelfPage.embeddedTitleTop();
         y += grid.getTranslationY() + Ui.px(HOME_ROW_ROOM) * homeLift;
         if (homeRow.getTranslationY() != y) homeRow.setTranslationY(y);
     }
