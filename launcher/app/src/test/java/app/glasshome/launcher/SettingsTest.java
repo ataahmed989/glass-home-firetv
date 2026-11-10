@@ -63,26 +63,29 @@ public class SettingsTest {
 
         h.press(KEYCODE_DPAD_CENTER);
         assertEquals(Zone.SETTINGS, h.zone());
-        // Updates and Clear Cache first; then the featured switch (no token here, so unavailable) and the backgrounds
-        assertFalse(h.panel.option(2).enabled);
-        assertEquals("Night Dunes", h.panel.option(3).title);
-        assertEquals("Glow", h.panel.option(4).title);
-        assertEquals("Blue Apple", h.panel.option(6).title);
+        // Updates, Clear Cache and Restart first; then the featured switch (no token here, so unavailable) and the backgrounds
+        assertFalse(h.panel.option(3).enabled);
+        assertEquals("Night Dunes", h.panel.option(4).title);
+        assertEquals("Glow", h.panel.option(5).title);
+        assertEquals("Blue Apple", h.panel.option(7).title);
         assertEquals("starts at the top, on Updates", 0, h.panel.focusedIndex());
-        assertTrue(h.panel.option(3).checked);
+        assertTrue(h.panel.option(4).checked);
         h.press(KEYCODE_DPAD_DOWN);
         assertEquals(1, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("the unavailable switch is skipped", 3, h.panel.focusedIndex());
-        assertEquals("Smart Stack", h.panel.option(7).title);
-        assertEquals("Glances", h.panel.option(8).title);
-        assertTrue("Smart Stack is the default", h.panel.option(7).checked);
-        assertEquals("Tiles", h.panel.option(9).title);
-        assertEquals("List", h.panel.option(10).title);
-        assertFalse("Sleep's permission is not granted here", h.panel.option(11).enabled);
+        assertEquals("Restart Glass Home, beneath Clear Cache", 2, h.panel.focusedIndex());
+        assertEquals("Restart Glass Home", h.panel.option(2).title);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("the unavailable switch is skipped", 4, h.panel.focusedIndex());
+        assertEquals("Smart Stack", h.panel.option(8).title);
+        assertEquals("Glances", h.panel.option(9).title);
+        assertTrue("Smart Stack is the default", h.panel.option(8).checked);
+        assertEquals("Tiles", h.panel.option(10).title);
+        assertEquals("List", h.panel.option(11).title);
+        assertFalse("Sleep's permission is not granted here", h.panel.option(12).enabled);
         assertTrue("Updates, first", h.panel.option(0).action);
         for (int i = 0; i < 20; i++) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("stops at the last option", 18, h.panel.focusedIndex());
+        assertEquals("stops at the last option", 19, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_LEFT);
         assertEquals(Zone.SETTINGS, h.zone());
 
@@ -105,12 +108,12 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        while (h.panel.focusedIndex() < 4) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals("Glow", h.panel.option(4).title);
+        while (h.panel.focusedIndex() < 5) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("Glow", h.panel.option(5).title);
         h.press(KEYCODE_DPAD_CENTER);
         TestHome.settle();
-        assertTrue(h.panel.option(4).checked);
-        assertFalse(h.panel.option(3).checked);
+        assertTrue(h.panel.option(5).checked);
+        assertFalse(h.panel.option(4).checked);
         Bitmap glow = h.stage.current().background;
         assertNotNull(glow);
         assertNotSame(dunes, glow);
@@ -137,11 +140,11 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        while (h.panel.focusedIndex() < 4) h.press(KEYCODE_DPAD_DOWN);   // Glow, after the chosen Night Dunes
+        while (h.panel.focusedIndex() < 5) h.press(KEYCODE_DPAD_DOWN);   // Glow, after the chosen Night Dunes
         h.press(KEYCODE_DPAD_CENTER);
         TestHome.advance(Ui.CONTENT_FADE_MS + 100);
         TestHome.settle();
-        assertTrue(h.panel.option(4).checked);
+        assertTrue(h.panel.option(5).checked);
         assertNull("the old background is let go", h.stage.hiddenSlide());
 
         h.back();
@@ -175,14 +178,14 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertTrue(h.panel.option(2).enabled);
-        assertTrue("on by default", h.panel.option(2).checked);
-        while (h.panel.focusedIndex() < 2) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(2, h.panel.focusedIndex());
+        assertTrue(h.panel.option(3).enabled);
+        assertTrue("on by default", h.panel.option(3).checked);
+        while (h.panel.focusedIndex() < 3) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(3, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
-        assertFalse(h.panel.option(2).checked);
+        assertFalse(h.panel.option(3).checked);
         assertFalse(h.activity.getSharedPreferences("home", 0).getBoolean("featured", true));
-        assertTrue("choosing the switch leaves the background choice alone", h.panel.option(3).checked);
+        assertTrue("choosing the switch leaves the background choice alone", h.panel.option(4).checked);
     }
 
     /**
@@ -200,11 +203,11 @@ public class SettingsTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Home Button Opens Glass Home", h.panel.option(13).title);
-        assertTrue(h.panel.option(13).enabled);
-        assertFalse(h.panel.option(13).checked);
-        while (h.panel.focusedIndex() < 13) h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(13, h.panel.focusedIndex());
+        assertEquals("Home Button Opens Glass Home", h.panel.option(14).title);
+        assertTrue(h.panel.option(14).enabled);
+        assertFalse(h.panel.option(14).checked);
+        while (h.panel.focusedIndex() < 14) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(14, h.panel.focusedIndex());
         h.press(KEYCODE_DPAD_CENTER);
 
         assertTrue(new HomeSettings(app).homeButtonOpensGlassHome());
@@ -232,5 +235,22 @@ public class SettingsTest {
         assertEquals("settings stay open", Zone.SETTINGS, h.zone());
         String said = org.robolectric.shadows.ShadowToast.getTextOfLatestToast();
         assertTrue(said, said.startsWith("Cache cleared: "));
+    }
+
+    @Test
+    public void restartGlassHomeClosesAndHandsOverToTheRestart() throws Exception {
+        TestHome h = new TestHome();
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_CENTER);
+        while (h.panel.focusedIndex() < 2) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(HomeActivity.RESTART_ROW, h.panel.option(2).title);
+        h.press(KEYCODE_DPAD_CENTER);
+        android.content.Intent started = org.robolectric.Shadows.shadowOf(h.activity).getNextStartedActivity();
+        assertNotNull(started);
+        assertEquals(RestartActivity.class.getName(), started.getComponent().getClassName());
+        assertEquals(android.os.Process.myPid(), started.getIntExtra(RestartActivity.EXTRA_PID, -1));
+        assertTrue("Glass Home closes for the restart", h.activity.isFinishing());
     }
 }

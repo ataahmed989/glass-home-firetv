@@ -67,13 +67,13 @@ public class SourcesScreenshotTest {
         h.press(KEYCODE_DPAD_UP);
         h.press(KEYCODE_DPAD_RIGHT);   // from Control Center to the avatar
         h.press(KEYCODE_DPAD_CENTER);
-        assertEquals("Tiles", h.panel.option(9).title);
-        assertTrue("the tiles by default", h.panel.option(9).checked);
-        assertEquals("List", h.panel.option(10).title);
-        while (h.panel.focusedIndex() < 10) h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("Tiles", h.panel.option(10).title);
+        assertTrue("the tiles by default", h.panel.option(10).checked);
+        assertEquals("List", h.panel.option(11).title);
+        while (h.panel.focusedIndex() < 11) h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_CENTER);
-        assertTrue(h.panel.option(10).checked);
-        assertFalse(h.panel.option(9).checked);
+        assertTrue(h.panel.option(11).checked);
+        assertFalse(h.panel.option(10).checked);
         TestHome.settle();
         h.capture("sources-settings.png");
         h.back();

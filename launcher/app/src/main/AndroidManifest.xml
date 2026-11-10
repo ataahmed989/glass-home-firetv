@@ -118,6 +118,16 @@
             </intent-filter>
         </activity>
 
+        <!-- Settings, Restart Glass Home: a moment in a process of its own, while Glass Home's is ended and opened afresh -->
+        <activity
+            android:name=".RestartActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:process=":restart"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
         <!-- Control Center Sleep: allowed only to turn the screen off; granted once over ADB with
              "dpm set-active-admin app.glasshome.launcher/.SleepAdmin" and given back from Home Screen settings -->
         <receiver

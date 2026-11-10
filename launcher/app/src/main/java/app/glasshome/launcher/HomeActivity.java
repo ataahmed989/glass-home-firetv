@@ -564,6 +564,25 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
     }
 
+    static final String RESTART_ROW = "Restart Glass Home";
+
+    /**
+     * Settings, Restart Glass Home: closes and comes back fresh, with nothing kept in memory (pictures, failed
+     * downloads, connections, anything stuck); settings, app order and hidden apps stay. See {@link RestartActivity}.
+     */
+    private void restartGlassHome() {
+        closeSettings();
+        try {
+            startActivity(new Intent(this, RestartActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(RestartActivity.EXTRA_PID, android.os.Process.myPid()));
+            overridePendingTransition(0, 0);
+            finish();
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Toast.makeText(this, "Glass Home couldn't restart", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void openInstallPermission() {
         hidePrompt();
         HomeButtonService.opening("settings");
@@ -2287,6 +2306,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                         : known != null ? "Up to date: select to check again" : "Select to check for an update"));
         // Only what the title doesn't already say goes under it: a state, or why a switch can't be used
         options.add(SettingsPanel.Option.action("STORAGE", "Clear Cache", ""));
+        options.add(SettingsPanel.Option.action("STORAGE", RESTART_ROW, ""));
         options.add(SettingsPanel.Option.toggle("FEATURED TITLES", "Featured on streaming apps",
                 tmdb ? "" : "Needs a TMDB token, which isn't set",
                 tmdb, featuredTitles()));
@@ -2823,6 +2843,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         if (option.toggle && MEMORY_ROW.equals(option.title)) {
             settings.setShowSystemStats(option.checked);
+            return;
+        }
+        if (option.action && RESTART_ROW.equals(option.title)) {
+            restartGlassHome();
             return;
         }
         if (option.action && option.section.equals("STORAGE")) {
