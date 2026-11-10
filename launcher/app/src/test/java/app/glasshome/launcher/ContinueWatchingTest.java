@@ -319,6 +319,29 @@ public class ContinueWatchingTest {
     }
 
     @Test
+    public void artworkLookedUpWithoutTheNetworkComesInOnceItIsBack() throws Exception {
+        withFirePlayer();
+        TestHome h = TestHome.withTmdb();
+        recorded = Net.fetcher;
+        Net.Fetcher fixtures = recorded;
+        boolean[] offline = {true};
+        Net.fetcher = (url, bearer) -> {
+            // Only a title's own lookup fails (the page's catalog still loads)
+            boolean title = url.startsWith(Tmdb.API) && url.substring(Tmdb.API.length()).matches("(movie|tv)/\\d+.*");
+            if (offline[0] && title) throw new java.net.UnknownHostException("api.themoviedb.org");
+            return fixtures.get(url, bearer);
+        };
+        open(h, MOVIES);
+        assertNull("no network: a title card for now", first(h, MOVIES).cards.get(0).imageUrl);
+
+        // The network comes back: the picture comes in on its own, nothing pressed or opened again
+        offline[0] = false;
+        TestHome.advance(5_100);
+        settleRow();
+        assertNotNull(first(h, MOVIES).cards.get(0).imageUrl);
+    }
+
+    @Test
     public void holdingSelectOffersResumeAndRemove() throws Exception {
         withFirePlayer();
         TestHome h = open(MOVIES);

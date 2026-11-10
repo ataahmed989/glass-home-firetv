@@ -130,6 +130,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Each entry's TMDB artwork by its key ("movie/…", "tv/…"): its address, or "" for none; and those being looked up. */
     private final Map<String, String> continueArt = new HashMap<>();
     private final Set<String> continueArtPending = new HashSet<>();
+    /** Artwork lookups that failed for want of the network are asked again on their own, less often each time. */
+    private int continueArtTries;
+    private final Runnable continueArtRetry = () -> {
+        if (this.resumed && !isDestroyed() && wantsContinue(this.page)) lookUpContinueArt(this.continueItems);
+    };
     private ContinueWatching.Watcher continueWatcher;
     /**
      * Home's own Continue Watching row beneath the apps (films and episodes together), peeking under the dock while
@@ -1533,6 +1538,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      */
     private void refreshContinue() {
         final int generation = ++continueGeneration;
+        continueArtTries = 0;
         continueWatcher.watch();   // FirePlayer may have come since it was last tried
         runOff(worker, () -> {
             List<ContinueWatching.Item> items = ContinueWatching.query(this);
@@ -1620,6 +1626,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         runOff(pagesNet, () -> {
             Tmdb tmdb = new Tmdb(this, config.tmdbApiKey);
             Map<String, String> found = new HashMap<>();
+            boolean missed = false;
             for (ContinueWatching.Item item : missing) {
                 try {
                     Tmdb.Title t = item.tmdbId > 0 ? tmdb.byId(item.tmdbId, item.episode)
@@ -1630,15 +1637,21 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 } catch (java.io.IOException e) {
                     // TMDB has no such title: a title card, without asking again each time
                     if (String.valueOf(e.getMessage()).startsWith("HTTP 404")) found.put(item.artKey(), "");
-                    // otherwise looked up again next time
+                    else missed = true;   // no network, or TMDB busy: asked again shortly (below)
                 } catch (Exception ignored) {
-                    // looked up again next time
+                    missed = true;
                 }
             }
+            boolean again = missed;
             main.post(() -> {
                 for (ContinueWatching.Item item : missing) continueArtPending.remove(item.artKey());
                 continueArt.putAll(found);
                 if (!found.isEmpty()) showContinue(continueItems);
+                // A card left on its title card for want of the network gets its picture once it is back:
+                // 5 s, 10 s, 20 s ... up to 2 minutes apart, 8 times, and again from the start on the next refresh
+                main.removeCallbacks(continueArtRetry);
+                if (!again) continueArtTries = 0;
+                else if (continueArtTries < 8) main.postDelayed(continueArtRetry, Math.min(120_000L, 5_000L << continueArtTries++));
             });
         });
     }
@@ -3498,6 +3511,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     protected void onPause() {
+        main.removeCallbacks(continueArtRetry);
         dropArranging();
         clock.stop();
         main.removeCallbacks(resumeRefresh);
@@ -3628,6 +3642,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onDestroy() {
         if (current == this) current = null;
+        main.removeCallbacks(continueArtRetry);
         main.removeCallbacks(collect);
         main.removeCallbacks(resumeRefresh);
         main.removeCallbacks(weatherRetry);
