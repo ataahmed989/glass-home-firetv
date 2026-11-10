@@ -181,6 +181,78 @@ public class HomeContinueRowTest {
     }
 
     @Test
+    public void focusStaysOnItsCardWhenFirePlayerReordersItsList() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        toLastRow(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("m2", h.activity.homeRow().focusedCard().id);
+        // Masterplan was just watched: FirePlayer puts it first
+        synchronized (FakeFirePlayer.rows) {
+            Object[] m2 = FakeFirePlayer.rows.remove(2);
+            m2[10] = Fixtures.RECORDED_AT;
+            FakeFirePlayer.rows.add(0, m2);
+        }
+        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        TestHome.advance(400);
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        assertEquals("m2", ids(h.activity.homeRow()).get(0));
+        assertEquals("focus followed its card", "m2", h.activity.homeRow().focusedCard().id);
+    }
+
+    @Test
+    public void downFromTheAppsAlwaysLandsOnTheFirstCard() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        toLastRow(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_UP);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("e1", h.activity.homeRow().focusedCard().id);
+    }
+
+    @Test
+    public void backFromSourcesPutsHomeBackDown() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        toLastRow(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.menu();
+        h.press(KEYCODE_DPAD_LEFT);
+        assertEquals(Zone.SOURCE, h.zone());
+        h.back();
+        assertEquals(Zone.GRID, h.zone());
+        assertEquals(0f, h.activity.homeLift(), 0f);
+    }
+
+    @Test
+    public void anotherTabPutsHomeBackDownAndDownFromTheTabsLiftsItAgain() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        toLastRow(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        TestHome.advance(1000);
+        TestHome.settle();
+        assertEquals(1, h.activity.page());
+        assertEquals("settled down beneath the page", 0f, h.activity.homeLift(), 0f);
+        assertEquals(View.GONE, h.activity.homeRow().getVisibility());
+        h.press(KEYCODE_DPAD_LEFT);
+        TestHome.advance(1000);
+        TestHome.settle();
+        assertEquals(0, h.activity.page());
+        assertEquals(0f, h.activity.homeLift(), 0f);
+        assertEquals(View.VISIBLE, h.activity.homeRow().getVisibility());
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("back to the row it was on", Zone.HOME_ROW, h.zone());
+        assertEquals(1f, h.activity.homeLift(), 0f);
+    }
+
+    @Test
     public void withNothingToContinueThereIsNoRowAndNothingChanges() throws Exception {
         TestHome h = home();
         assertEquals(View.GONE, h.activity.homeRow().getVisibility());

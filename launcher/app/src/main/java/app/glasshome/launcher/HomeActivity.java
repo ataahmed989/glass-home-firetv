@@ -132,7 +132,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Set<String> continueArtPending = new HashSet<>();
     /** Artwork lookups that failed for want of the network are asked again on their own, less often each time. */
     private int continueArtTries;
+    private boolean continueArtRetryPosted;
     private final Runnable continueArtRetry = () -> {
+        this.continueArtRetryPosted = false;
         if (this.resumed && !isDestroyed() && wantsContinue(this.page)) lookUpContinueArt(this.continueItems);
     };
     private ContinueWatching.Watcher continueWatcher;
@@ -144,7 +146,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Darkens Home's background while the page is moved up to its Continue Watching row. */
     private View homeDim;
     /** 0 with the apps in the dock, 1 with Home moved up to its Continue Watching row. */
-    private float homeLift;
+    private float homeLift, homeLiftTarget;
     private ValueAnimator liftAnim;
     /** How far Home moves up for its Continue Watching row, and how dark its background gets then (as on the shelves). */
     private static final int HOME_LIFT = 356;
@@ -155,7 +157,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private static final long CONTINUE_SETTLE_MS = 250;
     private final Runnable continueChanged = () -> {
         if (this.resumed && wantsContinue(this.page)) refreshContinue();
+        else this.continueStale = true;
     };
+    /** FirePlayer's list may have changed since it was last asked (or never was): Home asks again when it comes back. */
+    private boolean continueStale = true;
     /** The page whose Continue Watching card has its menu open, and that card's entry; or null. */
     private ShelfPage menuPage;
     private ContinueWatching.Item menuItem;
@@ -1401,6 +1406,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             }
         }
         for (View v : pageViews(p)) fadeIn(v, p > old ? fade : 0);
+        if (old == HOME) {
+            // Covered by a page: Home settles back down beneath it, its row hidden (focus comes back to the row by Down from the tabs)
+            main.postDelayed(() -> {
+                if (page == HOME) return;
+                animateLift(0f, true);
+                homeRow.setVisibility(View.GONE);
+            }, fade);
+        } else if (p == HOME) {
+            homeRow.setVisibility(homeRowCards() ? View.VISIBLE : View.GONE);
+            placeHomeRow();
+        }
         setBarHidden(false, atOnce);
         main.removeCallbacks(sportsTick);
         if (p == HOME) {
@@ -1532,13 +1548,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /**
      * Asks FirePlayer for its Continue Watching (off the main thread: it is another app) and puts
-     * it atop Movies and TV Shows, then looks up the artwork of entries new to it. Asked when one of
-     * those pages is opened, when Glass Home comes back to it, and when FirePlayer says it changed;
-     * not otherwise, as asking starts FirePlayer if it isn't running, and this TV is short of memory.
+     * it atop Movies and TV Shows and in Home's row, then looks up the artwork of entries new to it. Asked when
+     * Movies or TV Shows is opened or comes back, when FirePlayer says it changed, and when Home comes back only if
+     * FirePlayer said so meanwhile (or after a title was resumed); not otherwise, as asking starts FirePlayer if it
+     * isn't running, and this TV is short of memory.
      */
     private void refreshContinue() {
         final int generation = ++continueGeneration;
         continueArtTries = 0;
+        continueStale = false;
         continueWatcher.watch();   // FirePlayer may have come since it was last tried
         runOff(worker, () -> {
             List<ContinueWatching.Item> items = ContinueWatching.query(this);
@@ -1580,15 +1598,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Home's row: films and shows together, one card per show; gone (and nothing peeks) when there's none or it's off. */
     private void showHomeRow() {
         PageModel.Shelf s = settings.homeContinue() ? continueShelf(ContinueWatching.forHome(continueItems)) : null;
-        PageModel m = new PageModel();
-        if (s != null) m.shelves.add(s);
-        homeRow.setModel(m);
+        // As Movies and TV Shows are fed: focus stays with its card when FirePlayer reorders, a removed card's gap closes
+        homeRow.setTopShelf(s);
         if (s == null && (zone() == Zone.HOME_ROW || homeLift > 0f || homeZone == Zone.HOME_ROW)) {
             boolean there = zone() == Zone.HOME_ROW;
             leaveHomeRow(false);
             if (there) focusGrid(lastFocused);
         }
-        homeRow.setVisibility(s == null ? View.GONE : View.VISIBLE);
+        homeRow.setVisibility(s == null || page != HOME ? View.GONE : View.VISIBLE);
         placeHomeRow();
     }
 
@@ -1637,7 +1654,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 } catch (java.io.IOException e) {
                     // TMDB has no such title: a title card, without asking again each time
                     if (String.valueOf(e.getMessage()).startsWith("HTTP 404")) found.put(item.artKey(), "");
-                    else missed = true;   // no network, or TMDB busy: asked again shortly (below)
+                    // No network, or TMDB busy: asked again shortly (below). A refused token is not asked again on its own
+                    else if (!(e instanceof Net.HttpError) || ((Net.HttpError) e).code >= 500
+                            || ((Net.HttpError) e).code == 408 || ((Net.HttpError) e).code == 429) missed = true;
                 } catch (Exception ignored) {
                     missed = true;
                 }
@@ -1647,17 +1666,24 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 for (ContinueWatching.Item item : missing) continueArtPending.remove(item.artKey());
                 continueArt.putAll(found);
                 if (!found.isEmpty()) showContinue(continueItems);
-                // A card left on its title card for want of the network gets its picture once it is back:
-                // 5 s, 10 s, 20 s ... up to 2 minutes apart, 8 times, and again from the start on the next refresh
-                main.removeCallbacks(continueArtRetry);
-                if (!again) continueArtTries = 0;
-                else if (continueArtTries < 8) main.postDelayed(continueArtRetry, Math.min(120_000L, 5_000L << continueArtTries++));
+                // A card left on its title card for want of the network gets its picture once it is back: 5 s, 10 s,
+                // 20 s ... up to 2 minutes apart, then every 10 minutes while it is shown; from the start on each refresh
+                if (again) {
+                    main.removeCallbacks(continueArtRetry);
+                    long wait = continueArtTries < 8 ? Math.min(120_000L, 5_000L << continueArtTries) : 600_000L;
+                    continueArtTries = Math.min(continueArtTries + 1, 8);
+                    main.postDelayed(continueArtRetry, wait);
+                    continueArtRetryPosted = true;
+                } else if (!continueArtRetryPosted) {
+                    continueArtTries = 0;
+                }
             });
         });
     }
 
     /** Select on a Continue Watching card: FirePlayer's player, where it was left. */
     private void resumeContinue(ContinueWatching.Item item) {
+        continueStale = true;   // where it was left changes as it plays
         HomeButtonService.opening(FirePlayerTitles.PACKAGE);
         try {
             startActivity(ContinueWatching.resumeIntent(item.id), openingAnimation());
@@ -1694,7 +1720,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private boolean homeRowHasCards() {
-        return homeRow != null && homeRow.getVisibility() == View.VISIBLE && homeRow.hasModel() && homeRow.shelfCount() > 0;
+        return homeRow != null && homeRow.getVisibility() == View.VISIBLE && homeRowCards();
+    }
+
+    private boolean homeRowCards() {
+        return homeRow != null && homeRow.hasModel() && homeRow.shelfCount() > 0;
     }
 
     /**
@@ -1704,15 +1734,23 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void placeHomeRow() {
         if (homeRow == null || homeRow.getVisibility() != View.VISIBLE) return;
         int count = adapter.getItemCount();
-        View last = count == 0 ? null : layoutManager.findViewByPosition(count - 1);
-        float y = last == null ? screenH
-                : grid.getTop() + last.getTop() + Ui.px(Ui.DOCK_BOTTOM - Ui.DOCK_ROW_TOP + 4) - ShelfPage.embeddedTitleTop();
-        y += grid.getTranslationY() + Ui.px(HOME_ROW_ROOM) * homeLift;
+        // Where the last row of apps is, from any row laid out (the last one may be recycled mid-scroll)
+        View cell = grid.getChildCount() == 0 ? null : grid.getChildAt(0);
+        int at = cell == null ? RecyclerView.NO_POSITION : grid.getChildAdapterPosition(cell);
+        float y;
+        if (count == 0 || at == RecyclerView.NO_POSITION) {
+            y = 2 * screenH;
+        } else {
+            float lastTop = cell.getTop() + ((count - 1) / Ui.COLUMNS - at / Ui.COLUMNS) * (float) Ui.px(Ui.ROW_PITCH);
+            y = grid.getTop() + lastTop + Ui.px(Ui.DOCK_BOTTOM - Ui.DOCK_ROW_TOP + 4) - ShelfPage.embeddedTitleTop()
+                    + grid.getTranslationY() + Ui.px(HOME_ROW_ROOM) * homeLift;
+        }
         if (homeRow.getTranslationY() != y) homeRow.setTranslationY(y);
     }
 
     /** Down from the last row of apps: Home moves up, the background dims, the clock and widgets go, the first card has focus. */
-    private void enterHomeRow() {
+    private void enterHomeRow(boolean fromApps) {
+        if (fromApps) homeRow.resetShelf();
         homeRow.requestFocus();
         lastZone = Zone.HOME_ROW;
         homeZone = Zone.HOME_ROW;
@@ -1727,18 +1765,19 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             focusGrid(lastFocused);
             return;
         }
-        enterHomeRow();
+        enterHomeRow(false);
     }
 
     /** Home settles back down onto its apps (focus is moved by the caller). */
     private void leaveHomeRow(boolean animate) {
         if (homeZone == Zone.HOME_ROW) homeZone = Zone.GRID;
         if (lastZone == Zone.HOME_ROW) lastZone = Zone.GRID;
-        setBarHidden(false, !animate);
+        if (page == HOME) setBarHidden(false, !animate);
         animateLift(0f, !animate);
     }
 
     private void animateLift(float to, boolean atOnce) {
+        homeLiftTarget = to;
         if (liftAnim != null) liftAnim.cancel();
         if (atOnce || Ui.reducedMotion || homeLift == to) {
             applyLift(to);
@@ -1806,6 +1845,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             // Its glass frosts the page behind it, not Home (until a tile's menu opens on Home again)
             menuGlass.setBackdrop(sp.sceneBackdrop(), screenW, screenH);
             menuGlassOnPage = true;
+        } else {
+            if (menuGlassOnPage && homeBackdrop != null) menuGlass.setBackdrop(homeBackdrop, screenW, screenH);
+            menuGlassOnPage = false;
         }
         tileMenu.show(card.centerX(), card.top, card.bottom, card.width(), new String[] {"Resume", "Remove"}, new Runnable[] {
                 () -> {
@@ -2113,6 +2155,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         lastFocusedKey = app.key;
         lastZone = Zone.GRID;
         homeZone = Zone.GRID;
+        // However focus came back to the apps (Up from the row, Back from Sources or the capsule), Home settles down
+        if (homeLift > 0f && (liftAnim == null || !liftAnim.isRunning() || homeLiftTarget > 0f)) leaveHomeRow(true);
         if (position < Ui.COLUMNS) lastDockColumn = position;
         // The hero follows only once focus has rested; moving on cancels the pending update
         main.removeCallbacks(presentPending);
@@ -2692,8 +2736,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         control.setVisibility(View.GONE);
         capsule.setControlOpen(false);
         weather.animate().cancel();
-        if (atOnce || Ui.reducedMotion) weather.setAlpha(1f);
-        else weather.animate().alpha(1f).setDuration(200).withLayer().start();
+        if (atOnce || Ui.reducedMotion) weather.setAlpha(1f - homeLift);
+        else weather.animate().alpha(1f - homeLift).setDuration(200).withLayer().start();
     }
 
     private void closeControlCenter() {
@@ -3177,7 +3221,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 else if ((row + 1) * Ui.COLUMNS < count) target = count - 1;   // shorter row: its nearest tile
                 else if (homeRowShown()) {
                     // Below the last row of apps: Home's Continue Watching
-                    enterHomeRow();
+                    enterHomeRow(true);
                     return;
                 }
                 break;
@@ -3330,7 +3374,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Runnable resumeRefresh = () -> {
         if (!resumed || isFinishing() || isDestroyed()) return;
         if (page != HOME && pages[page].hasModel()) loadPage(page);
-        if (wantsContinue(page)) refreshContinue();
+        // Movies and TV Shows ask each time they come back; Home only if FirePlayer said its list changed meanwhile,
+        // as asking starts FirePlayer if Fire OS has closed it
+        if (wantsContinue(page) && (page != HOME || continueStale)) refreshContinue();
         refreshMyTeams();
         HomeServiceRecovery.restore(this);
     };
@@ -3488,7 +3534,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private boolean homeAsTheHomeButtonLeavesIt() {
-        return page == HOME && zone() == Zone.GRID && !barHidden && moving == null;
+        return page == HOME && zone() == Zone.GRID && !barHidden && moving == null && homeLift == 0f;
     }
 
     /** Glass Home lost the top spot and has not been paused since. */
@@ -3512,6 +3558,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onPause() {
         main.removeCallbacks(continueArtRetry);
+        continueArtRetryPosted = false;
         dropArranging();
         clock.stop();
         main.removeCallbacks(resumeRefresh);
@@ -3568,6 +3615,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(teamsTick);
         ImageCache.get(this).trimMemory();
         for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
+        homeRow.trimMemory();
         // Frosts made ahead for featured titles go behind another app, but the one on now (others are made again when shown)
         if (slides != null) {
             HeroSlide on = stage.current();

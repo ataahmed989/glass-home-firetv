@@ -429,6 +429,15 @@ final class ShelfPage extends ViewGroup {
         // The shelves' indices moved: what focus last grew is worked out afresh
         prevRow = Integer.MIN_VALUE;
         prevT = 0f;
+        if (embedded) {
+            // Home's row: its one shelf come or gone, at its first card
+            row = model.shelves.isEmpty() ? -1 : 0;
+            focusRow = Integer.MIN_VALUE;
+            markFocus(false);
+            applyScroll();
+            invalidateAll();
+            return;
+        }
         if (row < 0) {
             focusRow = Integer.MIN_VALUE;
             markFocus(false);
@@ -1226,7 +1235,8 @@ final class ShelfPage extends ViewGroup {
         int first = Math.max(0, (int) Math.floor((rowX[r] - Ui.px(LEFT)) / pitch) - 1);
         for (int i = first; i < s.cards.size(); i++) {
             float x = Ui.px(LEFT) + i * pitch - rowX[r] + roomBefore(r, i, s);
-            if (closing && i >= goneAt) x += pitch * (1f - gapT);
+            // The card taken away keeps its room (grown, if it was the chosen one) while the gap closes
+            if (closing && i >= goneAt) x += (pitch + growth(s) * goneFocus) * (1f - gapT);
             if (x > w) break;
             float t = focusAmount(r, i);
             if (r == focusRow && i == focusCol && t > 0f) {
@@ -1253,9 +1263,14 @@ final class ShelfPage extends ViewGroup {
         c.restoreToCount(saved);
     }
 
+    /** How much wider the chosen card is than the others. */
+    private static float growth(PageModel.Shelf s) {
+        return (CARD_SCALE - 1f) * Ui.px(s.style == PageModel.Style.RANKED ? POSTER_W : CARD_W);
+    }
+
     /** How far card {@code i} moves along for the grown cards before it (the chosen one, and the one settling back). */
     private float roomBefore(int r, int i, PageModel.Shelf s) {
-        float grow = (CARD_SCALE - 1f) * Ui.px(s.style == PageModel.Style.RANKED ? POSTER_W : CARD_W);
+        float grow = growth(s);
         float room = 0f;
         if (r == focusRow && i > focusCol) room += grow * focusT;
         if (r == prevRow && i > prevCol && prevCol != focusCol) room += grow * prevT;
