@@ -2892,7 +2892,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 } else if (direction == View.FOCUS_LEFT) {
                     sp.left();
                 } else {
-                    sp.right();
+                    sp.right(freshPress);
                 }
                 return;
             case HERO:

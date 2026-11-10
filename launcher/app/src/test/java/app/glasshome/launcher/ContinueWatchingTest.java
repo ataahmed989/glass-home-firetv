@@ -458,8 +458,10 @@ public class ContinueWatchingTest {
         assertEquals(4, first(h, MOVIES).cards.size());
         h.press(KEYCODE_DPAD_DOWN);
         h.press(KEYCODE_DPAD_DOWN);
-        for (int i = 0; i < 4; i++) h.press(KEYCODE_DPAD_RIGHT);
+        for (int i = 0; i < 3; i++) h.press(KEYCODE_DPAD_RIGHT);
         assertEquals("x4", h.page(MOVIES).focusedCard().id);
+        h.press(KEYCODE_DPAD_RIGHT);
+        assertEquals("Right again at the end goes back to the first", "x1", h.page(MOVIES).focusedCard().id);
     }
 
     @Test

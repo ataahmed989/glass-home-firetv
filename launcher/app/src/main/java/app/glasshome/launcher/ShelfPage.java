@@ -5,6 +5,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
+import android.graphics.Color;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.LightingColorFilter;
@@ -63,7 +64,13 @@ final class ShelfPage extends ViewGroup {
     private static final int CARD_W = 372, CARD_H = 209, CARD_GAP = 32;
     private static final int POSTER_W = 222, POSTER_H = 333, RANK_W = 124, POSTER_GAP = 22;
     private static final int RADIUS = 14;
-    private static final float CARD_SCALE = 1.08f;
+    /**
+     * How much bigger the chosen card is. It grows from its left edge, which stays under the shelf's title, and the
+     * cards after it move along to make room (as Prime Video's rows do).
+     */
+    private static final float CARD_SCALE = 1.14f;
+    /** The white outline round the chosen card: its gap from the card, and its width. */
+    private static final float RING_GAP = 5f, RING_W = 4f;
     private static final long HERO_EVERY_MS = 8000, HERO_FADE_MS = 650;
     /** Room around a shelf's own band for its focused card to grow into and cast its shadow. */
     private static final int ROW_MARGIN = 40;
@@ -110,6 +117,7 @@ final class ShelfPage extends ViewGroup {
     private final Paint art = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint sheen = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint shelfTitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint cardTitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
@@ -192,6 +200,8 @@ final class ShelfPage extends ViewGroup {
         shadow.setColor(0xFF000000);
         rim.setStyle(Paint.Style.STROKE);
         rim.setStrokeWidth(Math.max(1.5f, Ui.px(2f)));
+        ring.setStyle(Paint.Style.STROKE);
+        ring.setColor(Color.WHITE);
     }
 
     void setListener(Listener l) {
@@ -334,7 +344,8 @@ final class ShelfPage extends ViewGroup {
         for (int i = 0; i < n; i++) {
             if (i < oldCols.length) {
                 cols[i] = Math.min(oldCols[i], Math.max(0, m.shelves.get(i).cards.size() - 1));
-                rowX[i] = Math.min(oldX[i], maxRowX(i));
+                // The chosen card stays at the left (see setCol)
+                rowX[i] = cols[i] * pitch(m.shelves.get(i));
             }
         }
         layoutRows();
@@ -482,7 +493,7 @@ final class ShelfPage extends ViewGroup {
             }
             setCol(cols[0]);
         } else {
-            animateRow(0, Math.min(rowX[0], maxRowX(0)));
+            animateRow(0, cols[0] * pitch(model.shelves.get(0)));
         }
         invalidateRow(0);
     }
@@ -537,8 +548,8 @@ final class ShelfPage extends ViewGroup {
         float w = Ui.px(poster ? POSTER_W : CARD_W), h = Ui.px(poster ? POSTER_H : CARD_H);
         float x = Ui.px(LEFT) + cols[row] * pitch(s) - rowX[row] + (poster ? Ui.px(RANK_W) : 0);
         float y = rowTop[row] - targetScroll() + Ui.px(TITLE_H);
-        float grow = (CARD_SCALE - 1f) * focusT / 2f;
-        out.set(x - w * grow, y - h * grow, x + w + w * grow, y + h + h * grow);
+        float grow = (CARD_SCALE - 1f) * focusT;
+        out.set(x, y - h * grow / 2f, x + w + w * grow, y + h + h * grow / 2f);
         return true;
     }
 
@@ -627,12 +638,6 @@ final class ShelfPage extends ViewGroup {
         return s.style == PageModel.Style.RANKED ? Ui.px(RANK_W + POSTER_W) : Ui.px(CARD_W);
     }
 
-    private float maxRowX(int r) {
-        PageModel.Shelf s = model.shelves.get(r);
-        float content = (s.cards.size() - 1) * pitch(s) + itemWidth(s);
-        return Math.max(0f, content - (Ui.px(RIGHT) - Ui.px(LEFT)));
-    }
-
     private boolean focusable(int r) {
         return r >= 0 && r < model.shelves.size() && !model.shelves.get(r).cards.isEmpty();
     }
@@ -679,7 +684,8 @@ final class ShelfPage extends ViewGroup {
         if (cols[row] > 0) setCol(cols[row] - 1);
     }
 
-    void right() {
+    /** {@code fresh}: a new press, not the remote held down; only that goes from the last card back to the first. */
+    void right(boolean fresh) {
         if (model == null) return;
         if (row == -1) {
             if (button < heroActions() - 1) {
@@ -690,7 +696,9 @@ final class ShelfPage extends ViewGroup {
             }
             return;
         }
-        if (cols[row] < model.shelves.get(row).cards.size() - 1) setCol(cols[row] + 1);
+        int last = model.shelves.get(row).cards.size() - 1;
+        if (cols[row] < last) setCol(cols[row] + 1);
+        else if (fresh && last > 0) setCol(0);
     }
 
     void select() {
@@ -736,14 +744,8 @@ final class ShelfPage extends ViewGroup {
     private void setCol(int c) {
         cols[row] = c;
         markFocus(true);
-        // Keep the focused card fully on screen, sliding the shelf as little as possible
-        PageModel.Shelf s = model.shelves.get(row);
-        float x = c * pitch(s), w = itemWidth(s), span = Ui.px(RIGHT) - Ui.px(LEFT);
-        float target = rowX[row];
-        if (x - target < 0) target = x;
-        else if (x + w - target > span) target = x + w - span;
-        target = Math.max(0, Math.min(target, maxRowX(row)));
-        animateRow(row, target);
+        // The chosen card stays at the left, under the shelf's title; the cards before it slide off that side
+        animateRow(row, c * pitch(model.shelves.get(row)));
     }
 
     private float targetScroll() {
@@ -1186,7 +1188,7 @@ final class ShelfPage extends ViewGroup {
         if (closing) drawGone(c, s, Ui.px(LEFT) + goneAt * pitch - rowX[r], cardTop);
         int first = Math.max(0, (int) Math.floor((rowX[r] - Ui.px(LEFT)) / pitch) - 1);
         for (int i = first; i < s.cards.size(); i++) {
-            float x = Ui.px(LEFT) + i * pitch - rowX[r];
+            float x = Ui.px(LEFT) + i * pitch - rowX[r] + roomBefore(r, i, s);
             if (closing && i >= goneAt) x += pitch * (1f - gapT);
             if (x > w) break;
             float t = focusAmount(r, i);
@@ -1212,6 +1214,15 @@ final class ShelfPage extends ViewGroup {
         c.scale(k, k, x + w / 2f, top + h / 2f);
         drawCard(c, s, gone, x, top, goneFocus, 1f);
         c.restoreToCount(saved);
+    }
+
+    /** How far card {@code i} moves along for the grown cards before it (the chosen one, and the one settling back). */
+    private float roomBefore(int r, int i, PageModel.Shelf s) {
+        float grow = (CARD_SCALE - 1f) * Ui.px(s.style == PageModel.Style.RANKED ? POSTER_W : CARD_W);
+        float room = 0f;
+        if (r == focusRow && i > focusCol) room += grow * focusT;
+        if (r == prevRow && i > prevCol && prevCol != focusCol) room += grow * prevT;
+        return room;
     }
 
     private float focusAmount(int r, int i) {
@@ -1248,9 +1259,9 @@ final class ShelfPage extends ViewGroup {
             h = Ui.px(CARD_H);
         }
         float scale = 1f + (CARD_SCALE - 1f) * focus;
-        float cx = ix + w / 2f, cy = top + h / 2f;
+        float cy = top + h / 2f;
         c.save();
-        c.scale(scale, scale, cx, cy);
+        c.scale(scale, scale, ix, cy);
         // Cards draw in their own coordinates, so their gradients can be built once and reused
         c.translate(ix, top);
         rect.set(0, 0, w, h);
@@ -1284,10 +1295,18 @@ final class ShelfPage extends ViewGroup {
             sheen.setAlpha(Math.round(255 * focus));
             c.drawRoundRect(rect, r, r, sheen);
         }
-        rim.setColor(focus > 0f ? Math.round(0xD9 * focus) << 24 | 0xFFFFFF : 0x1FFFFFFF);
+        rim.setColor(0x1FFFFFFF);
         float in = rim.getStrokeWidth() / 2f;
         rect.inset(in, in);
         c.drawRoundRect(rect, r - in, r - in, rim);
+        if (focus > 0f) {
+            // A white outline just off the card, with a dark gap between, drawn at the same width however big the card
+            float ringW = Ui.px(RING_W) / scale, out = (Ui.px(RING_GAP) + Ui.px(RING_W) / 2f) / scale;
+            ring.setStrokeWidth(ringW);
+            ring.setAlpha(Math.round(255 * focus));
+            rect.set(-out, -out, w + out, h + out);
+            c.drawRoundRect(rect, r + out, r + out, ring);
+        }
         c.restore();
         if (captions <= 0f) return;
         if (captions < 1f) {
