@@ -56,13 +56,46 @@ public class ContinueWatchingTest {
             "position_ms", "duration_ms", "last_watched"};
     private static final long MIN = 60_000L;
 
-    /** FirePlayer's provider, as the contract has it: rows newest first, delete by id, a change notified. */
+    /**
+     * FirePlayer's provider, as the contract has it: rows newest first, delete by id, a change notified. As an older
+     * FirePlayer unless {@link #newer}: then its rows also say where each plays from and whether its show's episodes
+     * can be listed, and it lists them ({@link #episodes}) on items/{id}/episodes.
+     */
     public static final class FakeFirePlayer extends ContentProvider {
+        static final String[] EPISODE_COLUMNS = {"episode_id", "season", "episode", "name", "overview", "image",
+                "runtime_min", "air_date", "position_ms", "current"};
         static final List<Object[]> rows = Collections.synchronizedList(new ArrayList<>());
         static final List<String> deleted = Collections.synchronizedList(new ArrayList<>());
         static volatile int queries;
         /** FirePlayer in the middle of an update (or its process restarting): it can't answer. */
         static volatile boolean failing;
+        /** A FirePlayer with the details API: "source" and "has_episodes" on its rows, and episode lists. */
+        static volatile boolean newer;
+        /** What a newer FirePlayer says each entry plays from (a made-up provider). */
+        static volatile String source = "tv.example.com:8080";
+        /** Each show's episodes, by its entry's id (rows of {@link #EPISODE_COLUMNS}); an entry not here isn't listable. */
+        static final java.util.Map<String, List<Object[]>> episodes = new java.util.concurrent.ConcurrentHashMap<>();
+        /** Listing episodes fails (FirePlayer stopped mid-answer); and how often it was asked. */
+        static volatile boolean failingEpisodes;
+        static volatile int episodeQueries;
+        /** While set, a list of episodes waits for it (the provider being slow), so the window's loading can be seen. */
+        static volatile java.util.concurrent.CountDownLatch episodesGate;
+
+        /** As an older FirePlayer with nothing on its list. */
+        static void reset() {
+            rows.clear();
+            deleted.clear();
+            queries = 0;
+            failing = false;
+            newer = false;
+            source = "tv.example.com:8080";
+            episodes.clear();
+            failingEpisodes = false;
+            episodeQueries = 0;
+            java.util.concurrent.CountDownLatch gate = episodesGate;
+            episodesGate = null;
+            if (gate != null) gate.countDown();
+        }
 
         @Override
         public boolean onCreate() {
@@ -71,12 +104,47 @@ public class ContinueWatchingTest {
 
         @Override
         public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {
+            List<String> path = uri.getPathSegments();
+            if (path.size() == 3 && path.get(0).equals("items") && path.get(2).equals("episodes")) return listEpisodes(path.get(1));
             queries++;
             if (failing) throw new IllegalStateException("FirePlayer is being updated");
-            MatrixCursor c = new MatrixCursor(COLUMNS);
-            synchronized (rows) {
-                for (Object[] r : rows) c.addRow(r);
+            if (!newer) {
+                MatrixCursor c = new MatrixCursor(COLUMNS);
+                synchronized (rows) {
+                    for (Object[] r : rows) c.addRow(r);
+                }
+                return c;
             }
+            String[] columns = java.util.Arrays.copyOf(COLUMNS, COLUMNS.length + 2);
+            columns[COLUMNS.length] = "source";
+            columns[COLUMNS.length + 1] = "has_episodes";
+            MatrixCursor c = new MatrixCursor(columns);
+            synchronized (rows) {
+                for (Object[] r : rows) {
+                    Object[] row = java.util.Arrays.copyOf(r, columns.length);
+                    row[COLUMNS.length] = source;
+                    row[COLUMNS.length + 1] = "episode".equals(r[1]) && episodes.containsKey(r[0]) ? 1 : 0;
+                    c.addRow(row);
+                }
+            }
+            return c;
+        }
+
+        /** An older FirePlayer answers this path with nothing; a newer one with the show's episodes. */
+        private Cursor listEpisodes(String id) {
+            episodeQueries++;
+            java.util.concurrent.CountDownLatch gate = episodesGate;
+            if (gate != null) {
+                try {
+                    gate.await(20, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (failingEpisodes) throw new IllegalStateException("FirePlayer stopped");
+            MatrixCursor c = new MatrixCursor(EPISODE_COLUMNS);
+            List<Object[]> list = newer ? episodes.get(id) : null;
+            if (list != null) for (Object[] r : list) c.addRow(r);
             return c;
         }
 
@@ -132,10 +200,7 @@ public class ContinueWatchingTest {
 
     @Before
     public void reset() {
-        FakeFirePlayer.rows.clear();
-        FakeFirePlayer.deleted.clear();
-        FakeFirePlayer.queries = 0;
-        FakeFirePlayer.failing = false;
+        FakeFirePlayer.reset();
         searches.clear();
         org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(16));
         // These are the rows of Movies and TV Shows; Home's own row is tested in HomeContinueRowTest
@@ -346,7 +411,7 @@ public class ContinueWatchingTest {
     }
 
     @Test
-    public void holdingSelectOffersResumeAndRemove() throws Exception {
+    public void holdingSelectOffersResumeDetailsAndRemove() throws Exception {
         withFirePlayer();
         TestHome h = open(MOVIES);
         h.press(KEYCODE_DPAD_DOWN);
@@ -355,7 +420,8 @@ public class ContinueWatchingTest {
         assertEquals(Zone.TILE_MENU, h.zone());
         TileMenu menu = h.activity.tileMenu();
         assertTrue(menu.isOpen());
-        assertArrayEquals(new String[] {"Resume", "Remove"}, menu.labels());
+        assertArrayEquals("Remove, the one that can't be undone, last", new String[] {"Resume", "Details", "Remove"}, menu.labels());
+        assertEquals("Resume first", 0, menu.focusedIndex());
         assertNull("the release after the hold is no press", shadowOf(h.activity).getNextStartedActivity());
         // Under the card
         android.graphics.RectF card = new android.graphics.RectF(), box = new android.graphics.RectF();
@@ -363,8 +429,12 @@ public class ContinueWatchingTest {
         menu.cardBounds(box);
         assertTrue(box.top >= card.bottom);
         assertEquals(card.centerX(), box.centerX(), 2f);
+        assertEquals("three rows", TileMenu.height(3), Math.round(box.height()));
         h.press(KEYCODE_DPAD_DOWN);
-        assertEquals(1, menu.focusedIndex());
+        assertEquals("Details", menu.labels()[menu.focusedIndex()]);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(2, menu.focusedIndex());
+        assertEquals("Remove", menu.labels()[menu.focusedIndex()]);
         TestHome.settleImages();
         h.capture("continue-menu.png");
 
@@ -402,6 +472,7 @@ public class ContinueWatchingTest {
         assertEquals("m2", movies.focusedCard().id);
         holdSelect(h);
         h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);   // Remove
         h.press(KEYCODE_DPAD_CENTER);
         settleRow();
         assertEquals(java.util.Collections.singletonList("m2"), FakeFirePlayer.deleted);
@@ -412,6 +483,7 @@ public class ContinueWatchingTest {
         // The last of the row: the row goes, focus on the shelf that moves up into its place
         for (String id : new String[] {"m3", "m4", "m5", "m1"}) {
             holdSelect(h);
+            h.press(KEYCODE_DPAD_DOWN);
             h.press(KEYCODE_DPAD_DOWN);
             h.press(KEYCODE_DPAD_CENTER);
             settleRow();

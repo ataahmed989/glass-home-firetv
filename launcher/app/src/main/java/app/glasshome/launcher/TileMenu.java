@@ -19,12 +19,14 @@ import android.view.animation.PathInterpolator;
  * What holding Select on a tile brings up: a small glass card that unfolds from under the tile,
  * as wide as the tile, with two rows, their names centred: Move, and More Options (the full
  * menu). The focused row is a white pill that slides between them, as on the tab bar. The tile keeps focus; Up and Down
- * move the pill, Select chooses, Back folds the card away. A Continue Watching card on Movies and
- * TV Shows brings up the same card with rows of its own (Resume, Remove).
+ * move the pill, Select chooses, Back folds the card away. A Continue Watching card (Home's row, Movies and TV Shows)
+ * brings up the same card with rows of its own: Resume, Details and Remove, the card a row taller.
  */
 final class TileMenu extends View {
     static final String[] LABELS = {"Move", "More Options"};
-    private static final float W = 289, H = 92, R = 25, PAD = 4, ROW = 42, GAP = 8, EDGE = 24;
+    private static final float W = 289, R = 25, PAD = 4, ROW = 42, GAP = 8, EDGE = 24;
+    /** The rows show one after another: the first two by 240 ms, each further row 40 ms after. */
+    private static final float REVEAL_MS = 240, ROW_STAGGER_MS = 40;
 
     private final Glass glass;
     private final Paint pill = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -34,8 +36,8 @@ final class TileMenu extends View {
     private boolean open;
     private int focused;
     private float pillY, restX, restY;
-    /** Milliseconds into the rows' reveal (240 when shown). */
-    private float revealMs = 240;
+    /** Milliseconds into the rows' reveal ({@link #revealEnd} when shown). */
+    private float revealMs = REVEAL_MS;
     private String[] labels = LABELS;
     private Runnable[] actions = new Runnable[0];
     private ValueAnimator pillAnim, revealAnim;
@@ -67,8 +69,23 @@ final class TileMenu extends View {
         return Ui.px(W);
     }
 
+    /** Two rows: a tile's menu. */
     static int height() {
-        return Ui.px(H);
+        return height(2);
+    }
+
+    static int height(int rows) {
+        return Ui.px(2 * PAD + ROW * rows);
+    }
+
+    /** When the last of {@code labels} has come in. */
+    private float revealEnd() {
+        return REVEAL_MS + ROW_STAGGER_MS * Math.max(0, labels.length - 2);
+    }
+
+    /** How far row {@code i} has come in, 0 to 1 (tests). */
+    float rowShown(int i) {
+        return ease((revealMs - 60 - ROW_STAGGER_MS * i) / 140f);
     }
 
     boolean isOpen() {
@@ -87,7 +104,7 @@ final class TileMenu extends View {
     /** Where the card is on screen, for tests. */
     void cardBounds(RectF out) {
         ViewGroup.LayoutParams lp = getLayoutParams();
-        out.set(restX, restY, restX + (lp != null ? lp.width : getWidth()), restY + height());
+        out.set(restX, restY, restX + (lp != null ? lp.width : getWidth()), restY + (lp != null ? lp.height : getHeight()));
     }
 
     private float rowY(int i) {
@@ -104,21 +121,22 @@ final class TileMenu extends View {
 
     /**
      * As above, under something {@code tileWidth} wide (a Continue Watching card, wider than a tile:
-     * the card is as wide as it), with rows of its own: {@code labels[i]} runs {@code chosen[i]} (two
-     * rows, as the card is sized for).
+     * the card is as wide as it), with rows of its own: {@code labels[i]} runs {@code chosen[i]} (the
+     * card is as tall as its rows).
      */
     void show(float tileCx, float tileTop, float tileBottom, float tileWidth, String[] labels, Runnable[] chosen) {
         this.labels = labels;
         actions = chosen;
         View parent = (View) getParent();
         int screenW = parent.getWidth(), screenH = parent.getHeight();
-        int wide = Math.max(width(), Math.round(tileWidth));
+        int wide = Math.max(width(), Math.round(tileWidth)), tall = height(labels.length);
         ViewGroup.LayoutParams lp = getLayoutParams();
-        if (lp != null && lp.width != wide) {
+        if (lp != null && (lp.width != wide || lp.height != tall)) {
             lp.width = wide;
+            lp.height = tall;
             setLayoutParams(lp);
         }
-        float w = wide, h = height(), edge = Ui.px(EDGE);
+        float w = wide, h = tall, edge = Ui.px(EDGE);
         restX = Math.max(edge, Math.min(tileCx - w / 2f, screenW - edge - w));
         restY = tileBottom + Ui.px(GAP);
         boolean flip = restY + h > screenH - edge;
@@ -136,7 +154,7 @@ final class TileMenu extends View {
             setScaleX(1f);
             setScaleY(1f);
             setAlpha(1f);
-            revealMs = 240;
+            revealMs = revealEnd();
             invalidate();
             return;
         }
@@ -150,7 +168,8 @@ final class TileMenu extends View {
         alphaAnim.setInterpolator(Ui.EASE);
         alphaAnim.start();
         revealMs = 0;
-        revealAnim = ValueAnimator.ofFloat(0f, 240f).setDuration(240);
+        float end = revealEnd();
+        revealAnim = ValueAnimator.ofFloat(0f, end).setDuration(Math.round(end));
         revealAnim.setInterpolator(null);
         revealAnim.addUpdateListener(an -> {
             revealMs = (float) an.getAnimatedValue();
@@ -214,7 +233,7 @@ final class TileMenu extends View {
         if (alphaAnim != null) alphaAnim.cancel();
         if (revealAnim != null) revealAnim.cancel();
         if (pillAnim != null) pillAnim.cancel();
-        revealMs = 240;
+        revealMs = revealEnd();
     }
 
     @Override
@@ -235,7 +254,7 @@ final class TileMenu extends View {
         }
         Paint.FontMetrics fm = label.getFontMetrics();
         for (int i = 0; i < labels.length; i++) {
-            float shown = ease((revealMs - 60 - 40 * i) / 140f);
+            float shown = rowShown(i);
             if (shown <= 0f) continue;
             float top = rowY(i), dy = -Ui.px(6) * (1f - shown);
             float f = Math.max(0f, Math.min(1f, 1f - Math.abs(pillY - top) / row));

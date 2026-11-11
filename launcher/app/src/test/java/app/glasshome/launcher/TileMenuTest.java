@@ -126,6 +126,36 @@ public class TileMenuTest {
         h.capture("tile-menu-more.png");
     }
 
+    /** A Continue Watching card's menu has three rows (Resume, Details, Remove): a row taller, and the third comes in too. */
+    @Test
+    public void threeRowsMakeATallerCardAndAllComeIn() throws Exception {
+        TestHome h = new TestHome();
+        TileMenu menu = h.activity.tileMenu();
+        assertEquals("a tile's menu keeps its two rows", Ui.px(92), TileMenu.height());
+        assertEquals(Ui.px(134), TileMenu.height(3));
+        String[] rows = {"Resume", "Details", "Remove"};
+        menu.show(Ui.px(960), Ui.px(300), Ui.px(450), Ui.px(400), rows, new Runnable[3]);
+        TestHome.settle();
+        RectF card = new RectF();
+        menu.cardBounds(card);
+        assertEquals(Ui.px(134), Math.round(card.height()));
+        assertEquals(Ui.px(134), menu.getHeight());
+        // The reveal runs until the last row is in, not only the first two
+        for (int i = 0; i < rows.length; i++) assertEquals("row " + i + " fully shown", 1f, menu.rowShown(i), 0f);
+        menu.move(1);
+        menu.move(1);
+        assertEquals(2, menu.focusedIndex());
+        menu.move(1);
+        assertEquals("nothing past the last", 2, menu.focusedIndex());
+        menu.dismissNow();
+        // A tile's menu after it is two rows again
+        h.press(KEYCODE_DPAD_RIGHT);
+        holdSelect(h);
+        assertArrayEquals(TileMenu.LABELS, menu.labels());
+        menu.cardBounds(card);
+        assertEquals(Ui.px(92), Math.round(card.height()));
+    }
+
     @Test
     public void backFoldsTheCardAway() throws Exception {
         TestHome h = new TestHome();

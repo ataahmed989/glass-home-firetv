@@ -50,7 +50,8 @@ import java.util.concurrent.Executors;
  *
  * Remote navigation is handled in one place ({@link #dispatchKeyEvent}) across these zones: the
  * app grid, the hero's "Open …" action, the weather card, the profile capsule, the tab bar, a
- * browse page, and the overlays (detailed forecast, home-screen settings, a title's details).
+ * browse page, and the overlays (detailed forecast, home-screen settings, a title's details, and a Continue
+ * Watching title's details and episodes).
  * Arrows and Select are consumed there, so the framework's own focus search never moves focus a
  * second time; the ☰ (Menu) key goes to the tab bar; Back goes through {@link #onBackPressed};
  * Home is left to the system.
@@ -83,7 +84,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
     private static final long RESUME_REFRESH_MS = 600;
 
-    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE, TILE_MENU, HOME_ROW }
+    enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE, TILE_MENU, HOME_ROW,
+        DETAILS, EPISODES }
 
     static final int HOME = 0, MOVIES = 1, TV = 2, SPORTS = 3;
 
@@ -92,6 +94,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final ExecutorService pagesNet = Executors.newFixedThreadPool(2);
     /** Look-ups of titles' links (one at a time, apart from the pages' own loading). */
     private final ExecutorService linksNet = Executors.newSingleThreadExecutor();
+    /**
+     * FirePlayer's lists of a show's episodes: one call can take seconds (FirePlayer asks the provider, and TMDB the
+     * first time), so on a thread of its own, never holding up the Continue Watching row or the glass's backdrops.
+     */
+    private final ExecutorService episodeCalls = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
 
     private HomeConfig config;
@@ -189,6 +196,23 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private ContinueWatching.Item menuItem;
     /** The menu's glass frosts a page (a card's menu was last open), not Home. */
     private boolean menuGlassOnPage;
+    /**
+     * A Continue Watching title's details (its card's menu, Details), and its show's episodes from there; their own
+     * glass, frosting whatever they were opened over. The card keeps focus underneath, for the way back.
+     */
+    private DetailsWindow infoWindow;
+    private EpisodesWindow episodesWindow;
+    private Glass infoGlass;
+    /** Where the details were opened (Home's row or a page) and for which entry; null when they aren't open. */
+    private ShelfPage infoPage;
+    private ContinueWatching.Item infoItem;
+    /** The show's name for the episodes window: TMDB's once it has answered, else the entry's. */
+    private String infoShowName = "";
+    /** The show's episodes, once FirePlayer has listed them (null until then, or when it couldn't); and whether it's being asked. */
+    private List<ContinueWatching.Episode> infoEpisodes;
+    private boolean infoEpisodesAsking, infoTmdbEpisodeAsked;
+    /** Each opening (and closing) of the details: an answer for an earlier one is dropped. */
+    private int infoGeneration;
     private DetailView titleDetail;
     private ControlCenter control;
     private Glass controlGlass, panelGlass, sourceGlass, sourcesGlass;
@@ -502,6 +526,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case PAGE_DETAIL:
             case UPDATE:
             case TILE_MENU:
+            case DETAILS:
+            case EPISODES:
                 return false;
             default:
                 return true;
@@ -750,6 +776,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         root.addView(detail, match());
         titleDetail = new DetailView(this);
         root.addView(titleDetail, match());
+        // A Continue Watching title's details and episodes: the same glass as Home Screen settings, over a tile's menu
+        infoGlass = new Glass(config.blurGlass, 0xE6181A20);
+        infoWindow = new DetailsWindow(this, infoGlass);
+        root.addView(infoWindow, match());
+        episodesWindow = new EpisodesWindow(this, infoGlass);
+        root.addView(episodesWindow, match());
         controlGlass = new Glass(config.blurGlass, 0xE62A2E36);
         control = new ControlCenter(this, controlGlass);
         control.setListener(this::onControl);
@@ -1187,6 +1219,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         tileMenu.invalidate();
         weatherGlass.setBackdrop(small, screenW, screenH);
         if (page == HOME) setBarBackdrop(small);
+        if (infoPage != null && infoPage == homeRow) {
+            // The details over Home's row frost Home as it is now
+            infoGlass.setBackdrop(small, screenW, screenH);
+            infoWindow.invalidate();
+            episodesWindow.invalidate();
+        }
         grid.invalidate();
         weather.invalidate();
         detail.invalidate();
@@ -1673,6 +1711,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (indexOf(continueRow(items, menuItem, home), menuItem.id) != was) closeTileMenu(true, false);
         }
         continueItems = items;
+        if (infoItem != null) {
+            // The details stay open whatever comes; their entry, if still there, with where it was left now
+            for (ContinueWatching.Item i : items) {
+                if (i.id.equals(infoItem.id) && i.episode == infoItem.episode) {
+                    infoItem = i;
+                    infoWindow.setItem(i);
+                    episodesWindow.setItem(i);
+                    break;
+                }
+            }
+        }
         pages[MOVIES].setTopShelf(continueShelf(ContinueWatching.of(items, false)));
         pages[TV].setTopShelf(continueShelf(ContinueWatching.of(items, true)));
         showHomeRow();
@@ -1921,7 +1970,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /**
      * Held Select on a Continue Watching card: the same glass card as a tile's, unfolding under it,
-     * with Resume and Remove. The card keeps focus and the rest of the page dims back.
+     * with Resume, Details and Remove. The card keeps focus and the rest of the page dims back.
      */
     private void openCardMenu() {
         ShelfPage sp = cardPage();
@@ -1943,15 +1992,231 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             if (menuGlassOnPage && homeBackdrop != null) menuGlass.setBackdrop(homeBackdrop, screenW, screenH);
             menuGlassOnPage = false;
         }
-        tileMenu.show(card.centerX(), card.top, card.bottom, card.width(), new String[] {"Resume", "Remove"}, new Runnable[] {
+        // Remove, the one that can't be undone, last
+        tileMenu.show(card.centerX(), card.top, card.bottom, card.width(), new String[] {"Resume", "Details", "Remove"}, new Runnable[] {
                 () -> {
                     closeTileMenu(true, false);
                     resumeContinue(item);
                 },
                 () -> {
                     closeTileMenu(true, false);
+                    openInfo(sp, item);
+                },
+                () -> {
+                    closeTileMenu(true, false);
                     removeContinue(item);
                 }});
+    }
+
+    // ---- A Continue Watching title's details and episodes ------------------------------------
+
+    private static final String TMDB_UNREACHABLE = "Couldn't reach TMDB just now.";
+    private static final String TMDB_NO_TOKEN = "More details need a TMDB token, which isn't set.";
+
+    /**
+     * Details, on a Continue Watching card's menu: the details window comes in over the card (which keeps focus
+     * beneath it, raised for the way back) with what the card knows, and fills in from TMDB. For a show FirePlayer can
+     * list, its episodes are asked for now, once, for "This episode" and the Episodes window both.
+     */
+    private void openInfo(ShelfPage sp, ContinueWatching.Item item) {
+        final int generation = ++infoGeneration;
+        infoPage = sp;
+        infoItem = item;
+        infoShowName = item.title;
+        infoEpisodes = null;
+        infoEpisodesAsking = false;
+        infoTmdbEpisodeAsked = false;
+        // Its glass frosts what it opened over: Home as it is (kept so, see applyHomeBackdrop), or the page
+        infoGlass.setBackdrop(sp == homeRow ? homeBackdrop : sp.sceneBackdrop(), screenW, screenH);
+        episodesWindow.disappear(0);
+        infoWindow.show(item, item.listsEpisodes);
+        infoWindow.appear(200);
+        loadAbout(generation, item);
+        if (item.listsEpisodes) loadEpisodes(generation, item);
+        else if (item.episode) loadTmdbEpisode(generation, item);
+    }
+
+    /** The film's or show's TMDB id: FirePlayer's, else the title TMDB has by exactly its name (0 for none). */
+    private static long tmdbIdOf(Tmdb tmdb, ContinueWatching.Item item) throws Exception {
+        if (item.tmdbId > 0) return item.tmdbId;
+        Tmdb.Title t = tmdb.find(item.title, item.year, item.episode);
+        return t == null ? 0 : t.id;
+    }
+
+    /** What TMDB says of it (the same answer the card's artwork came from, so usually cached), or why there's nothing. */
+    private void loadAbout(int generation, ContinueWatching.Item item) {
+        if (config.tmdbApiKey.isEmpty()) {
+            infoWindow.setStatus(TMDB_NO_TOKEN);
+            return;
+        }
+        String none = "TMDB has no details for this " + (item.episode ? "show." : "film.");
+        runOff(pagesNet, () -> {
+            Tmdb.About about = null;
+            String why = null;
+            try {
+                Tmdb tmdb = new Tmdb(this, config.tmdbApiKey);
+                long id = tmdbIdOf(tmdb, item);
+                if (id > 0) about = tmdb.about(id, item.episode);
+                if (about == null) why = none;
+            } catch (Net.HttpError e) {
+                why = e.code == 404 ? none : TMDB_UNREACHABLE;
+            } catch (Exception e) {
+                why = TMDB_UNREACHABLE;
+            }
+            Tmdb.About found = about;
+            String status = why;
+            main.post(() -> {
+                if (generation != infoGeneration || isDestroyed()) return;
+                if (found == null) {
+                    infoWindow.setStatus(status);
+                    return;
+                }
+                infoWindow.setAbout(found);
+                infoShowName = found.name;
+                episodesWindow.setShowName(found.name);
+            });
+        });
+    }
+
+    /**
+     * The show's episodes from FirePlayer (only for one it said it can list): the one it was left on goes on "This
+     * episode", and the list is kept for the Episodes window. Without that one, TMDB's is asked for instead.
+     */
+    private void loadEpisodes(int generation, ContinueWatching.Item item) {
+        infoEpisodesAsking = true;
+        runOff(episodeCalls, () -> {
+            List<ContinueWatching.Episode> list = ContinueWatching.episodes(this, item.id);
+            main.post(() -> {
+                if (generation != infoGeneration || isDestroyed()) return;
+                infoEpisodesAsking = false;
+                infoEpisodes = list;
+                ContinueWatching.Episode its = ContinueWatching.itsEpisode(list, infoItem);
+                if (its != null) infoWindow.setEpisode(its);
+                else loadTmdbEpisode(generation, infoItem);
+                if (episodesWindow.isOpen()) {
+                    if (list != null) episodesWindow.setEpisodes(list);
+                    else episodesWindow.setFailed();
+                }
+            });
+        });
+    }
+
+    /**
+     * The episode it was left on as TMDB has it, for "This episode" when FirePlayer can't say (an older one, or its
+     * list lacks it). Anything failing leaves the card with what the entry says of it.
+     */
+    private void loadTmdbEpisode(int generation, ContinueWatching.Item item) {
+        if (infoTmdbEpisodeAsked || config.tmdbApiKey.isEmpty() || item == null || item.season <= 0 || item.number <= 0) return;
+        infoTmdbEpisodeAsked = true;
+        runOff(pagesNet, () -> {
+            ContinueWatching.Episode found = null;
+            try {
+                Tmdb tmdb = new Tmdb(this, config.tmdbApiKey);
+                long id = tmdbIdOf(tmdb, item);
+                for (Tmdb.Episode e : id > 0 ? tmdb.season(id, item.season) : new ArrayList<Tmdb.Episode>()) {
+                    if (e.number == item.number) {
+                        found = ContinueWatching.fromTmdb(e);
+                        break;
+                    }
+                }
+            } catch (Exception ignored) {
+                // the card keeps what the entry says of it
+            }
+            ContinueWatching.Episode e = found;
+            if (e == null) return;
+            main.post(() -> {
+                // FirePlayer's own, should it have come meanwhile, stays
+                if (generation != infoGeneration || isDestroyed() || infoWindow.hasListedEpisode()) return;
+                infoWindow.setEpisode(e);
+            });
+        });
+    }
+
+    /** Resume, in the details: they go at once, focus is the card's again, and FirePlayer plays on where it was left. */
+    private void resumeFromInfo() {
+        ContinueWatching.Item item = infoItem;
+        if (item == null) return;
+        closeInfo(false);
+        resumeContinue(item);
+    }
+
+    /** Episodes, in the details: the episodes window takes their place, from FirePlayer's list if it came. */
+    private void openEpisodes() {
+        ContinueWatching.Item item = infoItem;
+        if (item == null || !item.listsEpisodes) return;
+        episodesWindow.open(infoShowName, item);
+        episodesWindow.replace(infoWindow, 120, 180);
+        if (infoEpisodes != null) episodesWindow.setEpisodes(infoEpisodes);
+        else if (!infoEpisodesAsking) loadEpisodes(infoGeneration, item);
+    }
+
+    /** Select on the episodes window's "Couldn't get…": FirePlayer is asked again. */
+    private void retryEpisodes() {
+        if (infoItem == null) return;
+        episodesWindow.setLoading();
+        if (!infoEpisodesAsking) loadEpisodes(infoGeneration, infoItem);
+    }
+
+    /** Back from the episodes: the details again, Episodes focused. */
+    private void closeEpisodes() {
+        infoWindow.setButton(1);
+        infoWindow.replace(episodesWindow, 120, 180);
+    }
+
+    /**
+     * An episode chosen: both windows go at once and focus is the card's again. The one the show was left on resumes
+     * where it was left; any other plays in FirePlayer from where it left that one (else its start).
+     */
+    private void playEpisode(ContinueWatching.Episode episode) {
+        ContinueWatching.Item item = infoItem;
+        ShelfPage from = infoPage;
+        if (item == null) return;
+        closeInfo(false);
+        if (episode.id.isEmpty() || ContinueWatching.isItsEpisode(episode, item)) {
+            resumeContinue(item);
+            return;
+        }
+        continueStale = true;   // the show's entry moves to this episode once it has played a while
+        openedFromRow = from == homeRow && page == HOME;
+        HomeButtonService.opening(FirePlayerTitles.PACKAGE);
+        try {
+            startActivity(ContinueWatching.playEpisodeIntent(item.id, episode.id), openingAnimation());
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Toast.makeText(this, "FirePlayer couldn't be opened", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Back in the details (they fade; anything else closes them at once): focus is the card's again. */
+    private void closeInfo(boolean animate) {
+        ShelfPage from = infoPage;
+        hideInfo(animate);
+        focusCard(from);
+    }
+
+    /** The details and episodes windows go; what they asked for and haven't heard back is dropped. */
+    private void hideInfo(boolean animate) {
+        infoGeneration++;
+        infoWindow.disappear(animate ? 120 : 0);
+        episodesWindow.disappear(animate ? 120 : 0);
+        infoPage = null;
+        infoItem = null;
+        infoEpisodes = null;
+        infoEpisodesAsking = false;
+    }
+
+    /** Focus on the Continue Watching card the details were opened from: Home's row (Home still up to show it), or the page. */
+    private void focusCard(ShelfPage from) {
+        if (from == homeRow && page == HOME) focusHomeRow();
+        else focusPage();
+    }
+
+    /** The details window and the episodes window (tests). */
+    DetailsWindow infoWindow() {
+        return infoWindow;
+    }
+
+    EpisodesWindow episodesWindow() {
+        return episodesWindow;
     }
 
     private void closeCardMenu(boolean animate) {
@@ -2231,6 +2496,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 titleDetail.animate().cancel();
                 titleDetail.setVisibility(View.GONE);
                 break;
+            case DETAILS:
+            case EPISODES:
+                hideInfo(false);
+                break;
             default:
                 break;
         }
@@ -2264,6 +2533,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     Zone zone() {
         if (prompt.isOpen()) return Zone.UPDATE;
         if (tileMenu.isOpen()) return Zone.TILE_MENU;
+        if (episodesWindow != null && episodesWindow.isOpen()) return Zone.EPISODES;
+        if (infoWindow != null && infoWindow.isOpen()) return Zone.DETAILS;
         if (panel.isOpen()) return Zone.SETTINGS;
         if (sources.isOpen()) return Zone.SOURCES;
         if (control.isOpen()) return Zone.CONTROL;
@@ -3038,6 +3309,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     if (titleDetail.isOpen()) titleDetail.requestFocus();
                     else focusPage();
                     break;
+                case DETAILS:
+                case EPISODES:
+                    // The details (or episodes) keep the remote while open; focus itself is their card's, beneath them
+                    if (infoPage != null) focusCard(infoPage);
+                    else if (page != HOME) focusPage();
+                    else focusGrid(lastFocused);
+                    break;
                 case HERO:
                     if (stage.hasAction()) focusHero();
                     else focusGrid(lastFocused);
@@ -3153,7 +3431,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private String focusSignature() {
         return zone() + "/" + focusedPosition() + "/" + capsule.item() + "/" + tabs.selected() + "/" + weather.focusedKind()
                 + "/" + panel.focusedIndex() + "/" + control.focusedItem() + "/" + tileMenu.isOpen() + tileMenu.focusedIndex()
-                + "/" + (homeRow == null ? -1 : homeRow.focusedColumn());
+                + "/" + (homeRow == null ? -1 : homeRow.focusedColumn()) + "/" + infoWindow.focusedButton() + "/" + episodesWindow.focusKey();
     }
 
     private static int direction(int code) {
@@ -3199,6 +3477,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case PAGE_DETAIL:
                 if (direction == View.FOCUS_LEFT) titleDetail.left();
                 else if (direction == View.FOCUS_RIGHT) titleDetail.right();
+                return;
+            case DETAILS:
+                // Along the buttons; Up and Down stay in the window
+                if (direction == View.FOCUS_LEFT) infoWindow.left();
+                else if (direction == View.FOCUS_RIGHT) infoWindow.right();
+                return;
+            case EPISODES:
+                episodesWindow.move(direction);
                 return;
             case TABS:
                 // Moving along the tabs selects them; the page follows once the selection rests
@@ -3378,6 +3664,18 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             case HOME_ROW:
                 homeRow.select();
                 return;
+            case DETAILS:
+                if (infoWindow.focusedButton() == 1) openEpisodes();
+                else resumeFromInfo();
+                return;
+            case EPISODES:
+                if (episodesWindow.failed()) {
+                    retryEpisodes();
+                    return;
+                }
+                ContinueWatching.Episode chosen = episodesWindow.select();
+                if (chosen != null) playEpisode(chosen);
+                return;
             case PAGE_DETAIL:
                 PageModel.Action a = titleDetail.focusedAction();
                 if (a != null && a.appKey != null) open(titleDetail.feature() == null ? null : titleDetail.feature().ref, a.appKey);
@@ -3429,6 +3727,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 return;
             case PAGE_DETAIL:
                 closeDetailPage();
+                return;
+            case DETAILS:
+                closeInfo(true);
+                return;
+            case EPISODES:
+                closeEpisodes();
                 return;
             case PAGE:
                 if (!currentPage().back()) focusTabs();
@@ -3629,6 +3933,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             titleDetail.animate().cancel();
             titleDetail.setVisibility(View.GONE);
         }
+        hideInfo(false);
         if (prompt.isOpen()) {
             prompt.animate().cancel();
             prompt.setVisibility(View.GONE);
@@ -3760,11 +4065,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             for (HeroSlide sl : slides) if (sl != on) sl.frost = null;
         }
         titleDetail.trimMemory();
+        infoWindow.trimMemory();
+        episodesWindow.trimMemory();
         main.removeCallbacks(collect);
         main.postDelayed(collect, COLLECT_AFTER_MS);
         // Only from Home as it is with nothing open: what goes back on the GPU is what that draws
         main.removeCallbacks(gpuTrim);
-        if (TRIM_GPU_WHEN_HIDDEN && page == HOME && !titleDetail.isOpen() && !panel.isOpen() && !control.isOpen()) {
+        if (TRIM_GPU_WHEN_HIDDEN && page == HOME && !titleDetail.isOpen() && !panel.isOpen() && !control.isOpen()
+                && !infoWindow.isOpen() && !episodesWindow.isOpen()) {
             main.postDelayed(gpuTrim, GPU_TRIM_AFTER_MS);
         }
         HomeButtonService.glassHomeHidden();
@@ -3844,6 +4152,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         network.shutdownNow();
         pagesNet.shutdownNow();
         linksNet.shutdownNow();
+        episodeCalls.shutdownNow();
         navSounds.release();
         super.onDestroy();
     }

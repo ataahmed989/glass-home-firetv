@@ -412,8 +412,8 @@ final class FeaturePainter {
         return bodyLayout;
     }
 
-    /** Pill buttons; the focused one is white with dark text, the others clear glass. */
-    void drawButtons(Canvas c, float left, float bottom, List<PageModel.Action> actions, int focused) {
+    /** Pill buttons; the focused one is white with dark text, the others clear glass. Returns where the last one ends. */
+    float drawButtons(Canvas c, float left, float bottom, List<PageModel.Action> actions, int focused) {
         float h = Ui.px(64), padX = Ui.px(30), gap = Ui.px(18), iconW = Ui.px(18), iconGap = Ui.px(14);
         float x = left;
         Paint.FontMetrics fm = button.getFontMetrics();
@@ -447,5 +447,6 @@ final class FeaturePainter {
             c.drawText(a.label, tx, cy - (fm.ascent + fm.descent) / 2f, button);
             x += w + gap;
         }
+        return actions.isEmpty() ? left : x - gap;
     }
 }
