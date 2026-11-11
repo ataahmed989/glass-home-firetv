@@ -161,6 +161,21 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     };
     /** FirePlayer's list may have changed since it was last asked (or never was): Home asks again when it comes back. */
     private boolean continueStale = true;
+    /**
+     * FirePlayer couldn't answer (being updated, or restarting): what was shown stays, and it's asked again a little
+     * later, a few times at most and only while a page that shows the list is in front; after that, when Home comes back.
+     */
+    private static final long CONTINUE_RETRY_MS = 3000;
+    private static final int CONTINUE_RETRIES = 3;
+    private int continueRetries;
+    private final Runnable continueRetry = () -> {
+        if (this.resumed && !isDestroyed() && wantsContinue(this.page)) refreshContinue(true);
+    };
+    /** FirePlayer was updated (or installed) while Home was up: its list is asked for once it has settled. */
+    private static final long CONTINUE_AFTER_UPDATE_MS = 2000;
+    private final Runnable continueAfterUpdate = () -> {
+        if (this.resumed && !isDestroyed() && wantsContinue(this.page)) refreshContinue();
+    };
     /** The page whose Continue Watching card has its menu open, and that card's entry; or null. */
     private ShelfPage menuPage;
     private ContinueWatching.Item menuItem;
@@ -326,7 +341,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         @Override
         public void onReceive(Context context, Intent intent) {
             android.net.Uri data = intent.getData();
-            loadApps(data == null ? null : data.getSchemeSpecificPart());
+            String pkg = data == null ? null : data.getSchemeSpecificPart();
+            loadApps(pkg);
+            // A FirePlayer just updated: Home may have asked it for its list mid-update, so it's asked again
+            String action = intent.getAction();
+            if (FirePlayerTitles.PACKAGE.equals(pkg)
+                    && (Intent.ACTION_PACKAGE_REPLACED.equals(action) || Intent.ACTION_PACKAGE_ADDED.equals(action))) {
+                continueStale = true;
+                main.removeCallbacks(continueAfterUpdate);
+                main.postDelayed(continueAfterUpdate, CONTINUE_AFTER_UPDATE_MS);
+            }
         }
     };
 
@@ -1573,14 +1597,27 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * isn't running, and this TV is short of memory.
      */
     private void refreshContinue() {
+        refreshContinue(false);
+    }
+
+    private void refreshContinue(boolean retry) {
         final int generation = ++continueGeneration;
         continueArtTries = 0;
         continueStale = false;
+        main.removeCallbacks(continueRetry);
+        if (!retry) continueRetries = 0;
         continueWatcher.watch();   // FirePlayer may have come since it was last tried
         runOff(worker, () -> {
             List<ContinueWatching.Item> items = ContinueWatching.query(this);
             main.post(() -> {
                 if (generation != continueGeneration || isDestroyed()) return;
+                if (items == null) {
+                    // No answer: the row keeps what it had, and FirePlayer is asked again
+                    continueStale = true;
+                    if (continueRetries++ < CONTINUE_RETRIES) main.postDelayed(continueRetry, CONTINUE_RETRY_MS);
+                    return;
+                }
+                continueRetries = 0;
                 showContinue(items);
                 lookUpContinueArt(items);
             });
@@ -3721,6 +3758,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(pauseSnapshot);
         main.removeCallbacks(gpuTrim);
         main.removeCallbacks(continueChanged);
+        main.removeCallbacks(continueRetry);
+        main.removeCallbacks(continueAfterUpdate);
         continueWatcher.stop();
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);

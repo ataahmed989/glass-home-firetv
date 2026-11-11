@@ -41,6 +41,7 @@ public class HomeContinueRowTest {
         FakeFirePlayer.rows.clear();
         FakeFirePlayer.deleted.clear();
         FakeFirePlayer.queries = 0;
+        FakeFirePlayer.failing = false;
         org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(16));
     }
 
@@ -273,5 +274,46 @@ public class HomeContinueRowTest {
         toLastRow(h);
         h.press(KEYCODE_DPAD_DOWN);
         assertEquals(Zone.GRID, h.zone());
+    }
+
+    @Test
+    public void aFirePlayerThatCannotAnswerKeepsTheRowAndIsAskedAgain() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        List<String> before = ids(h.activity.homeRow());
+        assertEquals(7, before.size());
+        // Its list changes as FirePlayer is being updated: no answer, and the row keeps what it had
+        FakeFirePlayer.failing = true;
+        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        TestHome.advance(400);
+        TestHome.settle();
+        assertEquals(View.VISIBLE, h.activity.homeRow().getVisibility());
+        assertEquals(before, ids(h.activity.homeRow()));
+        // Back a moment later: asked again on its own, and what changed meanwhile comes in
+        synchronized (FakeFirePlayer.rows) {
+            FakeFirePlayer.rows.remove(0);
+        }
+        FakeFirePlayer.failing = false;
+        for (int i = 0; i < 4; i++) TestHome.settle();
+        assertEquals(before.subList(1, before.size()), ids(h.activity.homeRow()));
+    }
+
+    @Test
+    public void firePlayerUpdatedWhileHomeIsUpIsAskedAgain() throws Exception {
+        withFirePlayer();
+        // FirePlayer mid-update when Home asks, and still for as long as Home asks again on its own
+        FakeFirePlayer.failing = true;
+        TestHome h = home();
+        for (int i = 0; i < 10; i++) TestHome.settle();
+        assertEquals(View.GONE, h.activity.homeRow().getVisibility());
+        int asked = FakeFirePlayer.queries;
+        FakeFirePlayer.failing = false;
+        TestHome.advance(20_000);
+        assertEquals("not asked on its own forever", asked, FakeFirePlayer.queries);
+        // The update finishes: Fire OS says so, and the list is asked for
+        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED, android.net.Uri.parse("package:" + FirePlayerTitles.PACKAGE)));
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        assertEquals(View.VISIBLE, h.activity.homeRow().getVisibility());
+        assertEquals(7, ids(h.activity.homeRow()).size());
     }
 }

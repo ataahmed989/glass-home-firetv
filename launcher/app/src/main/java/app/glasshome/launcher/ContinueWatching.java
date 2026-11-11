@@ -86,13 +86,18 @@ final class ContinueWatching {
 
     private ContinueWatching() {}
 
-    /** Everything FirePlayer offers, newest first; empty without it. Off the main thread: it is another app. */
+    /**
+     * Everything FirePlayer offers, newest first; empty without it. Null when FirePlayer is there but couldn't answer
+     * (being updated, or its process restarting): that isn't an empty list, and is asked again. Off the main thread: it
+     * is another app.
+     */
     static List<Item> query(Context context) {
         List<Item> out = new ArrayList<>();
         try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(ITEMS)) {
-            if (client == null) return out;   // no FirePlayer, or one without Continue Watching
+            // No FirePlayer, or one without Continue Watching; but one that's installed may be in the middle of an update
+            if (client == null) return installed(context) ? null : out;
             try (Cursor c = client.query(ITEMS, null, null, null, null)) {
-                if (c == null) return out;
+                if (c == null) return null;
                 while (c.moveToNext()) {
                     Item item;
                     try {
@@ -104,10 +109,20 @@ final class ContinueWatching {
                 }
             }
         } catch (Exception e) {
-            // FirePlayer stopped or refused: as good as an empty list
-            return new ArrayList<>();
+            // FirePlayer stopped while answering (an update, Fire OS closing it): not an answer
+            return null;
         }
         return out;
+    }
+
+    /** FirePlayer is installed (with or without Continue Watching). */
+    private static boolean installed(Context context) {
+        try {
+            context.getPackageManager().getPackageInfo(FirePlayerTitles.PACKAGE, 0);
+            return true;
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            return false;
+        }
     }
 
     private static Item read(Cursor c) {
