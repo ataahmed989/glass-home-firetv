@@ -153,6 +153,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private View homeDim;
     /** 0 with the apps in the dock, 1 with Home moved up to its Continue Watching row. */
     private float homeLift, homeLiftTarget;
+    /** A title was opened from Home's Continue Watching row: the trip back from it comes back to the row. */
+    private boolean openedFromRow;
     private ValueAnimator liftAnim;
     /** How far Home moves up for its Continue Watching row, and how dark its background gets then (as on the shelves). */
     private static final int HOME_LIFT = 356;
@@ -692,6 +694,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         homeRow = new ShelfPage(this, "Continue Watching", true);
         homeRow.setModel(new PageModel());
         homeRow.setListener(this);
+        // However focus comes to the row (a trip back, Android handing focus back to it), Home moves up to show it:
+        // never the row's card under focus with only its edge peeking beneath the dock
+        homeRow.setOnFocusChangeListener((v, has) -> {
+            if (!has || page != HOME || homeLiftTarget >= 1f) return;
+            lastZone = Zone.HOME_ROW;
+            homeZone = Zone.HOME_ROW;
+            setBarHidden(true);
+            animateLift(1f, false);
+        });
         homeRow.setVisibility(View.GONE);
         root.addView(homeRow, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ShelfPage.embeddedHeight(), Gravity.TOP));
         // Over the tiles, under everything else: a tile's menu
@@ -1377,6 +1388,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     private void launch(AppEntry app) {
+        openedFromRow = false;
         // Some of Amazon's screens pass through its launcher on their way up; that is not the Home button
         HomeButtonService.opening(app.key);
         try {
@@ -1760,6 +1772,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Select on a Continue Watching card: FirePlayer's player, where it was left. */
     private void resumeContinue(ContinueWatching.Item item) {
         continueStale = true;   // where it was left changes as it plays
+        openedFromRow = page == HOME && homeRow.isFocused();
         HomeButtonService.opening(FirePlayerTitles.PACKAGE);
         try {
             startActivity(ContinueWatching.resumeIntent(item.id), openingAnimation());
@@ -2288,13 +2301,25 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             ((AppAdapter.Holder) holder).tile.requestFocus();
             return;
         }
-        // Not laid out yet (e.g. right after loading): scroll it in, then focus it
+        // Not laid out yet (right after loading, or the apps changed while Home was away): scroll it in, then focus it
+        // once it is, frame by frame for a moment, unless focus has been moved on meanwhile. Before, one look on the
+        // next message could come before the layout and leave focus where it was: on the Continue Watching row with
+        // Home already settled down beneath it.
         grid.scrollToPosition(target);
-        grid.post(() -> {
+        focusGridLater(target, getCurrentFocus(), 0);
+    }
+
+    private void focusGridLater(int target, View was, int tries) {
+        grid.postOnAnimation(() -> {
+            if (getCurrentFocus() != was) return;
             RecyclerView.ViewHolder h = grid.findViewHolderForAdapterPosition(target);
             if (h != null) ((AppAdapter.Holder) h).tile.requestFocus();
+            else if (tries < GRID_FOCUS_FRAMES) focusGridLater(target, was, tries + 1);
         });
     }
+
+    /** How many frames a tile not laid out yet is waited for (about half a second). */
+    private static final int GRID_FOCUS_FRAMES = 30;
 
     private void focusHero() {
         stage.requestFocus();
@@ -3489,6 +3514,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         capsule.updateTime();
         clock.start();
         restoreFocus();
+        openedFromRow = false;
         // A newer Glass Home on GitHub: looked for once Home is up, and offered when nothing is open
         current = this;
         main.postDelayed(updateCheck, UPDATE_CHECK_MS);
@@ -3608,6 +3634,18 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             prompt.setVisibility(View.GONE);
         }
         if (page != HOME) showHomeAtOnce();
+        // Back from a title opened on Home's Continue Watching row (Fire OS can pass through Amazon's home on the
+        // way, which comes here as the Home button would): that row again, with Home moved up to show it
+        boolean backToRow = openedFromRow && SystemClock.uptimeMillis() - stoppedAt > FROM_APP_MS && homeRowHasCards();
+        openedFromRow = false;
+        if (backToRow) {
+            homeRow.requestFocus();
+            lastZone = Zone.HOME_ROW;
+            homeZone = Zone.HOME_ROW;
+            setBarHidden(true, true);
+            animateLift(1f, true);
+            return;
+        }
         if (homeLift > 0f || zone() == Zone.HOME_ROW || homeZone == Zone.HOME_ROW) {
             // From Home's Continue Watching row: the top of Home, at once, under the cover
             leaveHomeRow(false);

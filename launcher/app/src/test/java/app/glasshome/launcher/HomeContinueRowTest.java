@@ -142,6 +142,42 @@ public class HomeContinueRowTest {
         assertTrue(h.activity.focusedPosition() < Ui.COLUMNS);
     }
 
+    /** Home after a title opened on the row: back on that row with Home up, however Fire OS made the trip back. */
+    @Test
+    public void backFromATitleOpenedOnTheRowIsOnTheRowWithHomeUp() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        toLastRow(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_CENTER);   // Sacrifice, in FirePlayer
+        assertNotNull(shadowOf(h.activity).getNextStartedActivity());
+        h.controller.pause().stop();
+        TestHome.advance(10 * MIN);
+        // Played to the end: Fire OS passed through Amazon's home, so Home comes back as the Home button brings it
+        h.controller.restart().start();
+        h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
+        h.controller.resume();
+        for (int i = 0; i < 2; i++) TestHome.settle();
+        assertEquals(Zone.HOME_ROW, h.zone());
+        assertEquals("Home up, the whole row on screen", 1f, h.activity.homeLift(), 0f);
+        assertEquals("m1", h.activity.homeRow().focusedCard().id);
+
+        // The Home button pressed on Home itself still goes to the top of Home, focus on the apps
+        h.controller.pause();
+        h.controller.newIntent(new Intent(h.activity, HomeActivity.class).putExtra(HomeButtonService.EXTRA_HOME_BUTTON, true));
+        h.controller.resume();
+        for (int i = 0; i < 2; i++) TestHome.settle();
+        assertEquals(Zone.GRID, h.zone());
+        assertEquals(0f, h.activity.homeLift(), 0f);
+
+        // However focus comes to the row, Home moves up to show it
+        h.activity.homeRow().requestFocus();
+        TestHome.settle();
+        assertEquals(Zone.HOME_ROW, h.zone());
+        assertEquals(1f, h.activity.homeLift(), 0f);
+    }
+
     @Test
     public void selectResumesInFirePlayerAndHoldingOffersResumeAndRemove() throws Exception {
         withFirePlayer();
