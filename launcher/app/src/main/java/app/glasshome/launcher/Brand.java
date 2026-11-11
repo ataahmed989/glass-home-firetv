@@ -44,6 +44,9 @@ final class Brand {
         other("com.esaba.downloader", "Downloader", 0xFF2A1200, 0xFF8A3D00);
         other("com.tailscale.ipn", "Tailscale", 0xFF111111, 0xFF2E2C29);
         other("com.amazon.alexa", "Alexa", 0xFF00243A, 0xFF006C9C);
+        other("com.crunchyroll.crunchyroid", "Crunchyroll", 0xFF000000, 0xFF3D1A05);
+        other("tv.twitch.android.viewer", "Twitch", 0xFF18171C, 0xFF2E1F52);
+        other("tv.twitch.android.app", "Twitch", 0xFF18171C, 0xFF2E1F52);
     }
 
     private static void featured(String key, String name, int start, int end, String providers) {

@@ -23,6 +23,11 @@ final class ArtLoader {
 
     private ArtLoader() {}
 
+    /** The bundled tile for an app that comes under another package name too (Twitch's TV and phone builds). */
+    static String assetKey(String key) {
+        return "tv.twitch.android.app".equals(key) ? "tv.twitch.android.viewer" : key;
+    }
+
     /**
      * Layered art: <key>.l0.png (opaque back) plus .l1.png, .l2.png… (transparent, front-most last),
      * from the app's external files dir or the bundled assets. Null when the app has no layers.
@@ -32,7 +37,8 @@ final class ArtLoader {
         for (int i = 0; i < 4; i++) {
             String name = app.key + ".l" + i + ".png";
             File custom = new File(context.getExternalFilesDir("icons"), name);
-            Bitmap b = custom.isFile() ? decodeFile(custom, targetWidth) : decodeAsset(context, "icons/" + name, targetWidth);
+            Bitmap b = custom.isFile() ? decodeFile(custom, targetWidth)
+                    : decodeAsset(context, "icons/" + assetKey(app.key) + ".l" + i + ".png", targetWidth);
             if (b == null) break;
             list.add(b);
         }
@@ -67,7 +73,7 @@ final class ArtLoader {
     static Bitmap load(Context context, AppEntry app, int targetWidth) {
         File custom = new File(context.getExternalFilesDir("icons"), app.key + ".png");
         Bitmap art = custom.isFile() ? decodeFile(custom, targetWidth) : null;
-        if (art == null) art = decodeAsset(context, "icons/" + app.key + ".png", targetWidth);
+        if (art == null) art = decodeAsset(context, "icons/" + assetKey(app.key) + ".png", targetWidth);
         if (art == null) art = fromApp(context, app);
         return art;
     }

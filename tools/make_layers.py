@@ -258,12 +258,28 @@ def fireplayer():
     save_layers("app.fireplayer", l0, [(rgb, alpha)])
 
 
+def twitch():
+    """White letters on their purple block shadow, on dark grey. The shadow is a layer under the whole word (beneath
+    the letters too, so no gap opens as they move) and the letters another in front, so they lift off it as the tile tilts."""
+    img = load("tv.twitch.android.viewer.png")
+    border = np.concatenate([img[:6].reshape(-1, 3), img[-6:].reshape(-1, 3), img[:, :6].reshape(-1, 3), img[:, -6:].reshape(-1, 3)])
+    bg = np.median(border, axis=0)
+    dist = np.sqrt(((img - bg) ** 2).sum(-1))
+    purple = np.median(img[(dist > 0.5) & (img.min(axis=-1) < 0.55)], axis=0)
+    word = np.clip(dist / np.sqrt(((purple - bg) ** 2).sum()), 0, 1)
+    letters = np.clip((img.min(axis=-1) - purple.min()) / (1 - purple.min()), 0, 1) * smoothstep(word, 0.9, 1.0)
+    l0 = np.broadcast_to(bg, img.shape).copy()
+    save_layers("tv.twitch.android.viewer", l0, [(np.broadcast_to(purple, img.shape).copy(), word),
+                                                 (np.ones_like(img), letters)])
+
+
 netflix()
 apple_tv()
 settings()
 fireplayer()
 for key in ("com.amazon.firetv.youtube", "org.smarttube.stable", "com.hbo.hbonow", "ar.tvplayer.tv", "com.amazon.firebat",
-            "com.spotify.tv.android", "com.esaba.downloader", "com.tailscale.ipn"):
+            "com.spotify.tv.android", "com.esaba.downloader", "com.tailscale.ipn", "com.crunchyroll.crunchyroid"):
     flat_logo(key, key + ".png")
+twitch()
 for key in ("com.disney.disneyplus", "gamepass.fire.tv", "com.amazon.venezia", "com.apple.android.music", "com.amazon.tv.livetv"):
     light_logo(key, key + ".png")
