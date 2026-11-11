@@ -147,6 +147,22 @@ final class ImageCache {
      * Another app is in front: give most decoded images back (they come from disk again quickly),
      * keeping the most recently drawn quarter, Home's own, so nothing pops in on the way back.
      */
+    /** Glass Home is out of sight: nothing that failed is tried again until it is back ({@link #resume}). Main thread. */
+    private boolean hidden;
+
+    void pause() {
+        hidden = true;
+    }
+
+    /** Glass Home is back: what came due meanwhile is tried now. Main thread. */
+    void resume() {
+        if (!hidden) return;
+        hidden = false;
+        for (Load load : new ArrayList<>(loads.values())) {
+            if (load.parked && !load.inPool) tryAgain(load);
+        }
+    }
+
     void trimMemory() {
         memory.trimToSize(memory.maxSize() / 4);
     }
@@ -193,6 +209,8 @@ final class ImageCache {
         final List<Runnable> held = new ArrayList<>();
         final Runnable retry = () -> tryAgain(this);
         boolean inPool, retryDue;
+        /** Its retry came while Glass Home was out of sight ({@link #pause}): tried again when it's back. */
+        boolean parked;
         /** It last failed for want of the network (no answer at all), not for what the server sent. */
         boolean offline;
         int tries;
@@ -248,6 +266,7 @@ final class ImageCache {
     }
 
     private void start(Load load) {
+        load.parked = false;
         load.retryDue = false;
         load.inPool = true;
         load.rank = load.held.isEmpty() ? AHEAD : load.tries == 0 ? NOW : AGAIN;
@@ -279,6 +298,13 @@ final class ImageCache {
 
     /** Its time to try again came, or the network came back. */
     private void tryAgain(Load load) {
+        if (hidden) {
+            // Its retry came behind another app: it waits for Glass Home to come back. retryDue stays set, so a draw
+            // doesn't post a second retry and the network coming back still finds it.
+            load.parked = true;
+            return;
+        }
+        load.parked = false;
         load.retryDue = false;
         if (load.held.isEmpty()) {
             // It rests: tried only for a view still waiting for it, and held for sure while it loads

@@ -61,6 +61,8 @@ public class ContinueWatchingTest {
         static final List<Object[]> rows = Collections.synchronizedList(new ArrayList<>());
         static final List<String> deleted = Collections.synchronizedList(new ArrayList<>());
         static volatile int queries;
+        /** FirePlayer in the middle of an update (or its process restarting): it can't answer. */
+        static volatile boolean failing;
 
         @Override
         public boolean onCreate() {
@@ -70,6 +72,7 @@ public class ContinueWatchingTest {
         @Override
         public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {
             queries++;
+            if (failing) throw new IllegalStateException("FirePlayer is being updated");
             MatrixCursor c = new MatrixCursor(COLUMNS);
             synchronized (rows) {
                 for (Object[] r : rows) c.addRow(r);
@@ -132,6 +135,7 @@ public class ContinueWatchingTest {
         FakeFirePlayer.rows.clear();
         FakeFirePlayer.deleted.clear();
         FakeFirePlayer.queries = 0;
+        FakeFirePlayer.failing = false;
         searches.clear();
         org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(16));
         // These are the rows of Movies and TV Shows; Home's own row is tested in HomeContinueRowTest
@@ -461,6 +465,7 @@ public class ContinueWatchingTest {
                 new Object[] {"y1", "episode", "A Show", 0, 0, 0, null, 0, 0, 0, t});
         Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
         List<ContinueWatching.Item> all = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
+        assertNotNull(all);
         List<ContinueWatching.Item> films = ContinueWatching.of(all, false);
         List<String> ids = new ArrayList<>();
         for (ContinueWatching.Item i : films) ids.add(i.id);
@@ -647,5 +652,24 @@ public class ContinueWatchingTest {
         assertEquals(Tmdb.plain("Pokemon: Indigo League"), Tmdb.plain("Pokémon – Indigo League"));
         assertEquals("thelegendofkorra", Tmdb.plain("The Legend of Korra"));
         assertFalse("no word is left out", Tmdb.plain("Legend of Korra").equals(Tmdb.plain("The Legend of Korra")));
+    }
+
+    @Test
+    public void aFirePlayerThatCannotAnswerIsNoAnswerNotAnEmptyList() {
+        long t = Fixtures.RECORDED_AT;
+        FakeFirePlayer.rows.add(new Object[] {"m1", "movie", "Sacrifice", 2026, 0, 0, null, 1284186, 28 * MIN, 100 * MIN, t});
+        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        android.content.Context app = org.robolectric.RuntimeEnvironment.getApplication();
+        FakeFirePlayer.failing = true;
+        assertNull(ContinueWatching.query(app));
+        FakeFirePlayer.failing = false;
+        assertEquals(1, ContinueWatching.query(app).size());
+    }
+
+    @Test
+    public void withoutFirePlayerTheListIsEmpty() {
+        List<ContinueWatching.Item> none = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
+        assertNotNull(none);
+        assertTrue(none.isEmpty());
     }
 }
