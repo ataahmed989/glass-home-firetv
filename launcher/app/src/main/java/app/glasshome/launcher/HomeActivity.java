@@ -2164,15 +2164,16 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     }
 
     /**
-     * An episode chosen: both windows go at once and focus is the card's again. The one the show was left on resumes
-     * where it was left; any other plays in FirePlayer from where it left that one (else its start).
+     * An episode chosen: both windows go at once and focus is the card's again. The one FirePlayer marks as the one the
+     * show was left on resumes where it was left; any other plays in FirePlayer from where it left that one (else its
+     * start).
      */
     private void playEpisode(ContinueWatching.Episode episode) {
         ContinueWatching.Item item = infoItem;
         ShelfPage from = infoPage;
         if (item == null) return;
         closeInfo(false);
-        if (episode.id.isEmpty() || ContinueWatching.isItsEpisode(episode, item)) {
+        if (ContinueWatching.resumes(episode)) {
             resumeContinue(item);
             return;
         }

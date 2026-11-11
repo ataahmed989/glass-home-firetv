@@ -453,7 +453,7 @@ final class EpisodesWindow extends GlassWindow {
             pictures.placeholder(c, rect, r);
             if (e.number > 0) c.drawText("E" + e.number, rect.centerX(), DetailsWindow.centred(stillLabel, rect.centerY()), stillLabel);
         }
-        boolean its = ContinueWatching.isItsEpisode(e, item);
+        boolean its = ContinueWatching.resumes(e);   // the entry's progress only on the one that resumes it
         pictures.progress(c, rect, r, its ? item.progress() : e.progress());
 
         float tx = x + Ui.px(268), tw = Ui.px(844);

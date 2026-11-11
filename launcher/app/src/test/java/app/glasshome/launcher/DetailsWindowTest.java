@@ -322,6 +322,33 @@ public class DetailsWindowTest {
         assertEquals(Zone.HOME_ROW, h.zone());
     }
 
+    /**
+     * The entry has the provider's numbers (S24 E5), FirePlayer's list TMDB's, where that episode is S24 E4: the one
+     * FirePlayer marks is the entry's own, and the list's E5, another episode, plays as itself rather than resuming.
+     */
+    @Test
+    public void onlyTheEpisodeFirePlayerMarksResumes() throws Exception {
+        withFirePlayer(true);
+        for (Object[] row : FakeFirePlayer.episodes.get("e1")) {
+            row[9] = (int) row[1] == 24 && (int) row[2] == 4 ? 1 : 0;
+        }
+        TestHome h = home(TestHome.withTmdb());
+        toCard(h, 0);
+        details(h);
+        h.press(KEYCODE_DPAD_RIGHT);
+        h.press(KEYCODE_DPAD_CENTER);
+        settle();
+        EpisodesWindow e = h.activity.episodesWindow();
+        assertEquals("FirePlayer's mark, not the entry's numbers", 4, e.focusedEpisode().number);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(5, e.focusedEpisode().number);
+        h.press(KEYCODE_DPAD_CENTER);
+        Intent started = shadowOf(h.activity).getNextStartedActivity();
+        assertNotNull(started);
+        assertEquals(ContinueWatching.ACTION_PLAY_EPISODE, started.getAction());
+        assertEquals(episodeId(24, 5), started.getStringExtra(ContinueWatching.EXTRA_EPISODE_ID));
+    }
+
     @Test
     public void manySeasonsScrollTheRail() throws Exception {
         withFirePlayer(true);

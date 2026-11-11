@@ -178,6 +178,15 @@ final class ContinueWatching {
         return e.current || (item.number > 0 && e.season == item.season && e.number == item.number);
     }
 
+    /**
+     * Whether choosing {@code e} resumes the entry: one FirePlayer listed only when it marked it the entry's own, as
+     * the season and number may be TMDB's here and the provider's on the entry, and a copy has the same ones; one
+     * from TMDB (no id) can only be.
+     */
+    static boolean resumes(Episode e) {
+        return e.id.isEmpty() || e.current;
+    }
+
     /** The episode {@code item} was left on, of its show's {@code episodes}; null if they don't have it. */
     static Episode itsEpisode(List<Episode> episodes, Item item) {
         if (episodes == null) return null;
