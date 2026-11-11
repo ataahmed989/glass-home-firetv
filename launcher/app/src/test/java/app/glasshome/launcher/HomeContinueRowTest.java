@@ -38,10 +38,7 @@ public class HomeContinueRowTest {
 
     @Before
     public void reset() {
-        FakeFirePlayer.rows.clear();
-        FakeFirePlayer.deleted.clear();
-        FakeFirePlayer.queries = 0;
-        FakeFirePlayer.failing = false;
+        FakeFirePlayer.reset();
         org.robolectric.shadows.ShadowChoreographer.setFrameDelay(java.time.Duration.ofMillis(16));
     }
 
@@ -179,7 +176,7 @@ public class HomeContinueRowTest {
     }
 
     @Test
-    public void selectResumesInFirePlayerAndHoldingOffersResumeAndRemove() throws Exception {
+    public void selectResumesInFirePlayerAndHoldingOffersResumeDetailsAndRemove() throws Exception {
         withFirePlayer();
         TestHome h = home();
         toLastRow(h);
@@ -193,9 +190,13 @@ public class HomeContinueRowTest {
 
         h.hold(KEYCODE_DPAD_CENTER, HomeActivity.TILE_HOLD_MS + 200, 50);
         assertEquals(Zone.TILE_MENU, h.zone());
-        assertArrayEquals(new String[] {"Resume", "Remove"}, h.activity.tileMenu().labels());
+        assertArrayEquals(new String[] {"Resume", "Details", "Remove"}, h.activity.tileMenu().labels());
         h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(1, h.activity.tileMenu().focusedIndex());
         TestHome.settleImages();
+        h.capture("home-continue-5-menu-details.png");
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(2, h.activity.tileMenu().focusedIndex());
         h.capture("home-continue-4-menu.png");
         h.press(KEYCODE_DPAD_CENTER);   // Remove
         TestHome.settle();

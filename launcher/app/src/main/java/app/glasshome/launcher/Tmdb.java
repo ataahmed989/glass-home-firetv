@@ -91,6 +91,70 @@ final class Tmdb {
         }
     }
 
+    /**
+     * What a Continue Watching title's details window shows of it, as FirePlayer's own details do: name, year, poster,
+     * up to three genres, tagline, TMDB's rating, length (films) or seasons (shows), the US age rating, and the story.
+     */
+    static final class About {
+        final long id;
+        final boolean series;
+        final String name, year, overview, tagline, ageRating;
+        /** The poster's address (w342), or null when TMDB has none. */
+        final String poster;
+        final List<String> genres;
+        /** TMDB's vote average, 0 to 10; 0 when it has none. */
+        final double rating;
+        final int minutes, seasons;
+
+        About(long id, boolean series, String name, String year, String overview, String tagline, String ageRating,
+                String poster, List<String> genres, double rating, int minutes, int seasons) {
+            this.id = id;
+            this.series = series;
+            this.name = name;
+            this.year = year;
+            this.overview = overview;
+            this.tagline = tagline;
+            this.ageRating = ageRating;
+            this.poster = poster;
+            this.genres = genres;
+            this.rating = rating;
+            this.minutes = minutes;
+            this.seasons = seasons;
+        }
+
+        /** "7.3" (one decimal), or "" when TMDB has no rating. */
+        String ratingText() {
+            return rating > 0 ? String.format(Locale.ROOT, "%.1f", rating) : "";
+        }
+
+        /** "2023  ·  Movie  ·  2 hr 5 min", or "2024  ·  TV Show  ·  2 Seasons": what is known of it. */
+        String facts() {
+            List<String> parts = new ArrayList<>();
+            if (!year.isEmpty()) parts.add(year);
+            parts.add(series ? "TV Show" : "Movie");
+            if (series && seasons > 0) parts.add(seasons == 1 ? "1 Season" : seasons + " Seasons");
+            if (!series && minutes > 0) parts.add(duration(minutes));
+            return String.join("  ·  ", parts);
+        }
+    }
+
+    /** One episode of a show's season, as TMDB has it (see {@link #season}). */
+    static final class Episode {
+        final int season, number, runtime;
+        /** "" when TMDB has none; {@code still} is its picture's address (w300), or null. */
+        final String name, overview, still, airDate;
+
+        Episode(int season, int number, int runtime, String name, String overview, String still, String airDate) {
+            this.season = season;
+            this.number = number;
+            this.runtime = runtime;
+            this.name = name;
+            this.overview = overview;
+            this.still = still;
+            this.airDate = airDate;
+        }
+    }
+
     private final Context context;
     private final String key;
 
@@ -251,6 +315,96 @@ final class Tmdb {
             if (Character.isLetterOrDigit(c)) out.append(c);   // accents come apart from their letters, and go here
         }
         return out.toString();
+    }
+
+    /**
+     * A film's or show's details for its details window, from the same request as {@link #byId} and {@link #details}
+     * (so the card's artwork lookup has usually cached it already). Unlike those it needs no artwork. Null if TMDB has
+     * no name for it.
+     */
+    About about(long id, boolean series) throws Exception {
+        return aboutOf(detailsOf(id, series), series);
+    }
+
+    static About aboutOf(JSONObject d, boolean series) {
+        if (d == null) return null;
+        String name = clean(d.optString(series ? "name" : "title", ""));
+        if (name.isEmpty()) name = clean(d.optString(series ? "original_name" : "original_title", ""));
+        if (name.isEmpty()) return null;
+        String date = clean(d.optString(series ? "first_air_date" : "release_date", ""));
+        String poster = clean(d.optString("poster_path", ""));
+        List<String> genres = new ArrayList<>();
+        JSONArray g = d.optJSONArray("genres");
+        for (int i = 0; g != null && i < g.length() && genres.size() < 3; i++) {
+            JSONObject o = g.optJSONObject(i);
+            String n = o == null ? "" : clean(o.optString("name", ""));
+            if (!n.isEmpty()) genres.add(n);
+        }
+        double rating = d.optDouble("vote_average", 0);
+        return new About(d.optLong("id"), series, name, date.length() >= 4 ? date.substring(0, 4) : "",
+                clean(d.optString("overview", "")).trim(), clean(d.optString("tagline", "")).trim(), ageRating(d, series),
+                poster.isEmpty() ? null : IMG + "w342" + poster, genres, Double.isNaN(rating) ? 0 : rating,
+                series ? 0 : d.optInt("runtime"), series ? d.optInt("number_of_seasons") : 0);
+    }
+
+    /**
+     * The US age rating, as FirePlayer picks it: a show's US content rating; for a film, its US theatrical release's
+     * (type 3) certification, else the first US release that has one.
+     */
+    static String ageRating(JSONObject d, boolean series) {
+        if (series) {
+            JSONObject ratings = d.optJSONObject("content_ratings");
+            JSONArray r = ratings == null ? null : ratings.optJSONArray("results");
+            for (int i = 0; r != null && i < r.length(); i++) {
+                JSONObject o = r.optJSONObject(i);
+                if (o != null && "US".equals(o.optString("iso_3166_1"))) {
+                    String rating = clean(o.optString("rating", "")).trim();
+                    if (!rating.isEmpty()) return rating;
+                }
+            }
+            return "";
+        }
+        JSONObject rd = d.optJSONObject("release_dates");
+        JSONArray r = rd == null ? null : rd.optJSONArray("results");
+        String first = "";
+        for (int i = 0; r != null && i < r.length(); i++) {
+            JSONObject o = r.optJSONObject(i);
+            if (o == null || !"US".equals(o.optString("iso_3166_1"))) continue;
+            JSONArray dates = o.optJSONArray("release_dates");
+            for (int k = 0; dates != null && k < dates.length(); k++) {
+                JSONObject release = dates.optJSONObject(k);
+                String c = release == null ? "" : clean(release.optString("certification", "")).trim();
+                if (c.isEmpty()) continue;
+                if (release.optInt("type") == 3) return c;
+                if (first.isEmpty()) first = c;
+            }
+        }
+        return first;
+    }
+
+    /**
+     * The episodes of one season of a show, as TMDB has them; empty when TMDB has no such season. For the details
+     * window's "This episode" when FirePlayer can't say (an older FirePlayer).
+     */
+    List<Episode> season(long showId, int season) throws Exception {
+        JSONObject d;
+        try {
+            d = get("tv/" + showId + "/season/" + season, null, DETAIL_AGE);
+        } catch (Net.HttpError e) {
+            if (e.code == 404) return new ArrayList<>();
+            throw e;
+        }
+        List<Episode> out = new ArrayList<>();
+        JSONArray list = d.optJSONArray("episodes");
+        for (int i = 0; list != null && i < list.length(); i++) {
+            JSONObject e = list.optJSONObject(i);
+            if (e == null) continue;
+            String still = clean(e.optString("still_path", ""));
+            out.add(new Episode(e.optInt("season_number", season), e.optInt("episode_number"), e.optInt("runtime"),
+                    clean(e.optString("name", "")).trim(), clean(e.optString("overview", "")).trim(),
+                    still.isEmpty() ? null : IMG + "w300" + still, clean(e.optString("air_date", "")).trim()));
+        }
+        return out;
     }
 
     private JSONObject detailsOf(long id, boolean series) throws Exception {
