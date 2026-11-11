@@ -316,4 +316,73 @@ public class HomeContinueRowTest {
         assertEquals(View.VISIBLE, h.activity.homeRow().getVisibility());
         assertEquals(7, ids(h.activity.homeRow()).size());
     }
+
+    @Test
+    public void artworkMissedOfflineComesInWhenHomeIsBack() throws Exception {
+        withFirePlayer();
+        Object[] later;
+        synchronized (FakeFirePlayer.rows) {
+            later = FakeFirePlayer.rows.remove(1);
+        }
+        TestHome h = home();
+        assertEquals(0, artless(h));
+        // A film watched with TMDB out of reach: its card shows its title
+        Net.Fetcher online = Net.fetcher;
+        Net.fetcher = (url, bearer) -> {
+            if (url.contains("themoviedb.org")) throw new java.net.UnknownHostException("api.themoviedb.org");
+            return online.get(url, bearer);
+        };
+        FakeFirePlayer.rows.add(0, later);
+        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        TestHome.advance(400);
+        for (int i = 0; i < 2; i++) TestHome.settle();
+        assertEquals(1, artless(h));
+        // Another app opened before the network is back: its retry is dropped...
+        h.controller.pause().stop();
+        Net.fetcher = online;
+        TestHome.advance(15 * MIN);
+        // ...and asked again once Home is back
+        h.controller.start().resume();
+        for (int i = 0; i < 4; i++) {
+            TestHome.settle();
+            TestHome.settleImages();
+        }
+        assertEquals(0, artless(h));
+    }
+
+    private static int artless(TestHome h) {
+        int n = 0;
+        for (PageModel.Card c : h.activity.homeRow().model().shelves.get(0).cards) if (c.imageUrl == null) n++;
+        return n;
+    }
+
+    @Test
+    public void backToHomeFromAnotherTabSeesFirePlayersNewList() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        toLastRow(h);
+        h.menu();
+        for (int i = 0; i < 3; i++) {
+            h.press(KEYCODE_DPAD_RIGHT);
+            TestHome.advance(1000);
+        }
+        TestHome.settle();
+        assertEquals(HomeActivity.SPORTS, h.activity.page());
+        // Out to an app from Sports; FirePlayer plays something new meanwhile
+        h.controller.pause().stop();
+        synchronized (FakeFirePlayer.rows) {
+            FakeFirePlayer.rows.remove(0);
+        }
+        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        TestHome.advance(400);
+        h.controller.start().resume();
+        TestHome.settle();
+        // Back to Home's tab (Back to the tabs, Back again to Home): its row has the new list
+        h.back();
+        TestHome.advance(500);
+        h.back();
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        assertEquals(HomeActivity.HOME, h.activity.page());
+        assertEquals(6, ids(h.activity.homeRow()).size());
+    }
 }

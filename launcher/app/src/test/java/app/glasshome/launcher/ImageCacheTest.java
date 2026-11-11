@@ -443,4 +443,28 @@ public class ImageCacheTest {
         if (children != null) for (File c : children) deleteAll(c);
         f.delete();
     }
+
+    @Test
+    public void nothingIsTriedAgainWhileGlassHomeIsOutOfSight() {
+        Net.fetcher = (url, bearer) -> {
+            fetches.incrementAndGet();
+            throw new IOException("offline");
+        };
+        cache.get(URL, 300, false, arrived);
+        finish();
+        assertEquals(1, fetches.get());
+        // Another app on screen for an hour: no downloads behind it
+        cache.pause();
+        after(60 * 60_000);
+        assertEquals("nothing tried behind another app", 1, fetches.get());
+        // Back to Glass Home, the network back too: tried at once
+        Net.fetcher = (url, bearer) -> {
+            fetches.incrementAndGet();
+            return COVER;
+        };
+        cache.resume();
+        finish();
+        assertEquals(2, fetches.get());
+        assertEquals("the waiting view gets it", 1, arrivals);
+    }
 }

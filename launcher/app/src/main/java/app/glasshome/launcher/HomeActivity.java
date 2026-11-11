@@ -133,9 +133,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Artwork lookups that failed for want of the network are asked again on their own, less often each time. */
     private int continueArtTries;
     private boolean continueArtRetryPosted;
+    /**
+     * A lookup missed for want of the network whose retry couldn't run (Home went out of sight, or a page without the
+     * list was in front): it's asked again once the list is back in view (TMDB only; FirePlayer isn't asked).
+     */
+    private boolean continueArtOwed;
     private final Runnable continueArtRetry = () -> {
         this.continueArtRetryPosted = false;
         if (this.resumed && !isDestroyed() && wantsContinue(this.page)) lookUpContinueArt(this.continueItems);
+        else this.continueArtOwed = true;
     };
     private ContinueWatching.Watcher continueWatcher;
     /**
@@ -292,6 +298,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Runnable takeSnapshot = () -> {
         if (!resumed || !homeAsTheHomeButtonLeavesIt()) return;
         snapshotSlide = stage.current();
+        snapshotAsked = lastFocused;
         HomeSnapshot.capture(this);
         snapshotDue = false;
         snapshotStale = false;
@@ -300,8 +307,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Runnable pauseSnapshot = () -> {
         if (stopped || resumed) return;
         snapshotSlide = stage.current();
+        snapshotAsked = lastFocused;
         HomeSnapshot.capture(this);
     };
+    /** Where on the apps Home's snapshot shows it (copies are only made there, not lifted): asked for, and come in. */
+    private int snapshotAsked = -1, snapshotFocus = -1;
     /** The slide on the stage when Home's snapshot was last copied (see {@link #retimeSnapshot}). */
     private HeroSlide snapshotSlide;
     /** Whether the snapshot is drawn again with the time (Glass Home in front) or without it. */
@@ -382,6 +392,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             });
         };
         HomeSnapshot.copied = () -> {
+            snapshotFocus = snapshotAsked;
             if (resumed) makeBlanks();
             else blankSnapshot();
         };
@@ -1458,6 +1469,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             }, fade);
         } else if (p == HOME) {
             homeRow.setVisibility(homeRowCards() ? View.VISIBLE : View.GONE);
+            // Back before the page's settle ran: the fade-in showed the clock and widgets in full, but Home is still up
+            if (homeLift > 0f) applyLift(homeLift);
             placeHomeRow();
         }
         setBarHidden(false, atOnce);
@@ -1466,6 +1479,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             main.removeCallbacks(advanceSlide);
             scheduleSlides();
             refreshHomeBackdrop();
+            // FirePlayer's list changed (or artwork was owed) while another page was in front: Home's row catches up.
+            // Not on the Home button's way back, before onResume: resumeRefresh and onResume see to it then.
+            if (resumed && wantsContinue(HOME)) {
+                if (continueStale) refreshContinue();
+                else if (continueArtOwed) lookUpContinueArt(continueItems);
+            }
         } else {
             main.removeCallbacks(advanceSlide);   // Home's slideshow rests while it is covered
             ShelfPage sp = pages[p];
@@ -1690,6 +1709,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      */
     private void lookUpContinueArt(List<ContinueWatching.Item> items) {
         if (config.tmdbApiKey.isEmpty()) return;
+        continueArtOwed = false;
         List<ContinueWatching.Item> missing = new ArrayList<>();
         for (ContinueWatching.Item item : items) {
             String key = item.artKey();
@@ -1863,6 +1883,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** How far Home is moved up for its Continue Watching row, 0 to 1 (tests). */
     float homeLift() {
         return homeLift;
+    }
+
+    /** How much of the clock shows (tests): none with Home moved up to its row. */
+    float clockAlpha() {
+        return clock.getAlpha();
     }
 
     ShelfPage homeRow() {
@@ -3452,6 +3477,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         stopped = false;
         resumed = true;
         inFront = true;
+        // Artwork that missed the network and whose retry was dropped as Home left: tried again from the start soon
+        // (here, not in resumeRefresh, which a Home-button trip can skip)
+        if (continueArtOwed && wantsContinue(page)) {
+            continueArtTries = 0;
+            main.removeCallbacks(continueArtRetry);
+            main.postDelayed(continueArtRetry, RESUME_REFRESH_MS);
+            continueArtRetryPosted = true;
+        }
         HomeButtonService.glassHomeResumed();
         capsule.updateTime();
         clock.start();
@@ -3579,7 +3612,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             // From Home's Continue Watching row: the top of Home, at once, under the cover
             leaveHomeRow(false);
             homeRow.resetShelf();
-            lastFocused = lastDockColumn;
+            // Home as its snapshot (the cover over this trip) shows it, so nothing moves as the cover goes: where Home
+            // last rested on the apps, or the top row
+            int n = adapter.getItemCount();
+            lastFocused = snapshotFocus >= 0 && snapshotFocus < n ? snapshotFocus : lastDockColumn;
             focusGrid(lastFocused);
         }
         lastZone = Zone.GRID;
@@ -3619,6 +3655,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onPause() {
         main.removeCallbacks(continueArtRetry);
+        if (continueArtRetryPosted) continueArtOwed = true;   // asked again when Home is back (onResume)
         continueArtRetryPosted = false;
         dropArranging();
         clock.stop();
@@ -3656,6 +3693,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     protected void onStart() {
         super.onStart();
+        ImageCache.get(this).resume();
         main.removeCallbacks(collect);
         main.removeCallbacks(gpuTrim);
     }
@@ -3675,6 +3713,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         blankSnapshot();
         main.removeCallbacks(teamsTick);
         ImageCache.get(this).trimMemory();
+        ImageCache.get(this).pause();
         for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
         homeRow.trimMemory();
         // Frosts made ahead for featured titles go behind another app, but the one on now (others are made again when shown)
