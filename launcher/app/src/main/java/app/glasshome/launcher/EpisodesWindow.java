@@ -45,6 +45,11 @@ final class EpisodesWindow extends GlassWindow {
     /** Where more lies beyond an edge, the column fades out over this, and focus is kept this far from the edge. */
     private static final float EDGE = 40;
     private static final int SCROLL_MS = 220, FADE_MS = 180;
+    /**
+     * The row the focused episode sits in, under a pane of the dock's glass that stays where it is while the list glides
+     * through it, as the apps move through the dock: the second, so the one before shows above.
+     */
+    private static final int SLOT = 1;
 
     private enum State { LOADING, FAILED, READY }
 
@@ -52,7 +57,6 @@ final class EpisodesWindow extends GlassWindow {
     private final DetailsWindow.Pictures pictures = new DetailsWindow.Pictures();
     private final Runnable invalidator = this::invalidate;
     private final Paint pill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint box = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mask = new Paint();
     private final TextPaint caption, header, message, retry, season, count, number, name, facts, story, stillLabel;
     private final ArgbEvaluator argb = new ArgbEvaluator();
@@ -70,12 +74,15 @@ final class EpisodesWindow extends GlassWindow {
     /** The season shown; and where the show was left, by season and episode index (-1 when FirePlayer's list lacks it). */
     private int shown, itsSeason = -1, itsIndex = -1;
     private boolean inRail;
-    private final Glide railPill = new Glide(), railScroll = new Glide(), rowBox = new Glide(), listScroll = new Glide();
+    private final Glide railPill = new Glide(), railScroll = new Glide(), listScroll = new Glide();
+    /** The dock's glass, for the pane the focused episode sits under. */
+    private final Glass paneGlass;
     private float contentT = 1f;
     private ValueAnimator contentAnim;
 
-    EpisodesWindow(Context context, Glass glass) {
+    EpisodesWindow(Context context, Glass glass, Glass paneGlass) {
         super(context, glass);
+        this.paneGlass = paneGlass;
         images = ImageCache.get(context);
         mask.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
         caption = DetailsWindow.caption(context);
@@ -209,9 +216,7 @@ final class EpisodesWindow extends GlassWindow {
         boolean its = s == itsSeason;
         if (its) focusIn[s] = itsIndex;
         int f = focusIn[s];
-        rowBox.set(f * Ui.pxf(ROW_PITCH));
-        listScroll.set(0);
-        listScroll.set(its ? secondRow(f) : listScrollFor(f));
+        listScroll.set(listScrollFor(f));
         invalidate();
     }
 
@@ -235,10 +240,10 @@ final class EpisodesWindow extends GlassWindow {
         return true;
     }
 
+    /** The list glides to put episode {@code i} under the pane, at the pace the apps move through the dock. */
     private void focusEpisode(int i) {
         focusIn[shown] = i;
-        rowBox.to(i * Ui.pxf(ROW_PITCH), Ui.FOCUS_MS + 20);
-        listScroll.to(listScrollFor(i), SCROLL_MS);
+        listScroll.to(listScrollFor(i), Ui.SCROLL_MS);
     }
 
     /**
@@ -320,22 +325,18 @@ final class EpisodesWindow extends GlassWindow {
         return clamp(scroll, Math.max(0f, seasons.size() * pitch - view()));
     }
 
-    private float listMax() {
+    /** How far the list scrolls before its last row's bottom meets the bottom edge (below 0 when it all fits). */
+    private float listEnd() {
         float total = lists.isEmpty() ? 0 : lists.get(shown).size() * Ui.pxf(ROW_PITCH) - Ui.pxf(ROW_PITCH - ROW_H);
-        return Math.max(0f, total - view());
+        return total - view();
     }
 
-    /** The episodes scroll to keep the focused one a row clear of either edge, where they can. */
+    /**
+     * Episode {@code i} under the pane, always: at the first episode the row above is empty, at the last those below
+     * are, as the dock has nothing above or below at the ends of the apps.
+     */
     private float listScrollFor(int i) {
-        float pitch = Ui.pxf(ROW_PITCH), top = i * pitch, scroll = listScroll.target;
-        if (top - scroll < pitch) scroll = top - pitch;
-        if (top + Ui.pxf(ROW_H) + pitch - scroll > view()) scroll = top + Ui.pxf(ROW_H) + pitch - view();
-        return clamp(scroll, listMax());
-    }
-
-    /** Episode {@code i} in the second row, the one before it above. */
-    private float secondRow(int i) {
-        return clamp((i - 1) * Ui.pxf(ROW_PITCH), listMax());
+        return (i - SLOT) * Ui.pxf(ROW_PITCH);
     }
 
     private static float clamp(float v, float max) {
@@ -367,7 +368,7 @@ final class EpisodesWindow extends GlassWindow {
         // Where more lies beyond an edge, each column fades out into it rather than being cut
         float railMax = Math.max(0f, seasons.size() * Ui.pxf(RAIL_PITCH) - view());
         fadeEdges(c, Ui.px(RAIL_L), Ui.px(RAIL_R), top, bottom, railScroll.value, railMax);
-        fadeEdges(c, Ui.px(LIST_L), Ui.px(LIST_R), top, bottom, listScroll.value, listMax());
+        fadeEdges(c, Ui.px(LIST_L), Ui.px(LIST_R), top, bottom, listScroll.value, listEnd());
         c.restoreToCount(layer);
     }
 
@@ -418,22 +419,24 @@ final class EpisodesWindow extends GlassWindow {
         }
     }
 
-    /** The season's episodes; the focused one on white, the box sliding from row to row. Stills only for rows in view and the next. */
+    /**
+     * The season's episodes, gliding through a pane of the dock's glass that stays in the second row: the focused one
+     * sits under it, brighter. Stills only for rows in view and the next.
+     */
     private void drawList(Canvas c, float top, float bottom) {
         List<ContinueWatching.Episode> eps = lists.get(shown);
         float pitch = Ui.pxf(ROW_PITCH), rowH = Ui.pxf(ROW_H), scroll = listScroll.value, l = Ui.px(LIST_L), r = Ui.px(LIST_R);
+        float pane = top + SLOT * pitch;
         if (!inRail) {
-            float y = top + rowBox.value - scroll;
-            rect.set(l, y, r, y + rowH);
-            box.setColor(0xF2FFFFFF);
-            c.drawRoundRect(rect, Ui.px(26), Ui.px(26), box);
+            rect.set(l, pane, r, pane + rowH);
+            paneGlass.draw(c, rect, Ui.px(26), getLeft(), getTop(), 0f);
         }
         int first = Math.max(0, (int) Math.floor((scroll - pitch) / pitch));
         int last = Math.min(eps.size() - 1, (int) Math.ceil((scroll + view() + pitch) / pitch));
         for (int i = first; i <= last; i++) {
             float y = top + i * pitch - scroll;
             boolean inView = y + rowH >= top && y <= bottom;
-            float t = inRail ? 0f : Math.max(0f, Math.min(1f, 1f - Math.abs(rowBox.value - i * pitch) / pitch));
+            float t = inRail ? 0f : Math.max(0f, Math.min(1f, 1f - Math.abs(y - pane) / pitch));
             drawRow(c, eps.get(i), l, y, t, inView);
         }
     }
@@ -457,8 +460,7 @@ final class EpisodesWindow extends GlassWindow {
         pictures.progress(c, rect, r, its ? item.progress() : e.progress());
 
         float tx = x + Ui.px(268), tw = Ui.px(844);
-        int dark = 0xFF111317;
-        int accent = (int) argb.evaluate(lit, DetailsWindow.ACCENT, DetailsWindow.ACCENT_ON_WHITE);
+        int accent = DetailsWindow.ACCENT;
         String no = e.number > 0 ? "E" + e.number : "";
         String title = !e.name.isEmpty() ? e.name : e.number > 0 ? "Episode " + e.number : "Episode";
         float y1 = y + Ui.px(52), nx = tx;
@@ -467,14 +469,14 @@ final class EpisodesWindow extends GlassWindow {
             c.drawText(no, tx, y1, number);
             nx += number.measureText(no + "   ");
         }
-        name.setColor((int) argb.evaluate(lit, 0xFFFFFFFF, dark));
+        name.setColor((int) argb.evaluate(lit, 0xD9FFFFFF, 0xFFFFFFFF));
         c.drawText(TextUtils.ellipsize(title, name, tx + tw - nx, TextUtils.TruncateAt.END).toString(), nx, y1, name);
 
         String line = DetailsWindow.episodeFacts(e), left = its ? item.timeLeft() : "";
         float storyTop = y + Ui.px(66);
         if (!line.isEmpty() || !left.isEmpty()) {
             float y2 = y + Ui.px(86);
-            facts.setColor((int) argb.evaluate(lit, 0x99FFFFFF, 0x99111317));
+            facts.setColor((int) argb.evaluate(lit, 0x8CFFFFFF, 0xB3FFFFFF));
             String shownLine = TextUtils.ellipsize(line, facts, tw, TextUtils.TruncateAt.END).toString();
             c.drawText(shownLine, tx, y2, facts);
             if (!left.isEmpty()) {
@@ -493,7 +495,7 @@ final class EpisodesWindow extends GlassWindow {
                     .setAlignment(Layout.Alignment.ALIGN_NORMAL).build();
             stories.put(e, s);
         }
-        story.setColor((int) argb.evaluate(lit, 0xBFFFFFFF, 0xB3111317));
+        story.setColor((int) argb.evaluate(lit, 0xA6FFFFFF, 0xE6FFFFFF));
         c.save();
         c.translate(tx, storyTop);
         s.draw(c);

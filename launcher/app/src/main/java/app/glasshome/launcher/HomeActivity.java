@@ -780,7 +780,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         infoGlass = new Glass(config.blurGlass, 0xE6181A20);
         infoWindow = new DetailsWindow(this, infoGlass);
         root.addView(infoWindow, match());
-        episodesWindow = new EpisodesWindow(this, infoGlass);
+        // The focused episode sits under a pane of the dock's glass, as the focused apps do
+        episodesWindow = new EpisodesWindow(this, infoGlass, dockGlass);
         root.addView(episodesWindow, match());
         controlGlass = new Glass(config.blurGlass, 0xE62A2E36);
         control = new ControlCenter(this, controlGlass);
