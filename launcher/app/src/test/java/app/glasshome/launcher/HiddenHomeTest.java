@@ -39,6 +39,8 @@ public class HiddenHomeTest {
     @After
     public void restore() {
         HomeActivity.gpuTrimmer = null;
+        HomeActivity.playingProbe = null;
+        HomeActivity.playbackTrimmer = null;
     }
 
     /** Lets {@code ms} pass, then lets the network thread answer, and its answer land. */
@@ -188,6 +190,57 @@ public class HiddenHomeTest {
             HomeButtonService.forgetTrips();
             service.onUnbind(new Intent());
         }
+    }
+
+    /**
+     * Behind a film, once it has played a minute, the GPU and the pictures in memory are let go of, once; when it
+     * stops, the way back's pictures go back on the GPU.
+     */
+    @Test
+    public void behindAFilmTheGpuIsLetGoAndPutBackWhenItStops() throws Exception {
+        TestHome h = trimmed();
+        boolean[] playing = {true};
+        AtomicInteger letGo = new AtomicInteger();
+        HomeActivity.playingProbe = () -> playing[0];
+        HomeActivity.playbackTrimmer = letGo::incrementAndGet;
+        h.controller.pause().stop();
+        TestHome.advance(HomeActivity.GPU_TRIM_AFTER_MS + 1000);
+        assertEquals("the usual trim", 1, trims.size());
+        assertEquals("not before a minute of playing", 0, letGo.get());
+        TestHome.advance(HomeActivity.PLAYING_TRIM_AFTER_MS + HomeActivity.PLAYING_CHECK_MS);
+        assertEquals(1, letGo.get());
+        TestHome.advance(10 * 60 * 1000L);
+        assertEquals("once", 1, letGo.get());
+        assertEquals(1, trims.size());
+        playing[0] = false;
+        TestHome.advance(HomeActivity.PLAYING_CHECK_MS + 1000);
+        assertEquals("the way back's pictures go back", 2, trims.size());
+        assertEquals(1, letGo.get());
+    }
+
+    @Test
+    public void withNothingPlayingNothingMoreIsLetGo() throws Exception {
+        TestHome h = trimmed();
+        AtomicInteger letGo = new AtomicInteger();
+        HomeActivity.playingProbe = () -> false;
+        HomeActivity.playbackTrimmer = letGo::incrementAndGet;
+        h.controller.pause().stop();
+        TestHome.advance(10 * 60 * 1000L);
+        assertEquals(0, letGo.get());
+        assertEquals(1, trims.size());
+    }
+
+    @Test
+    public void backBeforeAMinuteOfPlayingNothingMoreIsLetGo() throws Exception {
+        TestHome h = trimmed();
+        AtomicInteger letGo = new AtomicInteger();
+        HomeActivity.playingProbe = () -> true;
+        HomeActivity.playbackTrimmer = letGo::incrementAndGet;
+        h.controller.pause().stop();
+        TestHome.advance(HomeActivity.PLAYING_CHECK_MS + 5000);
+        h.controller.restart().start().resume();
+        TestHome.advance(10 * 60 * 1000L);
+        assertEquals(0, letGo.get());
     }
 
     @Test
