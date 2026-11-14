@@ -261,7 +261,13 @@ final class ImageCache {
             Bitmap result = loaded;
             Throwable failure = error;
             boolean overNetwork = fetched;
-            main.post(() -> finished(this, result, failure, overNetwork));
+            boolean wanted = rank != AHEAD;
+            main.post(() -> {
+                // Wanted on screen: its upload to the GPU is queued now, for the render thread, ahead of the frame
+                // that shows it (which would otherwise stop for it)
+                if (wanted && result != null) result.prepareToDraw();
+                finished(this, result, failure, overNetwork);
+            });
         }
     }
 
