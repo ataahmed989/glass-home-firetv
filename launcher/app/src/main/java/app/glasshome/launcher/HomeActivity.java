@@ -1776,18 +1776,40 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 }
             }
         }
-        pages[MOVIES].setTopShelf(continueShelf(ContinueWatching.of(items, false)));
-        pages[TV].setTopShelf(continueShelf(ContinueWatching.of(items, true)));
+        List<ContinueWatching.Item> shown = onePerTitle(items);
+        pages[MOVIES].setTopShelf(continueShelf(ContinueWatching.of(shown, false)));
+        pages[TV].setTopShelf(continueShelf(ContinueWatching.of(shown, true)));
         showHomeRow();
     }
 
-    private static List<ContinueWatching.Item> continueRow(List<ContinueWatching.Item> items, ContinueWatching.Item item, boolean home) {
-        return home ? ContinueWatching.forHome(items) : ContinueWatching.of(items, item.episode);
+    private List<ContinueWatching.Item> continueRow(List<ContinueWatching.Item> items, ContinueWatching.Item item, boolean home) {
+        List<ContinueWatching.Item> shown = onePerTitle(items);
+        return home ? ContinueWatching.forHome(shown) : ContinueWatching.of(shown, item.episode);
     }
+
+    /** One card per TMDB title: the copy (or the show's episode) watched last (see ContinueWatching.onePerTitle). */
+    private List<ContinueWatching.Item> onePerTitle(List<ContinueWatching.Item> items) {
+        return ContinueWatching.onePerTitle(items, this::titleKey);
+    }
+
+    /**
+     * The TMDB title an entry is: the id FirePlayer matched it to, or the one Glass Home found by its name; else (not
+     * found, no TMDB key) its name, in letters and digits only, and its year.
+     */
+    private String titleKey(ContinueWatching.Item item) {
+        String kind = item.episode ? "tv/" : "movie/";
+        long id = item.tmdbId > 0 ? item.tmdbId : continueTmdb.getOrDefault(item.artKey(), 0L);
+        if (id > 0) return kind + id;
+        String name = item.title == null ? "" : item.title.toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]", "");
+        return kind + "?" + name + (item.year > 0 ? "|" + item.year : "");
+    }
+
+    /** TMDB ids found by name for entries FirePlayer sent without one, by their art key. Main thread. */
+    private final Map<String, Long> continueTmdb = new HashMap<>();
 
     /** Home's row: films and shows together, one card per show; gone (and nothing peeks) when there's none or it's off. */
     private void showHomeRow() {
-        PageModel.Shelf s = settings.homeContinue() ? continueShelf(ContinueWatching.forHome(continueItems)) : null;
+        PageModel.Shelf s = settings.homeContinue() ? continueShelf(ContinueWatching.forHome(onePerTitle(continueItems))) : null;
         // As Movies and TV Shows are fed: focus stays with its card when FirePlayer reorders, a removed card's gap closes
         homeRow.setTopShelf(s);
         if (s == null && (zone() == Zone.HOME_ROW || homeLift > 0f || homeZone == Zone.HOME_ROW)) {
@@ -1834,12 +1856,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         runOff(pagesNet, () -> {
             Tmdb tmdb = new Tmdb(this, config.tmdbApiKey);
             Map<String, String> found = new HashMap<>();
+            Map<String, Long> ids = new HashMap<>();
             boolean missed = false;
             for (ContinueWatching.Item item : missing) {
                 try {
                     Tmdb.Title t = item.tmdbId > 0 ? tmdb.byId(item.tmdbId, item.episode)
                             : tmdb.find(item.title, item.year, item.episode);
                     String url = t == null ? null : t.backdropUrl("w780");
+                    // Found by name: its TMDB id groups its copies (see titleKey)
+                    if (t != null && item.tmdbId <= 0 && t.id > 0) ids.put(item.artKey(), t.id);
                     // No artwork, or nothing by exactly its name: a title card, without asking again each time
                     found.put(item.artKey(), url == null ? "" : url);
                 } catch (java.io.IOException e) {
@@ -1856,6 +1881,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             main.post(() -> {
                 for (ContinueWatching.Item item : missing) continueArtPending.remove(item.artKey());
                 continueArt.putAll(found);
+                continueTmdb.putAll(ids);
                 if (!found.isEmpty()) showContinue(continueItems);
                 // A card left on its title card for want of the network gets its picture once it is back: 5 s, 10 s,
                 // 20 s ... up to 2 minutes apart, then every 10 minutes while it is shown; from the start on each refresh
@@ -1886,12 +1912,20 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Remove: the card goes at once (its row closes the gap), and FirePlayer is told. */
     private void removeContinue(ContinueWatching.Item item) {
-        List<ContinueWatching.Item> rest = new ArrayList<>(continueItems);
-        int i = indexOf(rest, item.id);
-        if (i >= 0) rest.remove(i);
+        // Every copy of the title goes: the card stands for all of them, and an older one would come up in its place
+        String title = titleKey(item);
+        List<ContinueWatching.Item> rest = new ArrayList<>();
+        List<String> gone = new ArrayList<>();
+        for (ContinueWatching.Item i : continueItems) {
+            if (i.id.equals(item.id) || titleKey(i).equals(title)) gone.add(i.id);
+            else rest.add(i);
+        }
+        if (!gone.contains(item.id)) gone.add(item.id);
         continueGeneration++;   // an answer on its way from before this would bring the card back
         showContinue(rest);
-        runOff(worker, () -> ContinueWatching.delete(this, item.id));
+        runOff(worker, () -> {
+            for (String id : gone) ContinueWatching.delete(this, id);
+        });
     }
 
     private static int indexOf(List<ContinueWatching.Item> items, String id) {

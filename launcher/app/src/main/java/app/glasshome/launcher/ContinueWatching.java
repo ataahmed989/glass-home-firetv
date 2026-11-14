@@ -11,8 +11,10 @@ import android.os.Handler;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -283,6 +285,23 @@ final class ContinueWatching {
         for (Item i : items) {
             if (i.episode == episodes && out.size() < MAX && seen.add(i.id)) out.add(i);
         }
+        return Collections.unmodifiableList(out);
+    }
+
+    /**
+     * One entry per title: copies of a film (or a show) from other playlists or in other qualities are one TMDB title,
+     * and only the one watched last stays, where it comes in FirePlayer's order. {@code titleOf} names an entry's
+     * title: its TMDB id when matched, else its name and year.
+     */
+    static List<Item> onePerTitle(List<Item> items, java.util.function.Function<Item, String> titleOf) {
+        Map<String, Item> latest = new HashMap<>();
+        for (Item i : items) {
+            String key = titleOf.apply(i);
+            Item had = latest.get(key);
+            if (had == null || i.lastWatched > had.lastWatched) latest.put(key, i);
+        }
+        List<Item> out = new ArrayList<>();
+        for (Item i : items) if (latest.get(titleOf.apply(i)) == i) out.add(i);
         return Collections.unmodifiableList(out);
     }
 
