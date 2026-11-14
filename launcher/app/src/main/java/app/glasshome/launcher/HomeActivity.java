@@ -1452,7 +1452,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 }
                 installed = everyApp;
                 boolean wasInGrid = zone() == Zone.GRID;
+                // Focus elsewhere (Continue Watching's row, the hero): the row of apps in the dock stays there through
+                // the reload. Rebuilt with no tile focused, the grid went back to its first row, and the Continue
+                // Watching row, hung beneath the last, was pushed half off the screen (an app updated meanwhile).
+                int docked = focusedPosition() == RecyclerView.NO_POSITION ? dockedRowStart() : RecyclerView.NO_POSITION;
                 adapter.setApps(apps);
+                if (docked != RecyclerView.NO_POSITION && !apps.isEmpty()) {
+                    int lastRow = (apps.size() - 1) / Ui.COLUMNS * Ui.COLUMNS;
+                    // The Continue Watching row hangs beneath the last row of apps, wherever that is now
+                    int row = zone() == Zone.HOME_ROW || homeLift > 0f ? lastRow : Math.min(docked, lastRow);
+                    layoutManager.scrollToPositionWithOffset(row, 0);
+                }
                 // If the remembered app is gone, or its row got shorter, land on the nearest one
                 int index = lastFocusedKey == null ? -1 : adapter.indexOf(lastFocusedKey);
                 lastFocused = index >= 0 ? index : Math.max(0, Math.min(lastFocused, apps.size() - 1));
@@ -2601,6 +2611,24 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     ShelfPage pageView(int p) {
         return pages[p];
+    }
+
+    /** The first app of the row in the dock (the nearest to it, mid-glide), or NO_POSITION with none laid out. */
+    private int dockedRowStart() {
+        int best = RecyclerView.NO_POSITION;
+        int bestGap = Integer.MAX_VALUE;
+        int dockTop = Ui.px(Ui.DOCK_ROW_TOP);
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View child = grid.getChildAt(i);
+            int pos = grid.getChildAdapterPosition(child);
+            if (pos == RecyclerView.NO_POSITION) continue;
+            int gap = Math.abs(child.getTop() - dockTop);
+            if (gap < bestGap) {
+                bestGap = gap;
+                best = pos / Ui.COLUMNS * Ui.COLUMNS;
+            }
+        }
+        return best;
     }
 
     int focusedPosition() {
