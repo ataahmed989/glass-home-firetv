@@ -354,6 +354,24 @@ public class HomeContinueRowTest {
         assertEquals(7, ids(h.activity.homeRow()).size());
     }
 
+    /** An app updated while focus is on the row (FirePlayer, say): Home stays as it was, the row whole on screen. */
+    @Test
+    public void anAppUpdatedWhileOnTheRowLeavesTheRowWhereItIs() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        toLastRow(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals(Zone.HOME_ROW, h.zone());
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        ShelfPage row = h.activity.homeRow();
+        float placed = row.getTranslationY();
+        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED, android.net.Uri.parse("package:" + FirePlayerTitles.PACKAGE)));
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        assertEquals(Zone.HOME_ROW, h.zone());
+        assertEquals(1f, h.activity.homeLift(), 0f);
+        assertEquals("the row where it was, not pushed half off the screen", placed, row.getTranslationY(), 1f);
+    }
+
     @Test
     public void artworkMissedOfflineComesInWhenHomeIsBack() throws Exception {
         withFirePlayer();
