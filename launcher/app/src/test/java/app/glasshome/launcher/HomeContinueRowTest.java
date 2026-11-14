@@ -354,6 +354,40 @@ public class HomeContinueRowTest {
         assertEquals(7, ids(h.activity.homeRow()).size());
     }
 
+    /**
+     * Copies of one TMDB title (another playlist, another quality; for a show, another copy of it): one card, the one
+     * watched last. Removing it takes every copy off, so an older one doesn't come up in its place.
+     */
+    @Test
+    public void oneCardPerTitleTheCopyWatchedLast() throws Exception {
+        withFirePlayer();
+        long t = Fixtures.RECORDED_AT;
+        // An older copy of Sacrifice (same TMDB id), a newer copy of Masterplan, another copy of Law & Order
+        Collections.addAll(FakeFirePlayer.rows,
+                movie("m1b", "Sacrifice", 2026, 1284186, 5 * MIN, 100 * MIN, t - 9000),
+                movie("m2b", "Masterplan", 2026, 1561726, 80 * MIN, 110 * MIN, t - 2500),
+                episode("e1b", "Law & Order", 24, 4, "Older", 549, 10 * MIN, 42 * MIN, t - 9500));
+        // FirePlayer lists them most recently watched first
+        synchronized (FakeFirePlayer.rows) {
+            FakeFirePlayer.rows.sort((a, b) -> Long.compare((long) b[10], (long) a[10]));
+        }
+        TestHome h = home();
+        List<String> row = ids(h.activity.homeRow());
+        assertEquals(java.util.Arrays.asList("e1", "m1", "m2b", "e2", "m3", "e3", "m5"), row);
+
+        toLastRow(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_RIGHT);   // Sacrifice
+        h.hold(KEYCODE_DPAD_CENTER, HomeActivity.TILE_HOLD_MS + 200, 50);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_CENTER);   // Remove
+        TestHome.settle();
+        assertTrue(FakeFirePlayer.deleted.contains("m1"));
+        assertTrue("the older copy too", FakeFirePlayer.deleted.contains("m1b"));
+        assertEquals(java.util.Arrays.asList("e1", "m2b", "e2", "m3", "e3", "m5"), ids(h.activity.homeRow()));
+    }
+
     /** An app updated while focus is on the row (FirePlayer, say): Home stays as it was, the row whole on screen. */
     @Test
     public void anAppUpdatedWhileOnTheRowLeavesTheRowWhereItIs() throws Exception {
