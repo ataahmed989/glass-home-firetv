@@ -77,6 +77,15 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     static final boolean TRIM_GPU_WHEN_HIDDEN = true;
     /** After the collection, once what it freed has gone unused for the GPU cache's 30 s, and a second more. */
     static final long GPU_TRIM_AFTER_MS = COLLECT_AFTER_MS + 31_000;
+    /**
+     * Behind a film or show (something playing sound), Glass Home is looked at this often, and once it has played
+     * this long it also lets go of what it kept on the GPU for a quick way back, and its pictures in memory; the
+     * player needs that memory more. When the sound stops, the way back's pictures go on the GPU again.
+     */
+    static final long PLAYING_CHECK_MS = 30_000, PLAYING_TRIM_AFTER_MS = 60_000;
+    /** Tests stand in for the TV here: whether something plays (null: the TV's sound says), and the GPU let go. */
+    static java.util.function.BooleanSupplier playingProbe;
+    static Runnable playbackTrimmer;
     /** The cover over the trip back goes after this regardless (it also goes on any key). */
     private static final long SHOWN_FALLBACK_MS = 1500;
     /** Once the screen has been still this long (focus and the tile's sway settled), its frame is kept for the Home button. */
@@ -4041,6 +4050,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         ImageCache.get(this).resume();
         main.removeCallbacks(collect);
         main.removeCallbacks(gpuTrim);
+        main.removeCallbacks(playingCheck);
+        playingSince = 0;
+        playbackTrimmed = false;
     }
 
     /**
@@ -4073,10 +4085,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.postDelayed(collect, COLLECT_AFTER_MS);
         // Only from Home as it is with nothing open: what goes back on the GPU is what that draws
         main.removeCallbacks(gpuTrim);
-        if (TRIM_GPU_WHEN_HIDDEN && page == HOME && !titleDetail.isOpen() && !panel.isOpen() && !control.isOpen()
-                && !infoWindow.isOpen() && !episodesWindow.isOpen()) {
-            main.postDelayed(gpuTrim, GPU_TRIM_AFTER_MS);
-        }
+        warmWayBack = TRIM_GPU_WHEN_HIDDEN && page == HOME && !titleDetail.isOpen() && !panel.isOpen() && !control.isOpen()
+                && !infoWindow.isOpen() && !episodesWindow.isOpen();
+        if (warmWayBack) main.postDelayed(gpuTrim, GPU_TRIM_AFTER_MS);
+        main.removeCallbacks(playingCheck);
+        playingSince = 0;
+        playbackTrimmed = false;
+        if (TRIM_GPU_WHEN_HIDDEN) main.postDelayed(playingCheck, PLAYING_CHECK_MS);
         HomeButtonService.glassHomeHidden();
     }
 
@@ -4087,6 +4102,58 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final Runnable collect = () -> worker.execute(() -> Runtime.getRuntime().gc());
 
     private final Runnable gpuTrim = this::trimGpuCache;
+    // Whether the way back's pictures are kept on the GPU behind another app (Home as it is, nothing open; see onStop)
+    private boolean warmWayBack;
+    // Behind another app: since when something has been playing (0: nothing), and whether that let go of the GPU
+    private long playingSince;
+    private boolean playbackTrimmed;
+    private final Runnable playingCheck = this::checkPlaying;
+
+    /**
+     * Behind another app, every {@link #PLAYING_CHECK_MS}: once something has played {@link #PLAYING_TRIM_AFTER_MS}
+     * (and the usual trim has had its turn), lets go of the GPU and the pictures in memory; once it stops, puts the
+     * way back's pictures on the GPU again, so the Home button is as quick as before.
+     */
+    private void checkPlaying() {
+        if (!stopped || resumed || isDestroyed()) return;
+        long now = SystemClock.uptimeMillis();
+        if (somethingPlays()) {
+            if (playingSince == 0) playingSince = now;
+            if (!playbackTrimmed && now - playingSince >= PLAYING_TRIM_AFTER_MS && now - stoppedAt >= GPU_TRIM_AFTER_MS
+                    && !HomeButtonService.tripInProgress()) {
+                playbackTrimmed = true;
+                trimForPlayback();
+            }
+        } else {
+            playingSince = 0;
+            if (playbackTrimmed) {
+                playbackTrimmed = false;
+                if (warmWayBack) trimGpuCache();
+            }
+        }
+        main.postDelayed(playingCheck, PLAYING_CHECK_MS);
+    }
+
+    private boolean somethingPlays() {
+        if (playingProbe != null) return playingProbe.getAsBoolean();
+        android.media.AudioManager audio = getSystemService(android.media.AudioManager.class);
+        return audio != null && audio.isMusicActive();
+    }
+
+    /** What a film needs more than Glass Home: its pictures in memory, and everything it has on the GPU. */
+    private void trimForPlayback() {
+        ImageCache.get(this).clearMemory();
+        if (playbackTrimmer != null) {
+            playbackTrimmer.run();
+            return;
+        }
+        worker.execute(() -> Runtime.getRuntime().gc());
+        try {
+            new android.graphics.HardwareRenderer().destroy();
+        } catch (Throwable ignored) {
+            // An older renderer: the GPU keeps them, as before
+        }
+    }
     /** Tests stand in for the GPU here: given what would be put back on it. Null on the TV. */
     static java.util.function.Consumer<List<Bitmap>> gpuTrimmer;
 
@@ -4144,6 +4211,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(weatherRetry);
         main.removeCallbacks(pauseSnapshot);
         main.removeCallbacks(gpuTrim);
+        main.removeCallbacks(playingCheck);
         main.removeCallbacks(continueChanged);
         main.removeCallbacks(continueRetry);
         main.removeCallbacks(continueAfterUpdate);
