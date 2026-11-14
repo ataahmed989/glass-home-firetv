@@ -94,8 +94,16 @@ public final class HomeButtonService extends AccessibilityService {
     static final long COVER_MAX_MS = 2000;
     /** How long after another app has taken the screen the cover is made ready, out of the way of its opening. */
     static final long COVER_READY_MS = 1500;
-    /** How long after Glass Home is back (and its cover gone) a cover is made ready over it, for the next press. */
-    static final long HOME_COVER_READY_MS = 100;
+    /**
+     * How long after Glass Home is back (and its cover gone), with the remote at rest that long, a cover is made ready
+     * over it for the next press. At 100 ms, adding and drawing it (a window, the whole screen's snapshot) shared the
+     * main and render threads with Home's first frames and first presses.
+     */
+    static final long HOME_COVER_READY_MS = 2000;
+    /** Keys put that off this long at most. */
+    static final long HOME_COVER_LATEST_MS = 6000;
+    /** After a trip that never left Glass Home (Home pressed on Home), the next cover is made this soon. */
+    static final long HOME_COVER_AGAIN_MS = 100;
     /** Fire OS's usage record is asked this often, this many times, whether it was the Home button. */
     static final long PRESS_RETRY_MS = 30;
     static final int PRESS_TRIES = 5;
@@ -255,10 +263,27 @@ public final class HomeButtonService extends AccessibilityService {
         s.handler.removeCallbacks(s.readyCover);
         if (!s.covering) {
             s.dropCover();   // back some other way (Back from an app): the cover made ready for that is not needed
+            // The one over Home is made once Home has settled, not while it comes back
             s.handler.removeCallbacks(s.readyHomeCover);
-            if (s.home == null) s.handler.postDelayed(s.readyHomeCover, HOME_COVER_READY_MS);
+            s.homeCoverAskedAt = SystemClock.uptimeMillis();
+            s.homeCoverPatient = true;
+            s.handler.postDelayed(s.readyHomeCover, HOME_COVER_READY_MS);
         }
     }
+
+    /** A key reached Glass Home (main thread): what waits for Home to be at rest waits a little longer. */
+    static void homeBusy() {
+        HomeButtonService s = connected;
+        if (s == null || !s.homeCoverPatient || !s.handler.hasCallbacks(s.readyHomeCover)) return;
+        // Not for ever: a remote in steady use still gets its cover within a few seconds
+        if (SystemClock.uptimeMillis() - s.homeCoverAskedAt > HOME_COVER_LATEST_MS) return;
+        s.handler.removeCallbacks(s.readyHomeCover);
+        s.handler.postDelayed(s.readyHomeCover, HOME_COVER_READY_MS);
+    }
+
+    /** When the cover over Home was first asked for since Glass Home came back (uptime), and whether keys put it off. */
+    private long homeCoverAskedAt;
+    private boolean homeCoverPatient;
 
     /**
      * Glass Home is out of sight, another app in front: a moment later the cover's window is added,
@@ -325,9 +350,10 @@ public final class HomeButtonService extends AccessibilityService {
             handler.postDelayed(check, LEFT_CHECK_MS);
         }
         // Left on Amazon's home after all: the next key brings Glass Home back
-        if (event.getAction() == KeyEvent.ACTION_DOWN && strandedOnAmazonHome()) redirect();
+        if (event.getAction() == KeyEvent.ACTION_DOWN && !HomeActivity.inFront && strandedOnAmazonHome()) redirect();
         watchMenuHold(event);
-        return false;   // never consumed
+        // Glass Home is back but its window hasn't focus yet: Android would drop the key, so it is kept for it
+        return HomeActivity.holdUntilFocused(event);   // otherwise never consumed
     }
 
     /**
@@ -680,6 +706,7 @@ public final class HomeButtonService extends AccessibilityService {
      * frame on screen first (1 press in 5).
      */
     private void readyHomeCover() {
+        if (HomeActivity.inFront && !covering) dropCover();
         if (!HomeActivity.inFront || covering || cover != null || home != null || HomeSnapshot.latest() == null
                 || !new HomeSettings(this).homeButtonOpensGlassHome()) return;
         WindowManager.LayoutParams lp = overlay(PixelFormat.TRANSLUCENT);
@@ -786,10 +813,15 @@ public final class HomeButtonService extends AccessibilityService {
             else dropHomeCover();
             return;
         }
+        // Back from another app (the cover faded in from black), Home is still busy coming back: its cover waits for
+        // it to settle. A cover put up over Glass Home itself (Home pressed on Home) is followed by the next at once
+        boolean fromApp = coverFade == Fade.FROM_BLACK;
         removeCover();
         if (HomeActivity.inFront) {
             handler.removeCallbacks(readyHomeCover);
-            handler.postDelayed(readyHomeCover, HOME_COVER_READY_MS);
+            homeCoverAskedAt = SystemClock.uptimeMillis();
+            homeCoverPatient = fromApp;
+            handler.postDelayed(readyHomeCover, fromApp ? HOME_COVER_READY_MS : HOME_COVER_AGAIN_MS);
         }
     }
 

@@ -90,24 +90,45 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private static final long SHOWN_FALLBACK_MS = 1500;
     /** Once the screen has been still this long (focus and the tile's sway settled), its frame is kept for the Home button. */
     private static final long SNAPSHOT_IDLE_MS = 2800;
-    /** Back from an app, what comes over the network is fetched again this long after Glass Home resumed. */
-    private static final long RESUME_REFRESH_MS = 600;
+    /**
+     * Back from an app, what comes over the network is fetched again this long after Glass Home resumed, once the
+     * remote has rested {@link #RETURN_IDLE_MS} (at the latest {@link #RETURN_REFRESH_MAX_MS} after the return): at
+     * 600 ms, the answers rebuilt rows and pages just as the first presses came.
+     */
+    private static final long RESUME_REFRESH_MS = 1500;
+    static final long RETURN_IDLE_MS = 1200, RETURN_REFRESH_MAX_MS = 8000;
+    private static final long RETURN_WEATHER_MS = 3000;
+    /** Glass Home first shown (not back from an app): nothing is in use yet, so its first fetch isn't put off. */
+    private static final long FIRST_REFRESH_MS = 600;
 
     enum Zone { GRID, HERO, WEATHER, CAPSULE, OVERLAY, SETTINGS, TABS, PAGE, PAGE_DETAIL, CONTROL, SOURCE, SOURCES, UPDATE, TILE_MENU, HOME_ROW,
         DETAILS, EPISODES }
 
     static final int HOME = 0, MOVIES = 1, TV = 2, SPORTS = 3;
 
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final ExecutorService network = Executors.newSingleThreadExecutor();
-    private final ExecutorService pagesNet = Executors.newFixedThreadPool(2);
+    /**
+     * Threads for work out of sight, a little behind the screen's own: on four small cores, what comes back over the
+     * network after a return (pages, scores, weather) shared them evenly with the remote's focus moves. Not as far
+     * back as Android's background priority, which also moves a thread onto fewer cores.
+     */
+    static java.util.concurrent.ThreadFactory behind(String name) {
+        return r -> new Thread(() -> {
+            android.os.Process.setThreadPriority(BEHIND_PRIORITY);
+            r.run();
+        }, name);
+    }
+    static final int BEHIND_PRIORITY = 4;
+
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(behind("GlassHomeWorker"));
+    private final ExecutorService network = Executors.newSingleThreadExecutor(behind("GlassHomeNet"));
+    private final ExecutorService pagesNet = Executors.newFixedThreadPool(2, behind("GlassHomePages"));
     /** Look-ups of titles' links (one at a time, apart from the pages' own loading). */
-    private final ExecutorService linksNet = Executors.newSingleThreadExecutor();
+    private final ExecutorService linksNet = Executors.newSingleThreadExecutor(behind("GlassHomeLinks"));
     /**
      * FirePlayer's lists of a show's episodes: one call can take seconds (FirePlayer asks the provider, and TMDB the
      * first time), so on a thread of its own, never holding up the Continue Watching row or the glass's backdrops.
      */
-    private final ExecutorService episodeCalls = Executors.newSingleThreadExecutor();
+    private final ExecutorService episodeCalls = Executors.newSingleThreadExecutor(behind("GlassHomeEpisodes"));
     private final Handler main = new Handler(Looper.getMainLooper());
 
     private HomeConfig config;
@@ -316,6 +337,14 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      */
     private boolean stopped = true;
     private boolean teamsFetching;
+    /** When your teams' scores last came (elapsed realtime, which counts the TV's sleep), and whether one was playing. */
+    private long teamsFetchedAt = Long.MIN_VALUE / 2;
+    private boolean teamsLive;
+    /** When a key last came (uptime), and when Glass Home last came to the front. */
+    private long lastKeyAt = Long.MIN_VALUE / 2;
+    private long resumedAt;
+    /** Glass Home has been in front before (since it started): later fetches wait for the remote to rest. */
+    private boolean everResumed;
     /** Whether Glass Home is the screen in front (for HomeButtonService); set on the main thread. */
     static volatile boolean inFront;
 
@@ -469,6 +498,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         time.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         time.addAction(Intent.ACTION_DATE_CHANGED);
         registerReceiver(timeReceiver, time);
+        IntentFilter warm = new IntentFilter(ACTION_WARM);
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(warmReceiver, warm, Context.RECEIVER_EXPORTED);
+        else registerReceiver(warmReceiver, warm);
     }
 
     // ---- Updates ----------------------------------------------------------------------------
@@ -1321,6 +1353,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             main.post(() -> {
                 weather.setGame(next);
                 teamsFetching = false;
+                teamsFetchedAt = SystemClock.elapsedRealtime();
+                teamsLive = next != null && next.live();
                 if (!stopped) main.postDelayed(teamsTick, next != null && next.live() ? SPORTS_LIVE_MS : SPORTS_IDLE_MS);
             });
         });
@@ -3345,6 +3379,19 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        lastKeyAt = SystemClock.uptimeMillis();
+        // Android's own copy of a key already played from those kept (it can pass a key on after the service took
+        // it, when the main thread was slow to answer): played once is enough
+        if (playedAlready(event)) return true;
+        // The arrow still held stops repeating when it comes up, or when another key goes down (as Android's own would)
+        if (stillHeld != null) {
+            boolean same = event.getKeyCode() == stillHeld.getKeyCode();
+            if (same ? event.getAction() == KeyEvent.ACTION_UP
+                    : event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                stopHeldRepeat();
+            }
+        }
+        HomeButtonService.homeBusy();
         snapshotLater(SNAPSHOT_IDLE_MS);
         int code = event.getKeyCode();
         int direction = direction(code);
@@ -3797,15 +3844,39 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * Back from an app, what comes over the network (scores, a browse page) is fetched again once
      * the first frames are drawn, so that its answer does not land while Home comes in.
      */
-    private final Runnable resumeRefresh = () -> {
-        if (!resumed || isFinishing() || isDestroyed()) return;
-        if (page != HOME && pages[page].hasModel()) loadPage(page);
+    private final Runnable resumeRefresh = new Runnable() {
+        @Override
+        public void run() {
+            if (!resumed || isFinishing() || isDestroyed()) return;
+            long now = SystemClock.uptimeMillis();
+            long quiet = now - lastKeyAt;
+            if (quiet < RETURN_IDLE_MS && now - resumedAt < RETURN_REFRESH_MAX_MS) {
+                main.postDelayed(this, RETURN_IDLE_MS - quiet);
+                return;
+            }
+            refreshAfterReturn();
+        }
+    };
+
+    private void refreshAfterReturn() {
+        // A page is fetched again only once it is due, as showPage does: the answer rebuilds every row of it
+        if (page != HOME && pages[page].hasModel()) {
+            if (pages[page].age() > (page == SPORTS ? SPORTS_LIVE_MS : CATALOG_REFRESH_MS)) loadPage(page);
+            else if (page == SPORTS) scheduleSports();   // its live scores' timer went with the pause
+        }
         // Movies and TV Shows ask each time they come back; Home only if FirePlayer said its list changed meanwhile,
         // as asking starts FirePlayer if Fire OS has closed it
         if (wantsContinue(page) && (page != HOME || continueStale)) refreshContinue();
-        refreshMyTeams();
+        // Your teams' scores only once due (every ten minutes, every minute while one plays), not on every return
+        if (!teamsFetching) {
+            long since = SystemClock.elapsedRealtime() - teamsFetchedAt;
+            long every = teamsLive ? SPORTS_LIVE_MS : SPORTS_IDLE_MS;
+            main.removeCallbacks(teamsTick);
+            if (since >= every) refreshMyTeams();
+            else main.postDelayed(teamsTick, every - since);
+        }
         HomeServiceRecovery.restore(this);
-    };
+    }
 
     // ---- Lifecycle --------------------------------------------------------------------------
 
@@ -3817,6 +3888,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         stopped = false;
         resumed = true;
         inFront = true;
+        resumedAt = SystemClock.uptimeMillis();
+        focusedSinceResume = hasWindowFocus();
+        boolean shownBefore = everResumed;
+        everResumed = true;
         // Artwork that missed the network and whose retry was dropped as Home left: tried again from the start soon
         // (here, not in resumeRefresh, which a Home-button trip can skip)
         if (continueArtOwed && wantsContinue(page)) {
@@ -3846,11 +3921,12 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         scheduleSlides();
         main.removeCallbacks(weatherTick);
         long age = System.currentTimeMillis() - weather.lastUpdated();
-        main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? RESUME_REFRESH_MS : WEATHER_EVERY_MS - age);
+        // Long out of date: fetched again once Home has settled, out of the way of the first presses
+        main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? (shownBefore ? RETURN_WEATHER_MS : FIRST_REFRESH_MS) : WEATHER_EVERY_MS - age);
         // Back from a trip through Amazon's home (the Home button pressed on Home), nothing else has run
         // meanwhile: nothing is fetched again, and the scores' timer kept going
         main.removeCallbacks(resumeRefresh);
-        if (back || (!teamsFetching && !main.hasCallbacks(teamsTick))) main.postDelayed(resumeRefresh, RESUME_REFRESH_MS);
+        if (back || (!teamsFetching && !main.hasCallbacks(teamsTick))) main.postDelayed(resumeRefresh, shownBefore ? RESUME_REFRESH_MS : FIRST_REFRESH_MS);
         main.removeCallbacks(shownFallback);
         main.postDelayed(shownFallback, SHOWN_FALLBACK_MS);
         snapshotLater(SNAPSHOT_IDLE_MS);
@@ -3874,8 +3950,127 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) windowShown();
+        if (hasFocus) {
+            focusedSinceResume = true;
+            windowShown();
+            replayHeldKeys();
+        } else {
+            stopHeldRepeat();
+        }
     }
+
+    /**
+     * Arrows and Select pressed after Glass Home came back but before its window had focus: Android drops those
+     * (on the TV, the first presses for up to a couple of seconds after a film). The Home button service sees each key
+     * first and keeps them here, and they are played as soon as the window has focus.
+     */
+    private final List<KeyEvent> heldKeys = new ArrayList<>();
+    /** The window has had focus since Glass Home last came to the front. */
+    private boolean focusedSinceResume;
+    static final long TYPE_AHEAD_MS = 3000;
+
+    /** Main thread, from the Home button service: true if the key is kept for later (see {@link #heldKeys}). */
+    static boolean holdUntilFocused(KeyEvent event) {
+        HomeActivity a = current;
+        if (a == null || !inFront || !a.resumed || a.isFinishing() || a.hasWindowFocus()) return false;
+        // The up of a press kept here is kept too, whenever it comes; any other up is not Glass Home's
+        if (event.getAction() == KeyEvent.ACTION_UP) {
+            if (!a.holdsDown(event)) return false;
+            a.heldKeys.add(new KeyEvent(event));
+            return true;
+        }
+        // Only on the way back, before the window first has focus: later, focus elsewhere is another window's (the
+        // quick menu, Alexa) over Glass Home, and the keys are its own
+        if (a.focusedSinceResume || a.lostTop || SystemClock.uptimeMillis() - a.resumedAt > TYPE_AHEAD_MS) return false;
+        if (!typedAhead(event.getKeyCode()) || a.heldKeys.size() >= 16) return false;
+        a.heldKeys.add(new KeyEvent(event));
+        return true;
+    }
+
+    private boolean holdsDown(KeyEvent up) {
+        for (KeyEvent e : heldKeys) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getKeyCode() == up.getKeyCode() && e.getDownTime() == up.getDownTime()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Arrows only. Select is left as it was: a press kept here is played without its repeats, and Select held is the
+     * card's and tile's menu.
+     */
+    private static boolean typedAhead(int code) {
+        return code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT || code == KeyEvent.KEYCODE_DPAD_UP
+                || code == KeyEvent.KEYCODE_DPAD_DOWN;
+    }
+
+    private void replayHeldKeys() {
+        if (heldKeys.isEmpty()) return;
+        List<KeyEvent> keys = new ArrayList<>(heldKeys);
+        heldKeys.clear();
+        long now = SystemClock.uptimeMillis();
+        KeyEvent open = null;
+        played.clear();
+        for (KeyEvent e : keys) {
+            if (now - e.getEventTime() > TYPE_AHEAD_MS) continue;
+            dispatchKeyEvent(e);
+            played.add(e);
+            playedAt = now;
+            if (e.getAction() == KeyEvent.ACTION_DOWN) open = e;
+            else if (open != null && e.getKeyCode() == open.getKeyCode() && e.getDownTime() == open.getDownTime()) open = null;
+        }
+        // An arrow still held: Android makes no repeats of a press it never had, so they are made here till it comes up
+        if (open != null) {
+            stillHeld = open;
+            stillHeldRepeats = 0;
+            main.removeCallbacks(heldRepeat);
+            main.postDelayed(heldRepeat, Math.max(0, open.getDownTime() + Ui.KEY_REPEAT_DELAY_MS - now));
+        }
+    }
+
+    /** Keys played from those kept, and when: a copy of one coming later is dropped (see dispatchKeyEvent). */
+    private final List<KeyEvent> played = new ArrayList<>();
+    private long playedAt;
+    private static final long PLAYED_COPY_MS = 1500;
+
+    private boolean playedAlready(KeyEvent e) {
+        if (played.isEmpty()) return false;
+        if (SystemClock.uptimeMillis() - playedAt > PLAYED_COPY_MS) {
+            played.clear();
+            return false;
+        }
+        for (KeyEvent p : played) {
+            // A replay is the same object (dispatched before it is listed); a copy has the same times and key
+            if (p != e && p.getDownTime() == e.getDownTime() && p.getEventTime() == e.getEventTime() && p.getAction() == e.getAction()
+                    && p.getKeyCode() == e.getKeyCode() && p.getRepeatCount() == e.getRepeatCount()) {
+                played.remove(p);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void stopHeldRepeat() {
+        stillHeld = null;
+        main.removeCallbacks(heldRepeat);
+    }
+
+    private KeyEvent stillHeld;
+    private int stillHeldRepeats;
+    private final Runnable heldRepeat = new Runnable() {
+        @Override
+        public void run() {
+            KeyEvent down = stillHeld;
+            long now = SystemClock.uptimeMillis();
+            // Its up was missed somehow: never more than a few seconds of it
+            if (down == null || !resumed || now - down.getDownTime() > HELD_REPEAT_MAX_MS) {
+                stillHeld = null;
+                return;
+            }
+            dispatchKeyEvent(KeyEvent.changeTimeRepeat(down, now, ++stillHeldRepeats));
+            main.postDelayed(this, Ui.KEY_REPEAT_MS);
+        }
+    };
+    private static final long HELD_REPEAT_MAX_MS = 6000;
 
     private void windowShown() {
         HomeButtonService.glassHomeShown();
@@ -3999,6 +4194,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (!top) {
             dropArranging();
             lostTop = true;
+            heldKeys.clear();
             HomeButtonService.losingTop(showingHomeAsTheHomeButtonLeavesIt());
         } else if (lostTop) {
             lostTop = false;
@@ -4008,6 +4204,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     @Override
     protected void onPause() {
+        heldKeys.clear();
+        played.clear();
+        stopHeldRepeat();
         main.removeCallbacks(continueArtRetry);
         if (continueArtRetryPosted) continueArtOwed = true;   // asked again when Home is back (onResume)
         continueArtRetryPosted = false;
@@ -4052,8 +4251,31 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         main.removeCallbacks(gpuTrim);
         main.removeCallbacks(playingCheck);
         playingSince = 0;
+        // Back from a film that had the GPU let go of: what Home draws first goes back on it now, before the first
+        // frame (on the TV that frame took over 2 s, uploading everything while the remote waited)
+        if (playbackTrimmed && warmWayBack) putWayBackOnGpu();
         playbackTrimmed = false;
     }
+
+    /**
+     * FirePlayer is closing (Back pressed in it, see {@link #warmReceiver}): if a film had Glass Home let go of the
+     * GPU, the way back's pictures go back on it now, while FirePlayer goes, rather than in Home's first frame.
+     */
+    private void warmForReturn() {
+        if (!stopped || resumed || isDestroyed() || !playbackTrimmed) return;
+        playbackTrimmed = false;
+        playingSince = 0;   // another let-go needs another minute of playing
+        if (warmWayBack) putWayBackOnGpu();
+    }
+
+    /** Sent by FirePlayer as it closes. */
+    static final String ACTION_WARM = "app.glasshome.launcher.action.WARM";
+    private final BroadcastReceiver warmReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            warmForReturn();
+        }
+    };
 
     /**
      * Out of sight, Glass Home keeps little: the TV has under 2 GB for Fire OS and every app. The
@@ -4069,18 +4291,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         // Behind another app the cover could come to show an old time: none at all, from now on
         blankSnapshot();
         main.removeCallbacks(teamsTick);
-        ImageCache.get(this).trimMemory();
         ImageCache.get(this).pause();
-        for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
-        homeRow.trimMemory();
-        // Frosts made ahead for featured titles go behind another app, but the one on now (others are made again when shown)
-        if (slides != null) {
-            HeroSlide on = stage.current();
-            for (HeroSlide sl : slides) if (sl != on) sl.frost = null;
-        }
-        titleDetail.trimMemory();
-        infoWindow.trimMemory();
-        episodesWindow.trimMemory();
+        // What is let go of behind another app goes with the collection, not now: memory is only freed then anyway,
+        // and back sooner (a quick trip), everything is still decoded and drawn as it was
         main.removeCallbacks(collect);
         main.postDelayed(collect, COLLECT_AFTER_MS);
         // Only from Home as it is with nothing open: what goes back on the GPU is what that draws
@@ -4099,7 +4312,26 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * The pictures given up are freed (with their copies on the GPU) only once collected, which an
      * app sitting idle behind another may not do for hours. Not at once: the app just opened is starting.
      */
-    private final Runnable collect = () -> worker.execute(() -> Runtime.getRuntime().gc());
+    private final Runnable collect = () -> {
+        if (!stopped || resumed || isDestroyed()) return;
+        trimHidden();
+        worker.execute(() -> Runtime.getRuntime().gc());
+    };
+
+    /** Out of sight a while: the pictures and frosts not needed for the way back go. */
+    private void trimHidden() {
+        ImageCache.get(this).trimMemory();
+        for (int p = MOVIES; p <= SPORTS; p++) pages[p].trimMemory();
+        homeRow.trimMemory();
+        // Frosts made ahead for featured titles go behind another app, but the one on now (others are made again when shown)
+        if (slides != null) {
+            HeroSlide on = stage.current();
+            for (HeroSlide sl : slides) if (sl != on) sl.frost = null;
+        }
+        titleDetail.trimMemory();
+        infoWindow.trimMemory();
+        episodesWindow.trimMemory();
+    }
 
     private final Runnable gpuTrim = this::trimGpuCache;
     // Whether the way back's pictures are kept on the GPU behind another app (Home as it is, nothing open; see onStop)
@@ -4142,12 +4374,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** What a film needs more than Glass Home: its pictures in memory, and everything it has on the GPU. */
     private void trimForPlayback() {
-        ImageCache.get(this).clearMemory();
+        // The pictures Home showed last stay (a quarter of the cache, most recent first): emptied, Home's row came
+        // back grey and filled in one picture at a time while the remote was in use
+        ImageCache.get(this).trimMemory();
         if (playbackTrimmer != null) {
             playbackTrimmer.run();
             return;
         }
         worker.execute(() -> Runtime.getRuntime().gc());
+        // The GPU only when what comes back first can be put back on it before then (Home as it was left, see
+        // putWayBackOnGpu): left from a page or a window, it all had to be uploaded in the first frame back
+        if (!warmWayBack) return;
         try {
             new android.graphics.HardwareRenderer().destroy();
         } catch (Throwable ignored) {
@@ -4167,16 +4404,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      */
     private void trimGpuCache() {
         if (!stopped || resumed || isDestroyed() || HomeButtonService.tripInProgress()) return;
-        List<Bitmap> warm = new ArrayList<>();
-        warm.add(HomeSnapshot.latest());
-        HeroSlide slide = stage.current();
-        if (slide != null) warm.add(slide.background);
-        warm.add(homeBackdrop);
-        for (AppAdapter.Holder h : holders()) h.tile.warm(warm);
-        weather.warm(warm);
-        capsule.warm(warm);
-        List<Bitmap> drawn = new ArrayList<>();
-        for (Bitmap b : warm) if (b != null && !b.isRecycled() && !drawn.contains(b)) drawn.add(b);
+        List<Bitmap> drawn = wayBack();
         if (gpuTrimmer != null) {
             gpuTrimmer.accept(drawn);
             return;
@@ -4188,6 +4416,33 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         for (Bitmap b : drawn) b.prepareToDraw();
     }
+
+    /** What the way back to Home draws first, each once: see {@link #trimGpuCache}. */
+    private List<Bitmap> wayBack() {
+        List<Bitmap> warm = new ArrayList<>();
+        warm.add(HomeSnapshot.latest());
+        HeroSlide slide = stage.current();
+        if (slide != null) warm.add(slide.background);
+        warm.add(homeBackdrop);
+        for (AppAdapter.Holder h : holders()) h.tile.warm(warm);
+        weather.warm(warm);
+        capsule.warm(warm);
+        List<Bitmap> drawn = new ArrayList<>();
+        for (Bitmap b : warm) if (b != null && !b.isRecycled() && !drawn.contains(b)) drawn.add(b);
+        return drawn;
+    }
+
+    /** The way back's pictures on the GPU again (uploaded by the render thread, in the background), nothing let go. */
+    private void putWayBackOnGpu() {
+        List<Bitmap> drawn = wayBack();
+        if (gpuWarmer != null) {
+            gpuWarmer.accept(drawn);
+            return;
+        }
+        for (Bitmap b : drawn) b.prepareToDraw();
+    }
+    /** Tests stand in for the GPU here: given what would be put back on it. Null on the TV. */
+    static java.util.function.Consumer<List<Bitmap>> gpuWarmer;
 
     @Override
     public void onTrimMemory(int level) {
@@ -4218,6 +4473,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         continueWatcher.stop();
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
+        unregisterReceiver(warmReceiver);
         worker.shutdownNow();
         network.shutdownNow();
         pagesNet.shutdownNow();
