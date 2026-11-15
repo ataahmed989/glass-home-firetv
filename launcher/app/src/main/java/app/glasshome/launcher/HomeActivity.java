@@ -4014,6 +4014,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             focusedSinceResume = true;
+            HomeButtonService.tripLanded();
             windowShown();
             replayHeldKeys();
         } else {
@@ -4034,7 +4035,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Main thread, from the Home button service: true if the key is kept for later (see {@link #heldKeys}). */
     static boolean holdUntilFocused(KeyEvent event) {
         HomeActivity a = current;
-        if (a == null || !inFront || !a.resumed || a.isFinishing() || a.hasWindowFocus()) return false;
+        if (a == null || a.isFinishing() || a.isDestroyed() || a.hasWindowFocus()) return false;
+        // On the way back, from the start of the trip (Amazon's home has focus meanwhile): arrows and Select are kept
+        boolean onItsWay = HomeButtonService.tripOnItsWay();
+        if (!onItsWay && (!inFront || !a.resumed)) return false;
         // The up of a press kept here is kept too, whenever it comes; any other up is not Glass Home's
         if (event.getAction() == KeyEvent.ACTION_UP) {
             if (!a.holdsDown(event)) return false;
@@ -4043,10 +4047,21 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         // Only on the way back, before the window first has focus: later, focus elsewhere is another window's (the
         // quick menu, Alexa) over Glass Home, and the keys are its own
-        if (a.focusedSinceResume || a.lostTop || SystemClock.uptimeMillis() - a.resumedAt > TYPE_AHEAD_MS) return false;
-        if (!typedAhead(event.getKeyCode()) || a.heldKeys.size() >= 16) return false;
+        if (!onItsWay && (a.focusedSinceResume || a.lostTop || SystemClock.uptimeMillis() - a.resumedAt > TYPE_AHEAD_MS)) return false;
+        if (!(typedAhead(event.getKeyCode()) || onItsWay && selects(event.getKeyCode())) || a.heldKeys.size() >= 16) return false;
         a.heldKeys.add(new KeyEvent(event));
         return true;
+    }
+
+    /** Select, kept only on a trip on its way (played as a press: held, it is the card's menu, and that waits for focus). */
+    private static boolean selects(int code) {
+        return code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER;
+    }
+
+    /** Whether Glass Home's window has focus now. Main thread. */
+    static boolean focusedNow() {
+        HomeActivity a = current;
+        return a != null && a.hasWindowFocus();
     }
 
     private boolean holdsDown(KeyEvent up) {
