@@ -2,12 +2,18 @@ package app.glasshome.launcher;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.robolectric.Shadows.shadowOf;
 import static org.junit.Assert.assertTrue;
 
+import android.content.Intent;
 import android.os.SystemClock;
 import android.view.KeyEvent;
+import android.view.accessibility.AccessibilityEvent;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
+import org.robolectric.RuntimeEnvironment;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
@@ -105,30 +111,76 @@ public class TypeAheadTest {
         assertFalse(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
     }
 
+    /** Home at rest, its snapshot copied (the cover needs it), and the Home button service connected. */
+    private static TestHome restedWithService() throws Exception {
+        TestHome h = new TestHome();
+        for (int i = 0; i < 400 && HomeSnapshot.latest() == null; i++) {
+            Thread.sleep(25);
+            TestHome.idle();
+        }
+        TestHome.advance(3000);
+        TestHome.settle();
+        assertTrue("the snapshot is copied", HomeSnapshot.latest() != null);
+        return h;
+    }
+
     /**
-     * On a trip back from an app (Glass Home started, Amazon's home still with focus, Home not even resumed yet), arrows
-     * and Select are kept for Glass Home rather than reaching Amazon's home, and played once Home has focus.
+     * Home pressed on Home: the cover goes up and the trip back starts. Until Home's window has focus again (Amazon's
+     * home has it meanwhile), arrows are kept and played on Home; Select is kept from Amazon's home but not played.
      */
     @Test
     public void keysOnATripOnItsWayAreKeptForGlassHome() throws Exception {
-        TestHome h = new TestHome();
-        h.controller.pause().stop();
-        TestHome.advance(2000);
-        HomeButtonService.tripStartedAt = SystemClock.uptimeMillis();   // as the Home button service starts the trip
+        HomeButtonService.forgetTrips();
+        TestHome h = restedWithService();
+        HomeButtonService service = Robolectric.setupService(HomeButtonService.class);
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(HomeButtonService.BOOT_MS + 1000));
+        service.onServiceConnected();
         try {
+            h.controller.pause();
+            assertTrue("the trip is on its way, under the cover", HomeButtonService.keysForGlassHome());
             long t = SystemClock.uptimeMillis();
             assertTrue(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
             assertTrue(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
             long s = SystemClock.uptimeMillis();
-            assertTrue("Select too", HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, s)));
+            assertTrue("Select kept from Amazon's home", HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, s)));
+            assertTrue(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, s)));
             assertFalse("not Back", HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, s)));
-            h.controller.restart().start().resume();
+            h.controller.resume();
             TestHome.idle();
             int before = h.focused();
             h.activity.onWindowFocusChanged(true);
+            TestHome.settle();
+            assertEquals("the arrow is played, the Select isn't", before + 1, h.focused());
+            assertNull("nothing opened", shadowOf(RuntimeEnvironment.getApplication()).getNextStartedActivity());
             assertFalse("the trip is over once Home has focus", HomeButtonService.tripOnItsWay());
         } finally {
             HomeButtonService.tripLanded();
+            service.onUnbind(new Intent());
+        }
+    }
+
+    /** Another window comes up instead (an app opened by voice, the quick menu): its keys are its own. */
+    @Test
+    public void aTripOvertakenKeepsNothing() throws Exception {
+        HomeButtonService.forgetTrips();
+        TestHome h = restedWithService();
+        HomeButtonService service = Robolectric.setupService(HomeButtonService.class);
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(HomeButtonService.BOOT_MS + 1000));
+        service.onServiceConnected();
+        try {
+            h.controller.pause();
+            long t = SystemClock.uptimeMillis();
+            assertTrue(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
+            AccessibilityEvent e = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+            e.setPackageName("com.netflix.ninja");
+            e.setClassName("com.netflix.ninja.MainActivity");
+            service.onAccessibilityEvent(e);
+            assertFalse(HomeButtonService.keysForGlassHome());
+            long u = SystemClock.uptimeMillis();
+            assertFalse(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, u)));
+        } finally {
+            HomeButtonService.tripLanded();
+            service.onUnbind(new Intent());
         }
     }
 

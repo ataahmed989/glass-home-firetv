@@ -4036,21 +4036,36 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     static boolean holdUntilFocused(KeyEvent event) {
         HomeActivity a = current;
         if (a == null || a.isFinishing() || a.isDestroyed() || a.hasWindowFocus()) return false;
-        // On the way back, from the start of the trip (Amazon's home has focus meanwhile): arrows and Select are kept
-        boolean onItsWay = HomeButtonService.tripOnItsWay();
-        if (!onItsWay && (!inFront || !a.resumed)) return false;
         // The up of a press kept here is kept too, whenever it comes; any other up is not Glass Home's
         if (event.getAction() == KeyEvent.ACTION_UP) {
             if (!a.holdsDown(event)) return false;
             a.heldKeys.add(new KeyEvent(event));
             return true;
         }
+        // On the way back, from the start of the trip (Amazon's home has focus meanwhile, under the cover): arrows are
+        // kept, Select too, but only so that it doesn't reach Amazon's home (Home may not come back where the cover
+        // shows it, so it is not played)
+        boolean onItsWay = HomeButtonService.keysForGlassHome();
+        if (!onItsWay && (!inFront || !a.resumed)) return false;
+        // Fire OS passes a key the service was slow to answer on to the window with focus: that one isn't kept as well
+        if (onItsWay && SystemClock.uptimeMillis() - event.getEventTime() > PASSED_ON_MS) return false;
         // Only on the way back, before the window first has focus: later, focus elsewhere is another window's (the
         // quick menu, Alexa) over Glass Home, and the keys are its own
         if (!onItsWay && (a.focusedSinceResume || a.lostTop || SystemClock.uptimeMillis() - a.resumedAt > TYPE_AHEAD_MS)) return false;
-        if (!(typedAhead(event.getKeyCode()) || onItsWay && selects(event.getKeyCode())) || a.heldKeys.size() >= 16) return false;
+        if (!(typedAhead(event.getKeyCode()) || onItsWay && selects(event.getKeyCode()))) return false;
+        // Full: on a trip the press is dropped rather than left to Amazon's home under the cover
+        if (a.heldKeys.size() >= (onItsWay ? 64 : 16)) return onItsWay;
         a.heldKeys.add(new KeyEvent(event));
         return true;
+    }
+
+    /** Fire OS waits this long for the service's answer on a key, then passes it on (500 ms), less a margin. */
+    static final long PASSED_ON_MS = 450;
+
+    /** The trip back was overtaken (another window came up): what was kept for Glass Home goes. Main thread. */
+    static void dropHeldKeys() {
+        HomeActivity a = current;
+        if (a != null && !a.hasWindowFocus()) a.heldKeys.clear();
     }
 
     /** Select, kept only on a trip on its way (played as a press: held, it is the card's menu, and that waits for focus). */
@@ -4089,6 +4104,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         played.clear();
         for (KeyEvent e : keys) {
             if (now - e.getEventTime() > TYPE_AHEAD_MS) continue;
+            if (selects(e.getKeyCode())) continue;   // kept only to keep it from Amazon's home (holdUntilFocused)
             dispatchKeyEvent(e);
             played.add(e);
             playedAt = now;
