@@ -232,6 +232,7 @@ final class ShelfPage extends ViewGroup {
         home = b;
         homeShader = null;
         shelvesFrost = null;
+        heroFrost = null;   // a game's frost shows this background through its colours
         teamColours.clear();   // a game's colours are clear where this shows through
         backdropLayer.invalidate();
         if (listener != null && model != null) listener.onHeroShown(this);
@@ -946,17 +947,30 @@ final class ShelfPage extends ViewGroup {
         super.onDetachedFromWindow();
     }
 
-    /** A small blurred copy of the hero's background, for the glass of the bars above it. */
+    /** The last hero frost made, and what it was made from: a tab switch back, or the bar coming back, reuses it. */
+    private Bitmap heroFrost;
+    private Object heroFrostOf, heroFrostArt;
+
+    /**
+     * A small blurred copy of the hero's background, for the glass of the bars above it. While the page is still
+     * loading that is the page's plain background, so the bar never keeps the frost of the page it came from.
+     */
     Bitmap backdrop() {
+        PageModel.Feature f = currentHero();
+        boolean game = f != null && f.game != null;
+        Bitmap art = f == null || game ? null : images.peek(f.imageUrl, getWidth());
+        if (heroFrost != null && heroFrostOf == f && heroFrostArt == art) return heroFrost;
         Bitmap small = Bitmap.createBitmap(Backdrop.W, Backdrop.H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(small);
-        PageModel.Feature f = currentHero();
-        if (f != null && f.game != null) {
+        if (game) {
             drawHeroPicture(c, Backdrop.W, Backdrop.H, f, 0f, 1f);   // a game's colours need no artwork
         } else {
-            painter.drawBackground(c, Backdrop.W, Backdrop.H, f, f == null ? null : images.peek(f.imageUrl, getWidth()));
+            painter.drawBackground(c, Backdrop.W, Backdrop.H, f, art);
         }
         Backdrop.blur(small, Backdrop.RADIUS);
+        heroFrost = small;
+        heroFrostOf = f;
+        heroFrostArt = art;
         return small;
     }
 

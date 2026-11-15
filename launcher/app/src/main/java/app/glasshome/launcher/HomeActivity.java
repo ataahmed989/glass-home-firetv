@@ -1593,7 +1593,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         } else {
             main.removeCallbacks(advanceSlide);   // Home's slideshow rests while it is covered
             ShelfPage sp = pages[p];
-            if (sp.hasModel()) setBarBackdrop(sp.barBackdrop());
+            // At once, loading or not: the bar never keeps the frost of the page it came from
+            setBarBackdrop(sp.barBackdrop());
             if (!sp.hasModel() || sp.age() > (p == SPORTS ? SPORTS_LIVE_MS : CATALOG_REFRESH_MS)) loadPage(p);
             else if (p == SPORTS) scheduleSports();
             if (wantsContinue(p)) refreshContinue();

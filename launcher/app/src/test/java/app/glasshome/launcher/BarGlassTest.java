@@ -83,4 +83,23 @@ public class BarGlassTest {
         TestHome.settle();
         assertTrue("over the hero again, the hero's picture", samePicture(tv.backdrop(), barScene(h, "tabGlass")));
     }
+
+    @Test
+    public void barGlassTakesTheNewPageAtOnceEvenWhileItLoads() throws Exception {
+        TestHome h = TestHome.withTmdb();
+        h.menu();
+        h.press(android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
+        h.press(android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
+        TestHome.settle();
+        ShelfPage tv = h.page(HomeActivity.TV);
+        // Loading or loaded, the bar shows this page's frost, not the one from the page before
+        for (String glass : new String[] {"tabGlass", "capsuleGlass", "controlGlass", "sourceGlass"}) {
+            assertTrue(glass + " shows the new page", samePicture(tv.barBackdrop(), barScene(h, glass)));
+        }
+        // Asked again with nothing changed, the same frost comes back: no second blur
+        assertSame(tv.backdrop(), tv.backdrop());
+        h.waitForPage(HomeActivity.TV);
+        TestHome.settle();
+        assertTrue("once loaded, the hero's", samePicture(tv.barBackdrop(), barScene(h, "tabGlass")));
+    }
 }
