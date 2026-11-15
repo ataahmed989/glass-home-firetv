@@ -107,6 +107,8 @@ public final class HomeButtonService extends AccessibilityService {
     /** Fire OS's usage record is asked this often, this many times, whether it was the Home button. */
     static final long PRESS_RETRY_MS = 30;
     static final int PRESS_TRIES = 5;
+    /** As FirePlayer closes: the press's own resume of Amazon's home may come into the record a little after it says so. */
+    static final int PLAYER_PRESS_TRIES = 20;
     /** How long the cover stays once Glass Home is shown again (see {@link #glassHomeShown}). */
     static final long SHOWN_HOLD_MS = 400;
     /** How long Home's cover takes to fade out over Glass Home, and in over a browse page. */
@@ -503,6 +505,18 @@ public final class HomeButtonService extends AccessibilityService {
     }
 
     /**
+     * FirePlayer is closing (it says so as it goes, see HomeActivity's warm receiver). If the Home button closed it,
+     * the trip back starts now, from the starts thread: not once Amazon's home has come up and its window says so,
+     * 1.5 s after the press behind a playing film (measured on the Fire TV Stick 4K Max). Back, or the film's end,
+     * leaves the usage record on FirePlayer until what was under it is back, and nothing is done.
+     */
+    static void playerClosing() {
+        HomeButtonService s = connected;
+        if (s == null || HomeActivity.inFront || opening()) return;
+        starts.execute(() -> s.pressed(PLAYER_PRESS_TRIES, FirePlayerTitles.PACKAGE));
+    }
+
+    /**
      * Amazon's home came up again after Glass Home was last started: Home pressed again (quickly,
      * several times), not more of the same press. That trip is made too, with retries afresh.
      */
@@ -640,8 +654,13 @@ public final class HomeButtonService extends AccessibilityService {
      * anything, as a rule. Anything else resuming instead (an app opened by voice, say) is left alone.
      */
     private void pressed() {
+        pressed(PRESS_TRIES, null);
+    }
+
+    /** {@code leaving}: the app on its way out, still the last resumed until the press's resume is recorded. */
+    private void pressed(int maxTries, String leaving) {
         if (!usageAccess()) return;
-        for (int tries = 0; tries < PRESS_TRIES; tries++) {
+        for (int tries = 0; tries < maxTries; tries++) {
             if (tries > 0) SystemClock.sleep(PRESS_RETRY_MS);   // not in the record yet
             if (HomeActivity.inFront || opening() || library || !new HomeSettings(this).homeButtonOpensGlassHome()) return;
             Resumed r = lastResumed(5000);
@@ -656,7 +675,7 @@ public final class HomeButtonService extends AccessibilityService {
                 });
                 return;
             }
-            if (r != null && !r.amazonHome() && !r.pkg.equals(getPackageName())) return;
+            if (r != null && !r.amazonHome() && !r.pkg.equals(getPackageName()) && !r.pkg.equals(leaving)) return;
         }
         // After that, Amazon's window and check() decide
     }
