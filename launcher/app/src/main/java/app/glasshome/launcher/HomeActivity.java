@@ -4335,6 +4335,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private final BroadcastReceiver warmReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            HomeButtonService.playerClosing();
             warmForReturn();
         }
     };

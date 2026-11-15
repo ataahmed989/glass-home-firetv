@@ -307,6 +307,32 @@ public class HomeButtonServiceTest {
         assertNull(shadowOf(app).getNextStartedActivity());
     }
 
+    /**
+     * Home pressed while FirePlayer plays: FirePlayer says it is closing (its warm-up broadcast), and with Amazon's
+     * home already in the usage record the trip back starts then, before Amazon's window has said anything.
+     */
+    @Test
+    public void homeOutOfFirePlayerStartsTheTripAsItCloses() {
+        usageAccess();
+        connectedAfterStartUp();
+        resumed(FirePlayerTitles.PACKAGE, "app.fireplayer.PlayerActivity");
+        resumed("com.amazon.tv.launcher", AMAZON_HOME);
+        HomeButtonService.playerClosing();
+        assertGlassHomeStarted();
+        window("com.amazon.tv.launcher", AMAZON_HOME);   // Amazon's window, when it comes: the same press
+        assertNull("one trip", shadowOf(app).getNextStartedActivity());
+    }
+
+    /** Back in FirePlayer, or its film ending: what was under it comes back by itself, and nothing is started. */
+    @Test
+    public void backOutOfFirePlayerStartsNothing() {
+        usageAccess();
+        connectedAfterStartUp();
+        resumed(FirePlayerTitles.PACKAGE, "app.fireplayer.PlayerActivity");
+        HomeButtonService.playerClosing();
+        assertNull(shadowOf(app).getNextStartedActivity());
+    }
+
     private void usageAccess() {
         shadowOf(app.getSystemService(AppOpsManager.class)).setMode(AppOpsManager.OPSTR_GET_USAGE_STATS,
                 android.os.Process.myUid(), app.getPackageName(), AppOpsManager.MODE_ALLOWED);
