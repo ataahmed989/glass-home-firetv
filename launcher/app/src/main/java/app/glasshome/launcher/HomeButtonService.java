@@ -92,6 +92,11 @@ public final class HomeButtonService extends AccessibilityService {
     static final long BOOT_MS = 2 * 60_000;
     /** The cover never stays longer than this, whatever happens. */
     static final long COVER_MAX_MS = 2000;
+    /**
+     * A trip back to Glass Home, from its start until Glass Home's window has focus, at most this long: keys pressed
+     * meanwhile are kept for Glass Home (see HomeActivity#holdUntilFocused), and the cover stays up over Amazon's home.
+     */
+    static final long TRIP_MS = 4000;
     /** How long after another app has taken the screen the cover is made ready, out of the way of its opening. */
     static final long COVER_READY_MS = 1500;
     /**
@@ -264,7 +269,9 @@ public final class HomeButtonService extends AccessibilityService {
         s.handler.removeCallbacks(s.check);
         s.handler.removeCallbacks(s.readyCover);
         if (!s.covering) {
-            s.dropCover();   // back some other way (Back from an app): the cover made ready for that is not needed
+            // Back some other way (Back from an app): the cover made ready for that is not needed, but it goes with the
+            // one over Home being made (readyHomeCover), hidden till then: removed here, the window manager held Home's
+            // resume 198 ms (Fire TV Stick 4K Plus, Amazon's home still pausing)
             // The one over Home is made once Home has settled, not while it comes back
             s.handler.removeCallbacks(s.readyHomeCover);
             s.homeCoverAskedAt = SystemClock.uptimeMillis();
@@ -342,7 +349,9 @@ public final class HomeButtonService extends AccessibilityService {
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
         keyAt = SystemClock.uptimeMillis();
-        lift();   // someone is using the remote: nothing may stand in front of it
+        // Glass Home on its way: the cover stands in for it, and the key is kept for it
+        boolean onItsWay = tripOnItsWay() && !HomeActivity.focusedNow();
+        if (!onItsWay) lift();   // someone is using the remote: nothing may stand in front of it
         if (overAmazonHome && event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
             // Back closes what was over Amazon's home (Fire TV's quick menu); a moment later, if Amazon's
             // home is what is left, Glass Home comes back
@@ -588,6 +597,7 @@ public final class HomeButtonService extends AccessibilityService {
         if (now - redirectedAt < REDIRECT_GAP_MS && !pressedAgain()) return;
         if (!new HomeSettings(this).homeButtonOpensGlassHome()) return;
         redirectedAt = now;
+        tripStartedAt = now;   // the cover holds for the whole trip
         handler.removeCallbacks(check);
         handler.postDelayed(check, WATCH_MS);
         cover(fadeIn ? Fade.FROM_BLACK : Fade.AT_ONCE);
@@ -602,11 +612,29 @@ public final class HomeButtonService extends AccessibilityService {
         Intent home = new Intent(this, HomeActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 .putExtra(EXTRA_HOME_BUTTON, true);
+        tripStartedAt = SystemClock.uptimeMillis();
         try {
             startActivity(home);
         } catch (ActivityNotFoundException | SecurityException e) {
+            tripLanded();
             handler.post(this::lift);   // Amazon's home stays; nothing else to do
         }
+    }
+
+    /** When the last trip back to Glass Home started (uptime), until its window has focus. */
+    static volatile long tripStartedAt = -TRIP_MS;
+
+    /**
+     * Glass Home is on its way back and hasn't focus yet: Amazon's home has it, and a key pressed now would be Amazon's
+     * (Select opening something of Amazon's) and would take the cover away, Amazon's home showing until Glass Home is.
+     */
+    static boolean tripOnItsWay() {
+        return SystemClock.uptimeMillis() - tripStartedAt < TRIP_MS;
+    }
+
+    /** Glass Home's window has focus, or the trip was given up: keys go where they always went. */
+    static void tripLanded() {
+        tripStartedAt = -TRIP_MS;
     }
 
     /**
@@ -669,6 +697,8 @@ public final class HomeButtonService extends AccessibilityService {
                 redirectedAt = SystemClock.uptimeMillis();   // Amazon's window, when it reports in, is this press
                 startGlassHome();
                 handler.postAtFrontOfQueue(() -> {
+                    // Out of an app (FirePlayer closing): the cover goes up now, as it would once Amazon's window said so
+                    if (leaving != null && !HomeActivity.inFront) cover(Fade.FROM_BLACK);
                     retries = 0;
                     handler.removeCallbacks(check);
                     handler.postDelayed(check, WATCH_MS);
@@ -701,7 +731,8 @@ public final class HomeButtonService extends AccessibilityService {
         handler.removeCallbacks(readyCover);
         handler.removeCallbacks(readyHomeCover);
         handler.removeCallbacks(lift);
-        handler.postDelayed(lift, COVER_MAX_MS);
+        // Over a trip on its way, until Glass Home is shown (it lifts it then): taken away sooner, Amazon's home showed
+        handler.postDelayed(lift, tripOnItsWay() ? TRIP_MS : COVER_MAX_MS);
         if (homeCovering || (!covering && cover == null && home != null && home.ready())) {
             boolean across = fade == Fade.ACROSS && !homeCovering;   // over a browse page, Home crossfades in
             covering = homeCovering = true;

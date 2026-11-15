@@ -105,6 +105,43 @@ public class TypeAheadTest {
         assertFalse(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
     }
 
+    /**
+     * On a trip back from an app (Glass Home started, Amazon's home still with focus, Home not even resumed yet), arrows
+     * and Select are kept for Glass Home rather than reaching Amazon's home, and played once Home has focus.
+     */
+    @Test
+    public void keysOnATripOnItsWayAreKeptForGlassHome() throws Exception {
+        TestHome h = new TestHome();
+        h.controller.pause().stop();
+        TestHome.advance(2000);
+        HomeButtonService.tripStartedAt = SystemClock.uptimeMillis();   // as the Home button service starts the trip
+        try {
+            long t = SystemClock.uptimeMillis();
+            assertTrue(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
+            assertTrue(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
+            long s = SystemClock.uptimeMillis();
+            assertTrue("Select too", HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, s)));
+            assertFalse("not Back", HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, s)));
+            h.controller.restart().start().resume();
+            TestHome.idle();
+            int before = h.focused();
+            h.activity.onWindowFocusChanged(true);
+            assertFalse("the trip is over once Home has focus", HomeButtonService.tripOnItsWay());
+        } finally {
+            HomeButtonService.tripLanded();
+        }
+    }
+
+    /** Without a trip on its way, nothing is kept while Home is out of sight. */
+    @Test
+    public void nothingIsKeptBehindAnotherAppWithoutATrip() throws Exception {
+        TestHome h = new TestHome();
+        h.controller.pause().stop();
+        HomeButtonService.tripLanded();
+        long t = SystemClock.uptimeMillis();
+        assertFalse(HomeActivity.holdUntilFocused(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, t)));
+    }
+
     @Test
     public void notWhileAnotherWindowIsOverHome() throws Exception {
         TestHome h = back();
