@@ -2,6 +2,7 @@ package app.glasshome.launcher;
 
 import android.animation.ValueAnimator;
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
@@ -4355,11 +4356,33 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      * GPU, the way back's pictures go back on it now, while FirePlayer goes, rather than in Home's first frame.
      */
     private void warmForReturn() {
-        if (!stopped || resumed || isDestroyed() || !playbackTrimmed) return;
+        if (!stopped || resumed || isDestroyed()) return;
+        if (playbackTrimmed) playingSince = 0;   // another let-go needs another minute of playing
         playbackTrimmed = false;
-        playingSince = 0;   // another let-go needs another minute of playing
+        // Always: Fire OS lets go of a hidden window's pictures on the GPU too, and sending them in Home's first frame
+        // back took 220 ms of it (Fire TV Stick 4K Plus); already there, nothing is sent
         if (warmWayBack) putWayBackOnGpu();
     }
+
+    /** A trip back to Glass Home has started (the Home button service): the way back's pictures go on the GPU now. */
+    static void tripStarting() {
+        HomeActivity a = current;
+        if (a != null) a.main.post(a::warmForReturn);
+    }
+
+    /**
+     * Whether memory is short enough to have HWUI let go of what Glass Home has on the GPU behind another app. It costs
+     * the trip back: the first frame then rebuilt its layers in 0.5 s rather than 0.15 s (Fire TV Stick 4K Plus), so only
+     * when the app in front may need the memory (the Fire TV Stick 4K Max had 120 MB left during a film).
+     */
+    private boolean memoryShort() {
+        ActivityManager am = getSystemService(ActivityManager.class);
+        if (am == null) return true;
+        ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+        am.getMemoryInfo(info);
+        return info.lowMemory || info.availMem < GPU_LET_GO_UNDER_BYTES;
+    }
+    static final long GPU_LET_GO_UNDER_BYTES = 350L * 1024 * 1024;
 
     /** Sent by FirePlayer as it closes. */
     static final String ACTION_WARM = "app.glasshome.launcher.action.WARM";
@@ -4478,7 +4501,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         worker.execute(() -> Runtime.getRuntime().gc());
         // The GPU only when what comes back first can be put back on it before then (Home as it was left, see
         // putWayBackOnGpu): left from a page or a window, it all had to be uploaded in the first frame back
-        if (!warmWayBack) return;
+        if (!warmWayBack || !memoryShort()) return;
         try {
             new android.graphics.HardwareRenderer().destroy();
         } catch (Throwable ignored) {
@@ -4498,6 +4521,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
      */
     private void trimGpuCache() {
         if (!stopped || resumed || isDestroyed() || HomeButtonService.tripInProgress()) return;
+        if (!memoryShort()) return;   // kept: see memoryShort
         List<Bitmap> drawn = wayBack();
         if (gpuTrimmer != null) {
             gpuTrimmer.accept(drawn);

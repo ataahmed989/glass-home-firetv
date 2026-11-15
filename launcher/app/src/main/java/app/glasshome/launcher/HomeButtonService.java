@@ -628,6 +628,7 @@ public final class HomeButtonService extends AccessibilityService {
 
     /** On the starts thread. */
     private void startGlassHome() {
+        HomeActivity.tripStarting();
         Intent home = new Intent(this, HomeActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
                 .putExtra(EXTRA_HOME_BUTTON, true);
