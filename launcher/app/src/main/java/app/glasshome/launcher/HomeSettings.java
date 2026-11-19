@@ -62,12 +62,15 @@ final class HomeSettings {
         prefs.edit().putBoolean("sleep_off", off).apply();
     }
 
-    /** Holding the remote's Menu button opens TiviMate (see {@link HomeButtonService}); on unless turned off. */
-    boolean menuHoldOpensTiviMate() {
+    /**
+     * Holding the remote's Menu button opens FirePlayer (see {@link HomeButtonService}); on unless turned off. The same
+     * stored choice as when the hold opened TiviMate.
+     */
+    boolean menuHoldOpensFirePlayer() {
         return prefs.getBoolean("menu_hold", true);
     }
 
-    void setMenuHoldOpensTiviMate(boolean on) {
+    void setMenuHoldOpensFirePlayer(boolean on) {
         prefs.edit().putBoolean("menu_hold", on).apply();
     }
 

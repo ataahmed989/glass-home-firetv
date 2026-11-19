@@ -2817,11 +2817,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 redirect ? "" : "Turned on during setup over ADB",
                 redirect, redirect && settings.homeButtonOpensGlassHome()));
         // Held Menu is seen by the Home service, so it needs that too (or the grant to turn it back on)
-        boolean tivimate = HomeButtonService.launchIntent(this, HomeButtonService.TIVIMATE) != null;
-        boolean hold = tivimate && (homeButtonServiceOn() || HomeServiceRecovery.allowed(this));
-        options.add(SettingsPanel.Option.toggle("REMOTE", "Hold Menu for TiviMate",
-                !tivimate ? "TiviMate isn't installed" : hold ? "" : "Needs the Home service, set up over ADB",
-                hold, hold && settings.menuHoldOpensTiviMate()));
+        boolean fireplayer = HomeButtonService.launchIntent(this, FirePlayer.current()) != null;
+        boolean hold = fireplayer && (homeButtonServiceOn() || HomeServiceRecovery.allowed(this));
+        options.add(SettingsPanel.Option.toggle("REMOTE", MENU_HOLD_ROW,
+                !fireplayer ? "FirePlayer isn't installed" : hold ? "" : "Needs the Home service, set up over ADB",
+                hold, hold && settings.menuHoldOpensFirePlayer()));
         options.add(SettingsPanel.Option.toggle("HOME ROW", "Continue Watching on Home", "", true, settings.homeContinue()));
         Set<String> hiddenHere = settings.hiddenApps();
         options.add(SettingsPanel.Option.action("APPS", "Hidden Apps",
@@ -2861,6 +2861,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     // ---- Arranging apps ---------------------------------------------------------------------
 
     private static final String MEMORY_ROW = "Memory & Storage";
+    private static final String MENU_HOLD_ROW = "Hold Menu for FirePlayer";
 
     /** Select held this long on a tile before it starts to sink (the menu opens at {@link #TILE_HOLD_MS}). */
     static final long PRESS_IN_MS = 150;
@@ -3337,7 +3338,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             return;
         }
         if (option.toggle && option.section.equals("REMOTE")) {
-            settings.setMenuHoldOpensTiviMate(option.checked);
+            settings.setMenuHoldOpensFirePlayer(option.checked);
             if (option.checked) HomeServiceRecovery.restore(this);   // Fire OS may have turned the service off meanwhile
             return;
         }
@@ -3514,11 +3515,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         if (code == KeyEvent.KEYCODE_MENU) {
             // The remote's ☰ button: once per press, to the tab bar and back. On release, as holding it
-            // opens TiviMate (HomeButtonService), and nothing here should move first
+            // opens FirePlayer (HomeButtonService), and nothing here should move first
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (event.getRepeatCount() == 0) menuArmed = true;
             } else if (event.getAction() == KeyEvent.ACTION_UP) {
-                // Held, TiviMate is opening for it: whatever the Home service did, as only it opens TiviMate
+                // Held, FirePlayer is opening for it: whatever the Home service did, as only it opens FirePlayer
                 boolean held = event.getDownTime() == HomeButtonService.menuHoldTaken;
                 boolean fire = menuArmed && !event.isCanceled() && !held;
                 menuArmed = false;
