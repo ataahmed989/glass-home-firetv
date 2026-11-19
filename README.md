@@ -41,7 +41,7 @@ no ads and no sponsored rows.
   settings. The stack turns only
   when asked, with Play/Pause while it has focus, and stays where it was left.
 - **Home Screen settings** (from the avatar): background, widgets, Sources look, Sleep, Home
-  button, Hold Menu for TiviMate, Clear Cache (Glass Home's own cache) and updates.
+  button, Hold Menu for FirePlayer, Clear Cache (Glass Home's own cache) and updates.
 - **Control Center** from the status capsule: Sleep, Sleep Timer, Wi-Fi, Bluetooth, and
   shortcuts to screen mirroring, accessibility, display settings and Home Screen settings,
   laid out on the grid of a Figma Community kit of the iOS 26 Control Center.
@@ -145,7 +145,7 @@ It stays on the TV; never commit it. The same file sets the app order, hidden ap
 | --- | --- |
 | Arrows | Move focus. Held, they step at a steady rate. |
 | Select | Opens the focused app, title, game or widget (once per press). |
-| ☰ Menu | To the tab bar, closing anything open; again to go back down (on release). Held, from any app: opens TiviMate (Home Screen settings > Remote). |
+| ☰ Menu | To the tab bar, closing anything open; again to go back down (on release). Held, from any app: opens FirePlayer (FirePlayer 2.0 when installed) (Home Screen settings > Remote). |
 | Back | Closes what is open, then steps back toward Home. |
 | Play/Pause | On the Smart Stack, turns to the next widget (Rewind goes back). |
 | Home | Glass Home's Home page, closing anything open, however often it is pressed. Fire OS sends Home to Amazon's home first, so from another app the screen goes dark for a moment on the way (0.04-0.5 s measured on the Fire TV Stick 4K Plus) and Home then fades in; Amazon's home is never seen. Held: Fire TV's quick menu. |
