@@ -315,7 +315,7 @@ public class HomeButtonServiceTest {
     public void homeOutOfFirePlayerStartsTheTripAsItCloses() {
         usageAccess();
         connectedAfterStartUp();
-        resumed(FirePlayerTitles.PACKAGE, "app.fireplayer.PlayerActivity");
+        resumed(FirePlayer.V1, "app.fireplayer.PlayerActivity");
         resumed("com.amazon.tv.launcher", AMAZON_HOME);
         HomeButtonService.playerClosing();
         assertGlassHomeStarted();
@@ -328,7 +328,7 @@ public class HomeButtonServiceTest {
     public void backOutOfFirePlayerStartsNothing() {
         usageAccess();
         connectedAfterStartUp();
-        resumed(FirePlayerTitles.PACKAGE, "app.fireplayer.PlayerActivity");
+        resumed(FirePlayer.V1, "app.fireplayer.PlayerActivity");
         HomeButtonService.playerClosing();
         assertNull(shadowOf(app).getNextStartedActivity());
     }

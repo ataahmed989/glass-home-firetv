@@ -32,8 +32,6 @@ import java.util.Set;
  * What an older FirePlayer lacks (a column, a path) is simply absent, and means "not offered": nothing else is checked.
  */
 final class ContinueWatching {
-    static final String AUTHORITY = "app.fireplayer.continue";
-    static final Uri ITEMS = Uri.parse("content://" + AUTHORITY + "/items");
     static final String ACTION_RESUME = "app.fireplayer.action.RESUME";
     static final String EXTRA_ID = "app.fireplayer.extra.CONTINUE_ID";
     /** Plays another episode of an entry's show: {@link #EXTRA_ID} and {@link #EXTRA_EPISODE_ID} (newer FirePlayers only). */
@@ -206,10 +204,12 @@ final class ContinueWatching {
      */
     static List<Item> query(Context context) {
         List<Item> out = new ArrayList<>();
-        try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(ITEMS)) {
+        String pkg = FirePlayer.get(context);
+        Uri items = FirePlayer.items(pkg);
+        try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(items)) {
             // No FirePlayer, or one without Continue Watching; but one that's installed may be in the middle of an update
-            if (client == null) return installed(context) ? null : out;
-            try (Cursor c = client.query(ITEMS, null, null, null, null)) {
+            if (client == null) return installed(context, pkg) ? null : out;
+            try (Cursor c = client.query(items, null, null, null, null)) {
                 if (c == null) return null;
                 while (c.moveToNext()) {
                     Item item;
@@ -229,9 +229,9 @@ final class ContinueWatching {
     }
 
     /** FirePlayer is installed (with or without Continue Watching). */
-    private static boolean installed(Context context) {
+    private static boolean installed(Context context, String pkg) {
         try {
-            context.getPackageManager().getPackageInfo(FirePlayerTitles.PACKAGE, 0);
+            context.getPackageManager().getPackageInfo(pkg, 0);
             return true;
         } catch (android.content.pm.PackageManager.NameNotFoundException e) {
             return false;
@@ -317,9 +317,10 @@ final class ContinueWatching {
 
     /** Takes an entry off the list (for an episode, its show); false if FirePlayer couldn't be asked. Off the main thread. */
     static boolean delete(Context context, String id) {
-        try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(ITEMS)) {
+        Uri items = FirePlayer.items(FirePlayer.get(context));
+        try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(items)) {
             if (client == null) return false;
-            client.delete(Uri.withAppendedPath(ITEMS, id), null, null);
+            client.delete(Uri.withAppendedPath(items, id), null, null);
             return true;
         } catch (Exception e) {
             return false;
@@ -333,9 +334,10 @@ final class ContinueWatching {
      * the main thread, and it may take a while: FirePlayer may ask the provider, and TMDB the first time.
      */
     static List<Episode> episodes(Context context, String id) {
-        Uri uri = ITEMS.buildUpon().appendPath(id).appendPath("episodes").build();
+        Uri items = FirePlayer.items(FirePlayer.get(context));
+        Uri uri = items.buildUpon().appendPath(id).appendPath("episodes").build();
         List<Episode> out = new ArrayList<>();
-        try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(ITEMS)) {
+        try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(items)) {
             if (client == null) return null;
             try (Cursor c = client.query(uri, null, null, null, null)) {
                 if (c == null) return null;
@@ -368,14 +370,14 @@ final class ContinueWatching {
      * answers it: starting it fails, rather than playing anything else.
      */
     static Intent playEpisodeIntent(String id, String episodeId) {
-        return new Intent(ACTION_PLAY_EPISODE).setPackage(FirePlayerTitles.PACKAGE).putExtra(EXTRA_ID, id)
+        return new Intent(ACTION_PLAY_EPISODE).setPackage(FirePlayer.current()).putExtra(EXTRA_ID, id)
                 .putExtra(EXTRA_EPISODE_ID, episodeId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
     }
 
     /** Opens FirePlayer's player on the entry, where it was left. */
     static Intent resumeIntent(String id) {
-        return new Intent(ACTION_RESUME).setPackage(FirePlayerTitles.PACKAGE).putExtra(EXTRA_ID, id)
+        return new Intent(ACTION_RESUME).setPackage(FirePlayer.current()).putExtra(EXTRA_ID, id)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);   // a player left behind from another title never stands in for this one
     }
 
@@ -384,6 +386,8 @@ final class ContinueWatching {
         private final ContentResolver resolver;
         private final ContentObserver observer;
         private boolean registered;
+        /** The list last watched, or tried: the chosen FirePlayer's. */
+        private Uri items;
 
         Watcher(Context context, Handler handler, Runnable onChange) {
             resolver = context.getContentResolver();
@@ -400,13 +404,21 @@ final class ContinueWatching {
          * (FirePlayer not installed yet, or an older one), so this is tried again whenever the list is.
          */
         void watch() {
-            if (registered) return;
+            Uri want = FirePlayer.items(FirePlayer.current());
+            if (registered && want.equals(items)) return;
+            stop();
+            items = want;
             try {
-                resolver.registerContentObserver(ITEMS, true, observer);
+                resolver.registerContentObserver(want, true, observer);
                 registered = true;
             } catch (SecurityException e) {
                 // no provider yet
             }
+        }
+
+        /** Watches again if another FirePlayer has been chosen since it was last tried (nothing is asked otherwise). */
+        void follow() {
+            if (!FirePlayer.items(FirePlayer.current()).equals(items)) watch();
         }
 
         void stop() {

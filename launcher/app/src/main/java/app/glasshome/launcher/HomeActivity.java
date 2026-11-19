@@ -420,8 +420,13 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             loadApps(pkg);
             // A FirePlayer just updated: Home may have asked it for its list mid-update, so it's asked again
             String action = intent.getAction();
-            if (FirePlayerTitles.PACKAGE.equals(pkg)
-                    && (Intent.ACTION_PACKAGE_REPLACED.equals(action) || Intent.ACTION_PACKAGE_ADDED.equals(action))) {
+            if (FirePlayer.is(pkg) && !Intent.ACTION_PACKAGE_CHANGED.equals(action)) {
+                // Added, removed or replaced: FirePlayer 2.0 may have come or gone, and the list with it
+                FirePlayer.chooseLater(context);
+            }
+            if (FirePlayer.is(pkg)
+                    && (Intent.ACTION_PACKAGE_REPLACED.equals(action) || Intent.ACTION_PACKAGE_ADDED.equals(action)
+                        || Intent.ACTION_PACKAGE_REMOVED.equals(action))) {
                 continueStale = true;
                 main.removeCallbacks(continueAfterUpdate);
                 main.postDelayed(continueAfterUpdate, CONTINUE_AFTER_UPDATE_MS);
@@ -1736,6 +1741,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             List<ContinueWatching.Item> items = ContinueWatching.query(this);
             main.post(() -> {
                 if (generation != continueGeneration || isDestroyed()) return;
+                continueWatcher.follow();   // the query chose the FirePlayer: its list is the one watched (a compare, as a rule)
                 if (items == null) {
                     // No answer: the row keeps what it had, and FirePlayer is asked again
                     continueStale = true;
@@ -1904,7 +1910,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void resumeContinue(ContinueWatching.Item item) {
         continueStale = true;   // where it was left changes as it plays
         openedFromRow = page == HOME && homeRow.isFocused();
-        HomeButtonService.opening(FirePlayerTitles.PACKAGE);
+        HomeButtonService.opening(FirePlayer.current());
         try {
             startActivity(ContinueWatching.resumeIntent(item.id), openingAnimation());
         } catch (ActivityNotFoundException | SecurityException e) {
@@ -2269,7 +2275,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         continueStale = true;   // the show's entry moves to this episode once it has played a while
         openedFromRow = from == homeRow && page == HOME;
-        HomeButtonService.opening(FirePlayerTitles.PACKAGE);
+        HomeButtonService.opening(FirePlayer.current());
         try {
             startActivity(ContinueWatching.playEpisodeIntent(item.id, episode.id), openingAnimation());
         } catch (ActivityNotFoundException | SecurityException e) {

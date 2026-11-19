@@ -430,7 +430,7 @@ public final class HomeButtonService extends AccessibilityService {
             // As from the app row: a film player left in TiviMate's task is cleared (FirePlayer's finishOnTaskLaunch).
             // Not from a film playing now: that would end it without giving TiviMate its place.
             int flags = Intent.FLAG_ACTIVITY_NEW_TASK;
-            if (!FirePlayerTitles.PACKAGE.equals(front)) flags |= Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED;
+            if (!FirePlayer.is(front)) flags |= Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED;
             startActivity(open.addFlags(flags));
         } catch (ActivityNotFoundException | SecurityException e) {
             // gone since it was looked up
@@ -537,7 +537,7 @@ public final class HomeButtonService extends AccessibilityService {
     static void playerClosing() {
         HomeButtonService s = connected;
         if (s == null || HomeActivity.inFront || opening()) return;
-        starts.execute(() -> s.pressed(PLAYER_PRESS_TRIES, FirePlayerTitles.PACKAGE));
+        starts.execute(() -> s.pressed(PLAYER_PRESS_TRIES, FirePlayer.current()));
     }
 
     /**

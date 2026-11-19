@@ -43,8 +43,8 @@ public class HomeConfigTest {
         }
         HomeConfig config = HomeConfig.load(app);
         java.util.List<String> expected = new java.util.ArrayList<>(then);
-        expected.add(expected.indexOf("app.fireplayer") + 1, "org.smarttube.stable");
-        assertEquals("the owner's order kept; SmartTube after FirePlayer, as in Glass Home's own", expected, config.order);
+        expected.add(expected.indexOf("app.fireplayer.next") + 1, "org.smarttube.stable");
+        assertEquals("the owner's order kept; SmartTube after FirePlayer (2.0), as in Glass Home's own", expected, config.order);
         assertEquals("x", config.tmdbApiKey);
     }
 }

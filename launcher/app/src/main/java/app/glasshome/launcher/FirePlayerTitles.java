@@ -24,10 +24,10 @@ import android.os.PatternMatcher;
  * which is always running.
  */
 final class FirePlayerTitles {
-    static final String PACKAGE = "app.fireplayer";
-    /** FirePlayer's receiver that starts the server (if it is on in FirePlayer's settings). */
-    static final ComponentName STARTER =
-            new ComponentName(PACKAGE, "app.fireplayer.titles.TitleService$Starter");
+    /** FirePlayer's receiver that starts the server (if it is on in FirePlayer's settings); the same class in 2.0. */
+    static ComponentName starter(String pkg) {
+        return new ComponentName(pkg, "app.fireplayer.titles.TitleService$Starter");
+    }
     static final String ACTION_START = "app.fireplayer.titles.START";
     /** How long after the force-stop the server is started, out of the way of Home coming up. */
     static final long AFTER_MS = 1000;
@@ -39,7 +39,12 @@ final class FirePlayerTitles {
         @Override
         public void onReceive(Context c, Intent intent) {
             Uri data = intent.getData();
-            if (data == null || !PACKAGE.equals(data.getSchemeSpecificPart())) return;
+            if (data == null) return;
+            if (!Intent.ACTION_PACKAGE_RESTARTED.equals(intent.getAction())) {
+                FirePlayer.chooseLater(context);   // a FirePlayer added, removed or replaced: which one may change
+                return;
+            }
+            if (!FirePlayer.current().equals(data.getSchemeSpecificPart())) return;
             handler.removeCallbacks(start);
             handler.postDelayed(start, AFTER_MS);
         }
@@ -53,8 +58,12 @@ final class FirePlayerTitles {
     void watch() {
         if (watching) return;
         IntentFilter filter = new IntentFilter(Intent.ACTION_PACKAGE_RESTARTED);
+        filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
         filter.addDataScheme("package");
-        filter.addDataSchemeSpecificPart(PACKAGE, PatternMatcher.PATTERN_LITERAL);
+        filter.addDataSchemeSpecificPart(FirePlayer.V1, PatternMatcher.PATTERN_LITERAL);
+        filter.addDataSchemeSpecificPart(FirePlayer.NEXT, PatternMatcher.PATTERN_LITERAL);
         if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(stopped, filter, Context.RECEIVER_NOT_EXPORTED);
         else context.registerReceiver(stopped, filter);
         watching = true;
@@ -76,7 +85,7 @@ final class FirePlayerTitles {
     /** FirePlayer is installed and force-stopped (or never opened): nothing of it runs until started. */
     private boolean forceStopped() {
         try {
-            ApplicationInfo info = context.getPackageManager().getApplicationInfo(PACKAGE, 0);
+            ApplicationInfo info = context.getPackageManager().getApplicationInfo(FirePlayer.get(context), 0);
             return (info.flags & ApplicationInfo.FLAG_STOPPED) != 0;
         } catch (PackageManager.NameNotFoundException e) {
             return false;
@@ -85,7 +94,7 @@ final class FirePlayerTitles {
 
     private void start() {
         // A force-stopped app hears from no one unless asked by name and told to wake up
-        context.sendBroadcast(new Intent(ACTION_START).setComponent(STARTER)
+        context.sendBroadcast(new Intent(ACTION_START).setComponent(starter(FirePlayer.current()))
                 .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES));
     }
 }

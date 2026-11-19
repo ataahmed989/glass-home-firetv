@@ -156,7 +156,7 @@ public class ContinueWatchingTest {
             synchronized (rows) {
                 removed = rows.removeIf(r -> r[0].equals(id));
             }
-            getContext().getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+            getContext().getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
             return removed ? 1 : 0;
         }
 
@@ -251,7 +251,7 @@ public class ContinueWatchingTest {
                 movie("m4", "Summer Camp Tapes", 0, 0, 40 * MIN, 95 * MIN, t - 6000),
                 episode("e3", "NCIS", 23, 12, "Ghosts", 4614, 30 * MIN, 44 * MIN, t - 7000),
                 movie("m5", "The Breadwinner", 2026, 1440050, 50 * MIN, 100 * MIN, t - 8000));
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
     }
 
     /** Home, then the tab bar along to page {@code p}, its content loaded and the row asked for. */
@@ -339,7 +339,7 @@ public class ContinueWatchingTest {
     public void noRowWhereThereIsNothingOfItsKind() throws Exception {
         long t = Fixtures.RECORDED_AT;
         FakeFirePlayer.rows.add(episode("e1", "NCIS", 23, 12, null, 4614, 30 * MIN, 44 * MIN, t));
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
         TestHome h = open(MOVIES);
         assertTrue("FirePlayer was asked", FakeFirePlayer.queries > 0);
         assertEquals("no films: no row on Movies", "Top 10 Movies This Week", first(h, MOVIES).title);
@@ -507,7 +507,7 @@ public class ContinueWatchingTest {
         assertEquals("m3", h.page(MOVIES).focusedCard().id);
         // A film watched in FirePlayer meanwhile comes to the front; focus stays on its card
         FakeFirePlayer.rows.add(0, movie("m6", "Masterplan II", 2026, 0, 6 * MIN, 100 * MIN, Fixtures.RECORDED_AT));
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         settleRow();
         assertEquals(java.util.Arrays.asList("m6", "m1", "m2", "m3", "m4", "m5"), ids(first(h, MOVIES)));
         assertEquals(0, h.page(MOVIES).focusedRow());
@@ -515,7 +515,7 @@ public class ContinueWatchingTest {
 
         // All of it finished elsewhere: the row goes
         FakeFirePlayer.rows.clear();
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         settleRow();
         assertNull(h.page(MOVIES).topShelf());
         assertEquals("Top 10 Movies This Week", first(h, MOVIES).title);
@@ -535,7 +535,7 @@ public class ContinueWatchingTest {
                 new Object[] {"x7", "movie", null, 0, 0, 0, null, 0, 0, 30 * MIN, t},
                 new Object[] {"x1", "movie", "No Length Again", 0, 0, 0, null, 0, 0, 30 * MIN, t},
                 new Object[] {"y1", "episode", "A Show", 0, 0, 0, null, 0, 0, 0, t});
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
         List<ContinueWatching.Item> all = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
         assertNotNull(all);
         List<ContinueWatching.Item> films = ContinueWatching.of(all, false);
@@ -584,7 +584,7 @@ public class ContinueWatchingTest {
 
         // Something played meanwhile comes in ahead of it: its card moves on, and the menu goes
         FakeFirePlayer.rows.add(0, movie("m6", "Masterplan II", 2026, 0, 6 * MIN, 100 * MIN, Fixtures.RECORDED_AT));
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         settleRow();
         assertFalse(menu.isOpen());
         assertEquals(Zone.PAGE, h.zone());
@@ -636,7 +636,7 @@ public class ContinueWatchingTest {
                 // Its second season's year: the show first aired two years before
                 unmatched("e2", "The Last of Us", 2025, 2, 3, 10 * MIN, 50 * MIN, t - 2000),
                 movie("m1", "Inside Out 2", 0, 0, 30 * MIN, 97 * MIN, t - 3000));
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
         TestHome h = TestHome.withTmdb();
         withSearchesByYear();
         open(h, TV);
@@ -657,7 +657,7 @@ public class ContinueWatchingTest {
         assertEquals("with the year when there is one, then without it", asked, new ArrayList<>(searches));
 
         // Asked again (FirePlayer's list changed): the covers stay, and nothing is searched again
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         settleRow();
         assertTrue(FakeFirePlayer.queries > 1);
         assertEquals(asked, new ArrayList<>(searches));
@@ -681,7 +681,7 @@ public class ContinueWatchingTest {
                 unmatched("e1", "The Last of Us", 2013, 1, 2, 10 * MIN, 50 * MIN, t - 1000),
                 // TMDB's films by that name are from 1992 and 2024
                 movie("m1", "Inside Out 2", 2010, 0, 30 * MIN, 97 * MIN, t - 2000));
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
         TestHome h = TestHome.withTmdb();
         withSearchesByYear();
         open(h, MOVIES);
@@ -694,7 +694,7 @@ public class ContinueWatchingTest {
         assertEquals("S1 E2  ·  40 min left", show.subtitle);
         assertEquals("each with its year, then without it", 4, searches.size());
 
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         settleRow();
         assertTrue(FakeFirePlayer.queries > 1);
         assertEquals("not searched again", 4, searches.size());
@@ -730,7 +730,7 @@ public class ContinueWatchingTest {
     public void aFirePlayerThatCannotAnswerIsNoAnswerNotAnEmptyList() {
         long t = Fixtures.RECORDED_AT;
         FakeFirePlayer.rows.add(new Object[] {"m1", "movie", "Sacrifice", 2026, 0, 0, null, 1284186, 28 * MIN, 100 * MIN, t});
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
         android.content.Context app = org.robolectric.RuntimeEnvironment.getApplication();
         FakeFirePlayer.failing = true;
         assertNull(ContinueWatching.query(app));
