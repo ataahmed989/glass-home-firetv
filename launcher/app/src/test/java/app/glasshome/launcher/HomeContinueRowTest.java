@@ -61,7 +61,7 @@ public class HomeContinueRowTest {
                 movie("m3", "Animals", 2026, 1236045, 10 * MIN, 106 * MIN, t - 5000),
                 episode("e3", "NCIS", 23, 12, "Ghosts", 4614, 30 * MIN, 44 * MIN, t - 7000),
                 movie("m5", "The Breadwinner", 2026, 1440050, 50 * MIN, 100 * MIN, t - 8000));
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
     }
 
     private static TestHome home() throws Exception {
@@ -233,7 +233,7 @@ public class HomeContinueRowTest {
             m2[10] = Fixtures.RECORDED_AT;
             FakeFirePlayer.rows.add(0, m2);
         }
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         TestHome.advance(400);
         for (int i = 0; i < 3; i++) TestHome.settle();
         assertEquals("m2", ids(h.activity.homeRow()).get(0));
@@ -321,7 +321,7 @@ public class HomeContinueRowTest {
         assertEquals(7, before.size());
         // Its list changes as FirePlayer is being updated: no answer, and the row keeps what it had
         FakeFirePlayer.failing = true;
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         TestHome.advance(400);
         TestHome.settle();
         assertEquals(View.VISIBLE, h.activity.homeRow().getVisibility());
@@ -348,7 +348,7 @@ public class HomeContinueRowTest {
         TestHome.advance(20_000);
         assertEquals("not asked on its own forever", asked, FakeFirePlayer.queries);
         // The update finishes: Fire OS says so, and the list is asked for
-        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED, android.net.Uri.parse("package:" + FirePlayerTitles.PACKAGE)));
+        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED, android.net.Uri.parse("package:" + FirePlayer.V1)));
         for (int i = 0; i < 3; i++) TestHome.settle();
         assertEquals(View.VISIBLE, h.activity.homeRow().getVisibility());
         assertEquals(7, ids(h.activity.homeRow()).size());
@@ -399,7 +399,7 @@ public class HomeContinueRowTest {
         for (int i = 0; i < 3; i++) TestHome.settle();
         ShelfPage row = h.activity.homeRow();
         float placed = row.getTranslationY();
-        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED, android.net.Uri.parse("package:" + FirePlayerTitles.PACKAGE)));
+        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED, android.net.Uri.parse("package:" + FirePlayer.V1)));
         for (int i = 0; i < 3; i++) TestHome.settle();
         assertEquals(Zone.HOME_ROW, h.zone());
         assertEquals(1f, h.activity.homeLift(), 0f);
@@ -422,7 +422,7 @@ public class HomeContinueRowTest {
             return online.get(url, bearer);
         };
         FakeFirePlayer.rows.add(0, later);
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         TestHome.advance(400);
         for (int i = 0; i < 2; i++) TestHome.settle();
         assertEquals(1, artless(h));
@@ -462,7 +462,7 @@ public class HomeContinueRowTest {
         synchronized (FakeFirePlayer.rows) {
             FakeFirePlayer.rows.remove(0);
         }
-        h.activity.getContentResolver().notifyChange(ContinueWatching.ITEMS, null);
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
         TestHome.advance(400);
         h.controller.start().resume();
         TestHome.settle();
