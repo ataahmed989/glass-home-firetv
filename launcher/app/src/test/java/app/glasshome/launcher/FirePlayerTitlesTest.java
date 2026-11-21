@@ -36,9 +36,9 @@ public class FirePlayerTitlesTest {
 
     private void install(boolean stopped) {
         PackageInfo info = new PackageInfo();
-        info.packageName = FirePlayerTitles.PACKAGE;
+        info.packageName = FirePlayer.V1;
         info.applicationInfo = new ApplicationInfo();
-        info.applicationInfo.packageName = FirePlayerTitles.PACKAGE;
+        info.applicationInfo.packageName = FirePlayer.V1;
         if (stopped) info.applicationInfo.flags |= ApplicationInfo.FLAG_STOPPED;
         shadowOf(app.getPackageManager()).installPackage(info);
     }
@@ -55,7 +55,7 @@ public class FirePlayerTitlesTest {
     private List<Intent> starts() {
         List<Intent> starts = new ArrayList<>();
         for (Intent i : shadowOf(app).getBroadcastIntents()) {
-            if (FirePlayerTitles.STARTER.equals(i.getComponent())) starts.add(i);
+            if (FirePlayerTitles.starter(FirePlayer.V1).equals(i.getComponent())) starts.add(i);
         }
         return starts;
     }
@@ -63,7 +63,7 @@ public class FirePlayerTitlesTest {
     @Test public void startsTheServerAgainAMomentAfterFirePlayerIsForceStopped() {
         install(false);
         titles.watch();
-        forceStopped(FirePlayerTitles.PACKAGE);
+        forceStopped(FirePlayer.V1);
         assertTrue("not while Home is coming up", starts().isEmpty());
         after(FirePlayerTitles.AFTER_MS);
         List<Intent> starts = starts();
@@ -98,7 +98,7 @@ public class FirePlayerTitlesTest {
         install(false);
         titles.watch();
         titles.unwatch();
-        forceStopped(FirePlayerTitles.PACKAGE);
+        forceStopped(FirePlayer.V1);
         after(5 * FirePlayerTitles.AFTER_MS);
         assertTrue(starts().isEmpty());
     }

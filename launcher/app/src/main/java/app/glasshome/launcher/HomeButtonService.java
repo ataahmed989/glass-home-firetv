@@ -61,7 +61,8 @@ import java.util.concurrent.Executors;
  * only: which screen is in front. It reads no screen content and keeps nothing. Turned on once over ADB; Home Screen settings can switch the redirect off.
  *
  * Always running, it also keeps FirePlayer's title server up for TiviMate ({@link FirePlayerTitles}),
- * and opens TiviMate when the remote's Menu button is held, from any app ({@link #MENU_HOLD_MS}).
+ * and opens FirePlayer (FirePlayer 2.0 when it is installed) when the remote's Menu button is held, from any app
+ * ({@link #MENU_HOLD_MS}).
  */
 public final class HomeButtonService extends AccessibilityService {
     static final String AMAZON_LAUNCHER = "com.amazon.tv.launcher";
@@ -119,14 +120,13 @@ public final class HomeButtonService extends AccessibilityService {
     /** How long Home's cover takes to fade out over Glass Home, and in over a browse page. */
     static final long COVER_OUT_MS = 120, COVER_ACROSS_MS = 150;
     /**
-     * Held this long, Menu (☰) opens TiviMate. A press is over in well under half that; Fire OS's own
+     * Held this long, Menu (☰) opens FirePlayer. A press is over in well under half that; Fire OS's own
      * long press is 400 ms, and nothing on Fire TV is held Menu on its own.
      */
     static final long MENU_HOLD_MS = 700;
     /** Back or Left counts as held with Menu for this long at most, should its release never be seen. */
     static final long COMBO_MS = 5000;
-    static final String TIVIMATE = "ar.tvplayer.tv";
-    /** The press of Menu (its down time) that opened TiviMate, which Glass Home then leaves alone. */
+    /** The press of Menu (its down time) that opened FirePlayer, which Glass Home then leaves alone. */
     static volatile long menuHoldTaken = -1;
 
     /**
@@ -383,7 +383,7 @@ public final class HomeButtonService extends AccessibilityService {
     }
 
     /**
-     * Menu held opens TiviMate (Home Screen settings can turn this off). Each key is seen going down
+     * Menu held opens FirePlayer (Home Screen settings can turn this off). Each key is seen going down
      * and coming up and none is consumed, so a press still reaches the app in front as before: the
      * hold is timed from the key's own down time, and called off when it comes up first, when
      * another key is pressed meanwhile, or when another app's window comes up (Home, say, whose key
@@ -398,7 +398,7 @@ public final class HomeButtonService extends AccessibilityService {
         if (code == KeyEvent.KEYCODE_MENU) {
             if (down && event.getRepeatCount() == 0) {
                 handler.removeCallbacks(menuHeld);
-                if (!stillHeld(backDownAt, t) && !stillHeld(leftDownAt, t) && new HomeSettings(this).menuHoldOpensTiviMate()) {
+                if (!stillHeld(backDownAt, t) && !stillHeld(leftDownAt, t) && new HomeSettings(this).menuHoldOpensFirePlayer()) {
                     menuDownTime = event.getDownTime();
                     menuFront = front;
                     handler.postAtTime(menuHeld, menuDownTime + MENU_HOLD_MS);
@@ -420,18 +420,18 @@ public final class HomeButtonService extends AccessibilityService {
     }
 
     private void menuHeld() {
-        if (TIVIMATE.equals(front)) return;   // already there
-        Intent open = launchIntent(this, TIVIMATE);
+        if (FirePlayer.is(front)) return;   // already there: the press stays FirePlayer's own
+        // FirePlayer 2.0 when it is installed, else FirePlayer (one package lookup, the first time a hold asks)
+        String target = FirePlayer.get(this);
+        Intent open = launchIntent(this, target);
         if (open == null) return;
         menuHoldTaken = menuDownTime;
         // Glass Home going to the back for it is not the Home button
-        if (HomeActivity.inFront) opening(TIVIMATE);
+        if (HomeActivity.inFront) opening(target);
         try {
-            // As from the app row: a film player left in TiviMate's task is cleared (FirePlayer's finishOnTaskLaunch).
-            // Not from a film playing now: that would end it without giving TiviMate its place.
-            int flags = Intent.FLAG_ACTIVITY_NEW_TASK;
-            if (!FirePlayerTitles.PACKAGE.equals(front)) flags |= Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED;
-            startActivity(open.addFlags(flags));
+            // As from the app row: FirePlayer's own screen comes up (a film player left in its task is cleared by its
+            // finishOnTaskLaunch).
+            startActivity(open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
         } catch (ActivityNotFoundException | SecurityException e) {
             // gone since it was looked up
         }
@@ -537,7 +537,7 @@ public final class HomeButtonService extends AccessibilityService {
     static void playerClosing() {
         HomeButtonService s = connected;
         if (s == null || HomeActivity.inFront || opening()) return;
-        starts.execute(() -> s.pressed(PLAYER_PRESS_TRIES, FirePlayerTitles.PACKAGE));
+        starts.execute(() -> s.pressed(PLAYER_PRESS_TRIES, FirePlayer.current()));
     }
 
     /**

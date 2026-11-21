@@ -38,6 +38,8 @@
         <!-- FirePlayer, whose title server is started again after Fire OS force-stops it, and whose
              Continue Watching provider (app.fireplayer.continue) fills the row atop Movies and TV Shows -->
         <package android:name="app.fireplayer" />
+        <!-- FirePlayer 2.0, used in its place when installed (its provider: app.fireplayer.next.continue) -->
+        <package android:name="app.fireplayer.next" />
         <!-- The Amazon apps turned off at setup (firetv/disabled-packages.txt), watched in case Fire OS turns them back on -->
         <package android:name="com.amazon.client.metrics.api" />
         <package android:name="com.amazon.device.telemetry.emitter" />

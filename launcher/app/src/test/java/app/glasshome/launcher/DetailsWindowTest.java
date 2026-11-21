@@ -125,7 +125,7 @@ public class DetailsWindowTest {
                 movie("m1", "Sacrifice", 2026, 1284186, 28 * MIN, 100 * MIN, t - 2000),
                 movie("m2", "Masterplan", 2026, 1561726, 75 * MIN, 110 * MIN, t - 3000),
                 episode("e2", "The Simpsons", 37, 3, null, 456, 6 * MIN, 22 * MIN, t - 4000));
-        Robolectric.setupContentProvider(FakeFirePlayer.class, ContinueWatching.AUTHORITY);
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
     }
 
     private static TestHome home(TestHome h) throws Exception {

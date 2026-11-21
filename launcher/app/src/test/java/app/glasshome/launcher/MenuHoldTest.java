@@ -20,7 +20,7 @@ import org.robolectric.annotation.LooperMode;
 
 import java.time.Duration;
 
-/** Holding the remote's Menu button opens TiviMate from anywhere; a press is left to the app in front. */
+/** Holding the remote's Menu button opens FirePlayer from anywhere; a press is left to the app in front. */
 @RunWith(RobolectricTestRunner.class)
 @LooperMode(LooperMode.Mode.PAUSED)
 @Config(sdk = 30)
@@ -37,10 +37,9 @@ public class MenuHoldTest {
         HomeActivity.inFront = false;
         HomeButtonService.forgetTrips();
         HomeButtonService.menuHoldTaken = -1;
-        // TiviMate installed, with a TV launch screen
-        Intent leanback = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
-        shadowOf(app.getPackageManager()).addResolveInfoForIntent(new Intent(leanback).setPackage(HomeButtonService.TIVIMATE),
-                TestHome.resolve(HomeButtonService.TIVIMATE, "TiviMate"));
+        FirePlayer.forget();
+        // FirePlayer installed, with a TV launch screen
+        launchScreen(FirePlayer.V1);
         service = Robolectric.setupService(HomeButtonService.class);
     }
 
@@ -65,15 +64,37 @@ public class MenuHoldTest {
         return shadowOf(app).getNextStartedActivity();
     }
 
+    private void launchScreen(String pkg) {
+        Intent leanback = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
+        shadowOf(app.getPackageManager()).addResolveInfoForIntent(new Intent(leanback).setPackage(pkg),
+                TestHome.resolve(pkg, "FirePlayer"));
+    }
+
+    /** With FirePlayer 2.0 installed beside FirePlayer, the hold opens FirePlayer 2.0. */
     @Test
-    public void holdingMenuOpensTiviMate() {
+    public void holdingMenuOpensFirePlayer2WhenInstalled() {
+        android.content.pm.PackageInfo info = new android.content.pm.PackageInfo();
+        info.packageName = FirePlayer.NEXT;
+        info.applicationInfo = new android.content.pm.ApplicationInfo();
+        info.applicationInfo.packageName = FirePlayer.NEXT;
+        shadowOf(app.getPackageManager()).installPackage(info);
+        launchScreen(FirePlayer.NEXT);
+        key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU);
+        after(HomeButtonService.MENU_HOLD_MS);
+        Intent open = started();
+        assertNotNull(open);
+        assertEquals(FirePlayer.NEXT, open.getComponent().getPackageName());
+    }
+
+    @Test
+    public void holdingMenuOpensFirePlayer() {
         key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU);
         after(HomeButtonService.MENU_HOLD_MS - 100);
         assertNull("not before the hold is long enough", started());
         after(100);
         Intent open = started();
         assertNotNull(open);
-        assertEquals(HomeButtonService.TIVIMATE, open.getComponent().getPackageName());
+        assertEquals(FirePlayer.V1, open.getComponent().getPackageName());
         assertTrue((open.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0);
         assertFalse("nothing marked as opening while Glass Home isn't in front", HomeButtonService.opening());
         assertEquals("Glass Home is told which press it was", downAt, HomeButtonService.menuHoldTaken);
@@ -82,7 +103,7 @@ public class MenuHoldTest {
         assertNull("once per hold", started());
     }
 
-    /** Over Glass Home, its going to the back for TiviMate is no Home press. */
+    /** Over Glass Home, its going to the back for FirePlayer is no Home press. */
     @Test
     public void fromGlassHomeItIsMarkedAsOpening() {
         HomeActivity.inFront = true;
@@ -153,7 +174,7 @@ public class MenuHoldTest {
 
     @Test
     public void turnedOffInSettings() {
-        new HomeSettings(app).setMenuHoldOpensTiviMate(false);
+        new HomeSettings(app).setMenuHoldOpensFirePlayer(false);
         key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU);
         after(2000);
         assertNull(started());
@@ -161,7 +182,7 @@ public class MenuHoldTest {
 
     /**
      * On Glass Home itself, Menu acts on release: a press goes to the tab bar; a hold the Home service
-     * took for TiviMate does nothing here; a hold it didn't take (service off) is a press after all.
+     * took for FirePlayer does nothing here; a hold it didn't take (service off) is a press after all.
      */
     @Test
     public void onGlassHomeMenuActsOnRelease() throws Exception {
@@ -176,7 +197,7 @@ public class MenuHoldTest {
         h.activity.dispatchKeyEvent(new KeyEvent(t, t + HomeButtonService.MENU_HOLD_MS + 100, KeyEvent.ACTION_UP,
                 KeyEvent.KEYCODE_MENU, 0));
         TestHome.settle();
-        assertEquals("held for TiviMate: not the tab bar too", HomeActivity.Zone.GRID, h.zone());
+        assertEquals("held for FirePlayer: not the tab bar too", HomeActivity.Zone.GRID, h.zone());
 
         long u = SystemClock.uptimeMillis();
         h.activity.dispatchKeyEvent(new KeyEvent(u, u, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU, 0));
