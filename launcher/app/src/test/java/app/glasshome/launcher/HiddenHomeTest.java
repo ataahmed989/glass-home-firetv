@@ -52,7 +52,10 @@ public class HiddenHomeTest {
         }
     }
 
-    /** Offline, the weather is tried again once per interval while Home is in front, and not at all behind another app. */
+    /**
+     * Offline, the weather is tried again soon (after 10 s, 30 s and 2 min), then once per interval while Home is in
+     * front, and not at all behind another app.
+     */
     @Test
     public void weatherRetriesStopWhileHidden() throws Exception {
         TestHome h = new TestHome();
@@ -66,13 +69,13 @@ public class HiddenHomeTest {
             return recorded.get(url, bearer);
         };
         pass(5 * 60 * 1000L);
-        assertEquals("one retry in the interval", 1, fetches.get());
+        assertEquals("tried again soon, three times", 3, fetches.get());
         pass(5 * 60 * 1000L);
-        assertEquals("and one more in the next", 2, fetches.get());
+        assertEquals("then once in the interval", 4, fetches.get());
 
         h.controller.pause().stop();
         for (int i = 0; i < 6; i++) pass(5 * 60 * 1000L);
-        assertEquals("none while another app is in front", 2, fetches.get());
+        assertEquals("none while another app is in front", 4, fetches.get());
     }
 
     /** The pause asks for no copy itself: it is asked for right after, once something was drawn since the last. */
