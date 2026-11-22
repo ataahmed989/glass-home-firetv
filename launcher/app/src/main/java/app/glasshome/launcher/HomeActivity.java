@@ -61,7 +61,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private static final String STATE_FOCUS = "focus";
     private static final String STATE_FOCUS_KEY = "focus_key";
     private static final long WEATHER_EVERY_MS = 15 * 60 * 1000L;
-    private static final long WEATHER_RETRY_MS = 5 * 60 * 1000L;
+    /** A failed fetch is tried again after these waits, the last one from then on (the network is often only just back). */
+    private static final long[] WEATHER_RETRIES_MS = {10_000L, 30_000L, 2 * 60_000L, 5 * 60_000L};
+    private int weatherRetries;
     private static final long CATALOG_REFRESH_MS = 2 * 60 * 1000L;
     private static final long SPORTS_LIVE_MS = 60 * 1000L, SPORTS_IDLE_MS = 10 * 60 * 1000L;
     private static final long FEATURED_WAIT_MS = 1200;
@@ -1299,16 +1301,26 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     // ---- Weather ----------------------------------------------------------------------------
 
-    /** A failed fetch is tried again a while later: one retry waiting at most, and only while Home is in front (onResume fetches again). */
+    /** A failed fetch is tried again a while later (WEATHER_RETRIES_MS): one retry waiting at most, and only while Home is in front (onResume fetches again). */
     private final Runnable weatherRetry = this::refreshWeather;
 
     private void refreshWeather() {
         main.removeCallbacks(weatherRetry);
+        java.io.File keep = new java.io.File(getFilesDir(), "weather.json");
+        boolean none = weather.data() == null;
         network.execute(() -> {
+            // Nothing shown yet (Home just started): the last reading kept, with its time, while the new one comes
+            Weather.Data kept = none ? Weather.kept(keep) : null;
+            if (kept != null) main.post(() -> {
+                if (weather.data() != null) return;
+                weather.setData(kept);
+                detail.setData(kept, false);
+            });
             try {
-                Weather.Data data = Weather.fetch();
+                Weather.Data data = Weather.fetch(keep);
                 main.post(() -> {
                     main.removeCallbacks(weatherRetry);
+                    weatherRetries = 0;
                     weather.setData(data);
                     detail.setData(data, false);
                 });
@@ -1317,7 +1329,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     weather.setFailed();
                     detail.setData(weather.data(), weather.hasFailed());
                     main.removeCallbacks(weatherRetry);
-                    if (resumed) main.postDelayed(weatherRetry, WEATHER_RETRY_MS);
+                    long wait = WEATHER_RETRIES_MS[Math.min(weatherRetries++, WEATHER_RETRIES_MS.length - 1)];
+                    if (resumed) main.postDelayed(weatherRetry, wait);
                 });
             }
         });
@@ -3991,6 +4004,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
         scheduleSlides();
         main.removeCallbacks(weatherTick);
+        weatherRetries = 0;   // back on Home: a failure is tried again soon, as at first
         long age = System.currentTimeMillis() - weather.lastUpdated();
         // Long out of date: fetched again once Home has settled, out of the way of the first presses
         main.postDelayed(weatherTick, age > 10 * 60 * 1000L ? (shownBefore ? RETURN_WEATHER_MS : FIRST_REFRESH_MS) : WEATHER_EVERY_MS - age);

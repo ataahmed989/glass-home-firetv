@@ -89,9 +89,32 @@ final class Weather {
 
     private Weather() {}
 
-    static Data fetch() throws Exception {
-        return parse(new JSONObject(new String(Net.get(URL, null), StandardCharsets.UTF_8)), System.currentTimeMillis());
+    /** A fresh reading; its text is kept in {@code keep}, so a restarted Home shows it rather than "Unavailable". */
+    static Data fetch(java.io.File keep) throws Exception {
+        String text = new String(Net.get(URL, null), StandardCharsets.UTF_8);
+        Data data = parse(new JSONObject(text), System.currentTimeMillis());
+        try {
+            java.io.File part = new java.io.File(keep.getPath() + ".part");
+            java.nio.file.Files.write(part.toPath(), text.getBytes(StandardCharsets.UTF_8));
+            if (!part.renameTo(keep)) part.delete();
+        } catch (java.io.IOException | RuntimeException ignored) {
+            // shown all the same, only not kept
+        }
+        return data;
     }
+
+    /** The last reading kept (with the time it was fetched), if under a day old; null otherwise. */
+    static Data kept(java.io.File keep) {
+        long at = keep.lastModified();
+        if (!keep.isFile() || System.currentTimeMillis() - at > KEPT_MS) return null;
+        try {
+            return parse(new JSONObject(new String(java.nio.file.Files.readAllBytes(keep.toPath()), StandardCharsets.UTF_8)), at);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static final long KEPT_MS = 24 * 60 * 60 * 1000L;
 
     static Data parse(JSONObject json, long now) throws Exception {
         JSONObject current = json.getJSONObject("current");
