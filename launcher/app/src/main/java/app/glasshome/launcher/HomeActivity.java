@@ -209,6 +209,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     };
     /** FirePlayer's list may have changed since it was last asked (or never was): Home asks again when it comes back. */
     private boolean continueStale = true;
+    /** When FirePlayer's list was last asked for (uptime): asked since Home came back, the return doesn't ask again. */
+    private long continueAskedAt = Long.MIN_VALUE;
     /**
      * FirePlayer couldn't answer (being updated, or restarting): what was shown stays, and it's asked again a little
      * later, a few times at most and only while a page that shows the list is in front; after that, when Home comes back.
@@ -1747,6 +1749,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         final int generation = ++continueGeneration;
         continueArtTries = 0;
         continueStale = false;
+        continueAskedAt = SystemClock.uptimeMillis();
         main.removeCallbacks(continueRetry);
         if (!retry) continueRetries = 0;
         continueWatcher.watch();   // FirePlayer may have come since it was last tried
@@ -3949,8 +3952,8 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             else if (page == SPORTS) scheduleSports();   // its live scores' timer went with the pause
         }
         // Movies and TV Shows ask each time they come back; Home only if FirePlayer said its list changed meanwhile,
-        // as asking starts FirePlayer if Fire OS has closed it
-        if (wantsContinue(page) && (page != HOME || continueStale)) refreshContinue();
+        // as asking starts FirePlayer if Fire OS has closed it. Not again when it was asked as Home came back (onResume)
+        if (wantsContinue(page) && (page != HOME || continueStale) && continueAskedAt < resumedAt) refreshContinue();
         // Your teams' scores only once due (every ten minutes, every minute while one plays), not on every return
         if (!teamsFetching) {
             long since = SystemClock.elapsedRealtime() - teamsFetchedAt;
@@ -3989,6 +3992,10 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         clock.start();
         restoreFocus();
         openedFromRow = false;
+        // FirePlayer said its list changed while Home was away (a film played on, a Remove there), or a title was opened
+        // from here: asked now, off the main thread, rather than with the rest of the return (resumeRefresh), so the row
+        // never shows for a moment a title taken off meanwhile, or the old order. Not on Home's first showing
+        if (back && shownBefore && continueStale && wantsContinue(page)) refreshContinue();
         // A newer Glass Home on GitHub: looked for once Home is up, and offered when nothing is open
         current = this;
         main.postDelayed(updateCheck, UPDATE_CHECK_MS);
