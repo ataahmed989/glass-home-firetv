@@ -205,10 +205,19 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private static final long CONTINUE_SETTLE_MS = 250;
     private final Runnable continueChanged = () -> {
         if (this.resumed && wantsContinue(this.page)) refreshContinue();
-        else this.continueStale = true;
+        else {
+            this.continueStale = true;
+            this.continueNoticed = true;
+        }
     };
     /** FirePlayer's list may have changed since it was last asked (or never was): Home asks again when it comes back. */
     private boolean continueStale = true;
+    /**
+     * FirePlayer said its list changed while Home was away, or a title was opened from here: FirePlayer is running, so
+     * the list is asked for as Home comes back (onResume). Stale for another reason (never asked, no answer, FirePlayer
+     * updated), it's asked with the rest of the return, once keys are quiet: asking may start FirePlayer.
+     */
+    private boolean continueNoticed;
     /** When FirePlayer's list was last asked for (uptime): asked since Home came back, the return doesn't ask again. */
     private long continueAskedAt = Long.MIN_VALUE;
     /**
@@ -432,6 +441,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                     && (Intent.ACTION_PACKAGE_REPLACED.equals(action) || Intent.ACTION_PACKAGE_ADDED.equals(action)
                         || Intent.ACTION_PACKAGE_REMOVED.equals(action))) {
                 continueStale = true;
+                continueNoticed = false;   // the update ended FirePlayer: asking may start it again
                 main.removeCallbacks(continueAfterUpdate);
                 main.postDelayed(continueAfterUpdate, CONTINUE_AFTER_UPDATE_MS);
             }
@@ -1749,8 +1759,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         final int generation = ++continueGeneration;
         continueArtTries = 0;
         continueStale = false;
+        continueNoticed = false;
         continueAskedAt = SystemClock.uptimeMillis();
         main.removeCallbacks(continueRetry);
+        // A notice still settling is answered by this ask (it reads the list as it is now); a later one asks again
+        main.removeCallbacks(continueChanged);
         if (!retry) continueRetries = 0;
         continueWatcher.watch();   // FirePlayer may have come since it was last tried
         runOff(worker, () -> {
@@ -1925,6 +1938,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     /** Select on a Continue Watching card: FirePlayer's player, where it was left. */
     private void resumeContinue(ContinueWatching.Item item) {
         continueStale = true;   // where it was left changes as it plays
+        continueNoticed = true;
         openedFromRow = page == HOME && homeRow.isFocused();
         HomeButtonService.opening(FirePlayer.current());
         try {
@@ -2290,6 +2304,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             return;
         }
         continueStale = true;   // the show's entry moves to this episode once it has played a while
+        continueNoticed = true;
         openedFromRow = from == homeRow && page == HOME;
         HomeButtonService.opening(FirePlayer.current());
         try {
@@ -3994,8 +4009,9 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         openedFromRow = false;
         // FirePlayer said its list changed while Home was away (a film played on, a Remove there), or a title was opened
         // from here: asked now, off the main thread, rather than with the rest of the return (resumeRefresh), so the row
-        // never shows for a moment a title taken off meanwhile, or the old order. Not on Home's first showing
-        if (back && shownBefore && continueStale && wantsContinue(page)) refreshContinue();
+        // never shows for a moment a title taken off meanwhile, or the old order. Not on Home's first showing, nor when
+        // the list is stale only for another reason (FirePlayer may not be running: resumeRefresh asks, keys quiet)
+        if (back && shownBefore && continueStale && continueNoticed && wantsContinue(page)) refreshContinue();
         // A newer Glass Home on GitHub: looked for once Home is up, and offered when nothing is open
         current = this;
         main.postDelayed(updateCheck, UPDATE_CHECK_MS);
