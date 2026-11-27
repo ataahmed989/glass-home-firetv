@@ -28,8 +28,12 @@ import java.util.Set;
  * being asked (Fire OS stops apps freely on this TV), the question fails rather than Glass Home.
  *
  * Newer FirePlayers also say where each entry plays from (the provider's address, for the details window), whether
- * they can list a show's episodes, list them ({@link #episodes}) and play any one of them ({@link #playEpisodeIntent}).
- * What an older FirePlayer lacks (a column, a path) is simply absent, and means "not offered": nothing else is checked.
+ * they can list a show's episodes, list them ({@link #episodes}) and play any one of them ({@link #playEpisodeIntent}),
+ * and send their Movies and TV Shows pages' rows with Home's ({@link Lists}). What an older FirePlayer lacks (a column,
+ * a path) is simply absent, and means "not offered": nothing else is checked.
+ *
+ * Time left is written as FirePlayer writes it on its cards (its Captions): "1h 12m left", "23m left", "S2 E5 · 23m
+ * left".
  */
 final class ContinueWatching {
     static final String ACTION_RESUME = "app.fireplayer.action.RESUME";
@@ -39,6 +43,10 @@ final class ContinueWatching {
     static final String EXTRA_EPISODE_ID = "app.fireplayer.extra.EPISODE_ID";
     /** The most the row shows of each kind (FirePlayer keeps no more). */
     static final int MAX = 20;
+    /** Asks a newer FirePlayer for its three lists at once ({@link Lists}); an older one answers it as it does items. */
+    static final String LISTS = "lists";
+    /** The column that names a row's list in that answer, and its names; an older FirePlayer's answer hasn't it. */
+    static final String LIST = "list", HOME = "home", MOVIES = "movies", SHOWS = "shows";
 
     static final class Item {
         final String id, title, episodeTitle;
@@ -81,20 +89,37 @@ final class ContinueWatching {
             return Math.max(0f, Math.min(1f, positionMs / (float) durationMs));
         }
 
-        /** "1 hr 12 min left", or for an episode "S2 E5  ·  23 min left". */
+        /**
+         * As FirePlayer's card says it: "1h 12m left", or for an episode "S2 E5 · 23m left" (a special "S0 E5 · 23m
+         * left", a show gone on to an episode not yet played "S3 E1"); "" when there's nothing to say.
+         */
         String caption() {
             String left = timeLeft();
             if (!episode) return left;
-            String where = where(season, number);
+            String where = !library() ? where(season, number) : season > 0 || number > 0 ? "S" + season + " E" + number : "";
             if (where.isEmpty()) return left;
-            return left.isEmpty() ? where : where + "  ·  " + left;
+            return left.isEmpty() ? where : where + " · " + left;
         }
 
-        /** "1 hr 12 min left"; "" when its length isn't known. */
+        /**
+         * "1h 12m left", "23m left", "2h left", as FirePlayer's: to the nearest minute (a half up), at least one; ""
+         * when its length isn't known.
+         */
         String timeLeft() {
             if (durationMs <= 0) return "";
-            long minutes = Math.max(1, Math.round(Math.max(0, durationMs - Math.max(0, positionMs)) / 60000.0));
-            return Tmdb.duration((int) Math.min(minutes, 100 * 60)) + " left";   // nothing runs 100 hours
+            // At most 100 hours (nothing runs that long; a garbled length can't overflow)
+            long left = Math.min(Math.max(0, durationMs - Math.max(0, positionMs)), 100 * 3_600_000L);
+            long minutes = Math.max(1, (left + 30_000) / 60_000);
+            long h = minutes / 60, m = minutes % 60;
+            return (h == 0 ? m + "m" : m == 0 ? h + "h" : h + "h " + m + "m") + " left";
+        }
+
+        /**
+         * A title of FirePlayer's own Films & Shows (its ids start "vod-"), numbered as FirePlayer numbers it: season 0
+         * is Specials. Another app's video (older FirePlayers list them) has season 0 for one FirePlayer didn't know.
+         */
+        boolean library() {
+            return id.startsWith("vod-");
         }
 
         /**
@@ -198,34 +223,91 @@ final class ContinueWatching {
     private ContinueWatching() {}
 
     /**
-     * Everything FirePlayer offers, newest first; empty without it. Null when FirePlayer is there but couldn't answer
-     * (being updated, or its process restarting): that isn't an empty list, and is asked again. Off the main thread: it
-     * is another app.
+     * FirePlayer's Continue Watching ({@link #query}): Home's row, and from a newer FirePlayer its Movies and TV Shows
+     * pages' rows too, each in FirePlayer's order. An older FirePlayer sends Home's alone (with all else it offers), and
+     * the tabs take theirs from it ({@link #tab}), as they always have.
      */
-    static List<Item> query(Context context) {
-        List<Item> out = new ArrayList<>();
+    static final class Lists {
+        static final Lists NONE = new Lists(Collections.emptyList(), null, null);
+
+        /** FirePlayer Home's row; from an older FirePlayer, everything it offers. */
+        final List<Item> home;
+        /** FirePlayer's Movies and TV Shows pages' rows; null from a FirePlayer that doesn't send them. */
+        final List<Item> movies, shows;
+
+        Lists(List<Item> home, List<Item> movies, List<Item> shows) {
+            this.home = Collections.unmodifiableList(home);
+            this.movies = movies == null ? null : Collections.unmodifiableList(movies);
+            this.shows = shows == null ? null : Collections.unmodifiableList(shows);
+        }
+
+        /** What the Movies tab (with {@code episodes}, TV Shows) takes its row from: its FirePlayer page's, else Home's. */
+        List<Item> tab(boolean episodes) {
+            List<Item> own = episodes ? shows : movies;
+            return own != null ? own : home;
+        }
+
+        /** Every entry of the three (one in two lists twice). */
+        List<Item> all() {
+            List<Item> out = new ArrayList<>(home);
+            if (movies != null) out.addAll(movies);
+            if (shows != null) out.addAll(shows);
+            return out;
+        }
+
+        /** These lists without the entries whose ids are in {@code ids}. */
+        Lists without(Set<String> ids) {
+            return new Lists(without(home, ids), without(movies, ids), without(shows, ids));
+        }
+
+        private static List<Item> without(List<Item> items, Set<String> ids) {
+            if (items == null) return null;
+            List<Item> out = new ArrayList<>();
+            for (Item i : items) if (!ids.contains(i.id)) out.add(i);
+            return out;
+        }
+    }
+
+    /**
+     * Everything FirePlayer offers, newest first ({@link Lists}): in one ask, its Home row and (a newer FirePlayer) its
+     * Movies and TV Shows pages' rows. {@link Lists#NONE} without FirePlayer. Null when FirePlayer is there but couldn't
+     * answer (being updated, or its process restarting): that isn't an empty list, and is asked again. Off the main
+     * thread: it is another app.
+     */
+    static Lists query(Context context) {
         String pkg = FirePlayer.get(context);
         Uri items = FirePlayer.items(pkg);
         try (ContentProviderClient client = context.getContentResolver().acquireUnstableContentProviderClient(items)) {
             // No FirePlayer, or one without Continue Watching; but one that's installed may be in the middle of an update
-            if (client == null) return installed(context, pkg) ? null : out;
-            try (Cursor c = client.query(items, null, null, null, null)) {
+            if (client == null) return installed(context, pkg) ? null : Lists.NONE;
+            // An older FirePlayer answers this as it answers items: Home's row alone, without the column naming the list
+            Uri lists = items.buildUpon().appendQueryParameter(LISTS, "all").build();
+            try (Cursor c = client.query(lists, null, null, null, null)) {
                 if (c == null) return null;
+                int list = c.getColumnIndex(LIST);
+                List<Item> home = new ArrayList<>();
+                List<Item> movies = list < 0 ? null : new ArrayList<>(), shows = list < 0 ? null : new ArrayList<>();
                 while (c.moveToNext()) {
                     Item item;
+                    String name;
                     try {
                         item = read(c);
+                        name = list < 0 ? HOME : c.getString(list);
                     } catch (RuntimeException e) {
                         continue;   // a row FirePlayer filled oddly (text where a number goes): the others still show
                     }
-                    if (item != null) out.add(item);
+                    if (item == null) continue;
+                    if (HOME.equals(name)) home.add(item);
+                    else if (MOVIES.equals(name)) movies.add(item);
+                    else if (SHOWS.equals(name)) shows.add(item);
+                    // a list of a later FirePlayer's: not one of Glass Home's
                 }
+                return new Lists(home, movies, shows);
             }
         } catch (Exception e) {
             // FirePlayer stopped while answering (an update, Fire OS closing it): not an answer
             return null;
         }
-        return out;
     }
 
     /** FirePlayer is installed (with or without Continue Watching). */

@@ -164,8 +164,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private TabBar tabs;
     private final ShelfPage[] pages = new ShelfPage[4];   // index by tab; [HOME] stays null
     private final int[] pageGeneration = new int[4];
-    /** FirePlayer's Continue Watching, as last asked (main thread only); shown atop Movies and TV Shows. */
-    private List<ContinueWatching.Item> continueItems = new ArrayList<>();
+    /**
+     * FirePlayer's Continue Watching, as last asked (main thread only): Home's row, and (a newer FirePlayer) those of its
+     * Movies and TV Shows pages, shown atop Movies and TV Shows (an older FirePlayer's: the films and shows of Home's).
+     */
+    private ContinueWatching.Lists continueLists = ContinueWatching.Lists.NONE;
     private int continueGeneration;
     /** Each entry's TMDB artwork by its key ("movie/…", "tv/…"): its address, or "" for none; and those being looked up. */
     private final Map<String, String> continueArt = new HashMap<>();
@@ -180,7 +183,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private boolean continueArtOwed;
     private final Runnable continueArtRetry = () -> {
         this.continueArtRetryPosted = false;
-        if (this.resumed && !isDestroyed() && wantsContinue(this.page)) lookUpContinueArt(this.continueItems);
+        if (this.resumed && !isDestroyed() && wantsContinue(this.page)) lookUpContinueArt(this.continueLists.all());
         else this.continueArtOwed = true;
     };
     private ContinueWatching.Watcher continueWatcher;
@@ -1618,7 +1621,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
             // Not on the Home button's way back, before onResume: resumeRefresh and onResume see to it then.
             if (resumed && wantsContinue(HOME)) {
                 if (continueStale) refreshContinue();
-                else if (continueArtOwed) lookUpContinueArt(continueItems);
+                else if (continueArtOwed) lookUpContinueArt(continueLists.all());
             }
         } else {
             main.removeCallbacks(advanceSlide);   // Home's slideshow rests while it is covered
@@ -1767,19 +1770,19 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         if (!retry) continueRetries = 0;
         continueWatcher.watch();   // FirePlayer may have come since it was last tried
         runOff(worker, () -> {
-            List<ContinueWatching.Item> items = ContinueWatching.query(this);
+            ContinueWatching.Lists lists = ContinueWatching.query(this);
             main.post(() -> {
                 if (generation != continueGeneration || isDestroyed()) return;
                 continueWatcher.follow();   // the query chose the FirePlayer: its list is the one watched (a compare, as a rule)
-                if (items == null) {
+                if (lists == null) {
                     // No answer: the row keeps what it had, and FirePlayer is asked again
                     continueStale = true;
                     if (continueRetries++ < CONTINUE_RETRIES) main.postDelayed(continueRetry, CONTINUE_RETRY_MS);
                     return;
                 }
                 continueRetries = 0;
-                showContinue(items);
-                lookUpContinueArt(items);
+                showContinue(lists);
+                lookUpContinueArt(lists.all());
             });
         });
     }
@@ -1794,17 +1797,17 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
         }
     }
 
-    private void showContinue(List<ContinueWatching.Item> items) {
+    private void showContinue(ContinueWatching.Lists lists) {
         if (menuPage != null) {
             // Its card gone from FirePlayer meanwhile, or moved from under the menu: the menu goes
             boolean home = menuPage == homeRow;
-            int was = indexOf(continueRow(continueItems, menuItem, home), menuItem.id);
-            if (indexOf(continueRow(items, menuItem, home), menuItem.id) != was) closeTileMenu(true, false);
+            int was = indexOf(continueRow(continueLists, menuItem, home), menuItem.id);
+            if (indexOf(continueRow(lists, menuItem, home), menuItem.id) != was) closeTileMenu(true, false);
         }
-        continueItems = items;
+        continueLists = lists;
         if (infoItem != null) {
             // The details stay open whatever comes; their entry, if still there, with where it was left now
-            for (ContinueWatching.Item i : items) {
+            for (ContinueWatching.Item i : lists.all()) {
                 if (i.id.equals(infoItem.id) && i.episode == infoItem.episode) {
                     infoItem = i;
                     infoWindow.setItem(i);
@@ -1813,15 +1816,26 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 }
             }
         }
-        List<ContinueWatching.Item> shown = onePerTitle(items);
-        pages[MOVIES].setTopShelf(continueShelf(ContinueWatching.of(shown, false)));
-        pages[TV].setTopShelf(continueShelf(ContinueWatching.of(shown, true)));
+        pages[MOVIES].setTopShelf(continueShelf(tabItems(lists, false)));
+        pages[TV].setTopShelf(continueShelf(tabItems(lists, true)));
         showHomeRow();
     }
 
-    private List<ContinueWatching.Item> continueRow(List<ContinueWatching.Item> items, ContinueWatching.Item item, boolean home) {
-        List<ContinueWatching.Item> shown = onePerTitle(items);
-        return home ? ContinueWatching.forHome(shown) : ContinueWatching.of(shown, item.episode);
+    private List<ContinueWatching.Item> continueRow(ContinueWatching.Lists lists, ContinueWatching.Item item, boolean home) {
+        return home ? homeItems(lists) : tabItems(lists, item.episode);
+    }
+
+    /** Home's row: FirePlayer Home's, one card per title. */
+    private List<ContinueWatching.Item> homeItems(ContinueWatching.Lists lists) {
+        return ContinueWatching.forHome(onePerTitle(lists.home));
+    }
+
+    /**
+     * The Movies tab's row (with {@code shows}, TV Shows'): FirePlayer's Movies (TV Shows) page's, in its order; from an
+     * older FirePlayer, the films (shows) of Home's. One card per title.
+     */
+    private List<ContinueWatching.Item> tabItems(ContinueWatching.Lists lists, boolean shows) {
+        return ContinueWatching.of(onePerTitle(lists.tab(shows)), shows);
     }
 
     /** One card per TMDB title: the copy (or the show's episode) watched last (see ContinueWatching.onePerTitle). */
@@ -1846,7 +1860,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
 
     /** Home's row: films and shows together, one card per show; gone (and nothing peeks) when there's none or it's off. */
     private void showHomeRow() {
-        PageModel.Shelf s = settings.homeContinue() ? continueShelf(ContinueWatching.forHome(onePerTitle(continueItems))) : null;
+        PageModel.Shelf s = settings.homeContinue() ? continueShelf(homeItems(continueLists)) : null;
         // As Movies and TV Shows are fed: focus stays with its card when FirePlayer reorders, a removed card's gap closes
         homeRow.setTopShelf(s);
         if (s == null && (zone() == Zone.HOME_ROW || homeLift > 0f || homeZone == Zone.HOME_ROW)) {
@@ -1919,7 +1933,7 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
                 for (ContinueWatching.Item item : missing) continueArtPending.remove(item.artKey());
                 continueArt.putAll(found);
                 continueTmdb.putAll(ids);
-                if (!found.isEmpty()) showContinue(continueItems);
+                if (!found.isEmpty()) showContinue(continueLists);
                 // A card left on its title card for want of the network gets its picture once it is back: 5 s, 10 s,
                 // 20 s ... up to 2 minutes apart, then every 10 minutes while it is shown; from the start on each refresh
                 if (again) {
@@ -1952,15 +1966,11 @@ public final class HomeActivity extends Activity implements AppAdapter.Listener,
     private void removeContinue(ContinueWatching.Item item) {
         // Every copy of the title goes: the card stands for all of them, and an older one would come up in its place
         String title = titleKey(item);
-        List<ContinueWatching.Item> rest = new ArrayList<>();
-        List<String> gone = new ArrayList<>();
-        for (ContinueWatching.Item i : continueItems) {
-            if (i.id.equals(item.id) || titleKey(i).equals(title)) gone.add(i.id);
-            else rest.add(i);
-        }
-        if (!gone.contains(item.id)) gone.add(item.id);
+        Set<String> gone = new LinkedHashSet<>();
+        for (ContinueWatching.Item i : continueLists.all()) if (i.id.equals(item.id) || titleKey(i).equals(title)) gone.add(i.id);
+        gone.add(item.id);
         continueGeneration++;   // an answer on its way from before this would bring the card back
-        showContinue(rest);
+        showContinue(continueLists.without(gone));
         runOff(worker, () -> {
             for (String id : gone) ContinueWatching.delete(this, id);
         });

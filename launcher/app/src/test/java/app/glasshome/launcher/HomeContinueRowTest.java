@@ -475,7 +475,7 @@ public class HomeContinueRowTest {
         TestHome.settle();   // 1.2 s: before the rest of the return (RESUME_REFRESH_MS)
         assertEquals("the new list, as Home comes back", java.util.Arrays.asList("m2", "e1", "e2", "m3", "e3", "m5"),
                 ids(h.activity.homeRow()));
-        assertEquals("30 min left", h.activity.homeRow().model().shelves.get(0).cards.get(0).subtitle);
+        assertEquals("30m left", h.activity.homeRow().model().shelves.get(0).cards.get(0).subtitle);
         for (int i = 0; i < 4; i++) TestHome.settle();
         assertEquals("asked once", asked + 1, FakeFirePlayer.queries);
 
