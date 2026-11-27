@@ -96,7 +96,7 @@ final class ContinueWatching {
         String caption() {
             String left = timeLeft();
             if (!episode) return left;
-            String where = !library() ? where(season, number) : season > 0 || number > 0 ? "S" + season + " E" + number : "";
+            String where = numbered(season, number);
             if (where.isEmpty()) return left;
             return left.isEmpty() ? where : where + " · " + left;
         }
@@ -120,6 +120,15 @@ final class ContinueWatching {
          */
         boolean library() {
             return id.startsWith("vod-");
+        }
+
+        /**
+         * Episode {@code season}/{@code number} of this entry's show as its card and details write it: FirePlayer's own
+         * "S2 E5" (a special "S0 E5"); for another app's video, {@link ContinueWatching#where}. "" for none.
+         */
+        String numbered(int season, int number) {
+            if (!library()) return where(season, number);
+            return season > 0 || number > 0 ? "S" + season + " E" + number : "";
         }
 
         /**

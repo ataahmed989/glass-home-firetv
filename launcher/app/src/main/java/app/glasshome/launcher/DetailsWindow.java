@@ -260,10 +260,13 @@ final class DetailsWindow extends GlassWindow {
         return out;
     }
 
-    /** "S24 E5  ·  Hard Cases" on its "This episode", or null when it has none (a film, or nothing known of it). */
+    /**
+     * "S24 E5  ·  Hard Cases" on its "This episode" (numbered as its card is: a FirePlayer special "S0 E5"), or null
+     * when it has none (a film, or nothing known of it).
+     */
     String episodeLine() {
         if (item == null || !item.episode) return null;
-        String where = ContinueWatching.where(episodeSeason(), episodeNumber()), name = episodeName();
+        String where = item.numbered(episodeSeason(), episodeNumber()), name = episodeName();
         if (where.isEmpty() && name.isEmpty()) return null;
         if (where.isEmpty()) return name;
         return name.isEmpty() ? where : where + "  ·  " + name;
@@ -464,7 +467,7 @@ final class DetailsWindow extends GlassWindow {
         pictures.progress(c, rect, r, item.progress());
 
         float tx = Ui.px(928), tw = Ui.px(704);
-        String where = ContinueWatching.where(episodeSeason(), episodeNumber()), name = episodeName();
+        String where = item.numbered(episodeSeason(), episodeNumber()), name = episodeName();
         String facts = episodeFacts(), story = episode == null ? "" : episode.overview;
         // Its line alone (all the entry knows of it) sits in the middle of the panel
         float y1 = facts.isEmpty() && story.isEmpty() ? centred(epName, Ui.px(710)) : Ui.px(676);

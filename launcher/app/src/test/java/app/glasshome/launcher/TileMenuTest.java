@@ -536,4 +536,16 @@ public class TileMenuTest {
         assertEquals("512 MB", ControlCenter.gb(512L * 1024 * 1024));
         assertEquals("11 GB", ControlCenter.gb(11L * 1024 * 1024 * 1024));
     }
+
+    /** The Sleep Timer's time left, as FirePlayer (and Continue Watching's cards) write it. */
+    @Test
+    public void sleepTimerTimeLeft() {
+        assertEquals("1m left", ControlCenter.sleepLeft(1));
+        assertEquals("45m left", ControlCenter.sleepLeft(45));
+        assertEquals("59m left", ControlCenter.sleepLeft(59));
+        assertEquals("1h left", ControlCenter.sleepLeft(60));
+        assertEquals("1h 30m left", ControlCenter.sleepLeft(90));
+        assertEquals("2h left", ControlCenter.sleepLeft(120));
+        assertEquals("2h 1m left", ControlCenter.sleepLeft(121));
+    }
 }
