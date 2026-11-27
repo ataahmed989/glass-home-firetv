@@ -385,8 +385,10 @@ final class ControlCenter extends View {
         }
     }
 
-    private static String sleepLeft(int minutes) {
-        return (minutes >= 60 ? minutes / 60 + " hr " + (minutes % 60 == 0 ? "" : minutes % 60 + " min ") : minutes + " min ") + "left";
+    /** "1h 30m left", "45m left", "2h left": time left as FirePlayer writes it (as Continue Watching's cards do). */
+    static String sleepLeft(int minutes) {
+        int h = minutes / 60, m = minutes % 60;
+        return (h == 0 ? m + "m" : m == 0 ? h + "h" : h + "h " + m + "m") + " left";
     }
 
     private static int blend(int from, int to, float t) {

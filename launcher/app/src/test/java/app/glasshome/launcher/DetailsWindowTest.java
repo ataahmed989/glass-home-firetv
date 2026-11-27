@@ -508,6 +508,29 @@ public class DetailsWindowTest {
         assertTrue(w.hasListedEpisode());
     }
 
+    /**
+     * A special of FirePlayer's own (season 0) is numbered on its details' "This episode" as on its card, "S0 E5",
+     * whether from the entry or from FirePlayer's listed episode; another app's video keeps "E5" (a season 0 there is
+     * one FirePlayer didn't know).
+     */
+    @Test
+    public void aSpecialIsNumberedAsOnItsCard() {
+        DetailsWindow w = new DetailsWindow(RuntimeEnvironment.getApplication(), new Glass(false, 0xE6181A20));
+        ContinueWatching.Item special = new ContinueWatching.Item("vod-s-tt0903747", true, "Breaking Bad", 2008, 0, 5,
+                "Minisode", 1396, 22 * MIN, 45 * MIN, Fixtures.RECORDED_AT);
+        w.show(special, true);
+        assertEquals("S0 E5 · 23m left", special.caption());
+        assertEquals("S0 E5  ·  Minisode", w.episodeLine());
+        w.setEpisode(new ContinueWatching.Episode("", 0, 5, "Inside Breaking Bad", "", null, 0, "", 22 * MIN, true));
+        assertEquals("FirePlayer's listed episode", "S0 E5  ·  Inside Breaking Bad", w.episodeLine());
+
+        ContinueWatching.Item other = new ContinueWatching.Item("0123456789abcdef", true, "Breaking Bad", 2008, 0, 5,
+                "Minisode", 1396, 22 * MIN, 45 * MIN, Fixtures.RECORDED_AT);
+        w.show(other, false);
+        assertEquals("E5 · 23m left", other.caption());
+        assertEquals("E5  ·  Minisode", w.episodeLine());
+    }
+
     @Test
     public void fromAPageBackIsOnTheSameCard() throws Exception {
         withFirePlayer(true);

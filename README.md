@@ -27,7 +27,9 @@ no ads and no sponsored rows.
   straight to the title's own page in that app (or to the app, where it has no link for it).
 - **Continue Watching** atop Movies (films) and TV Shows (one episode per show): what was played
   in FirePlayer lately and not finished, from FirePlayer's content provider, with TMDB artwork,
-  how far it got and what is left. Select resumes it in FirePlayer where it was left; holding
+  how far it got and what is left ("1h 12m left", as FirePlayer writes it). Movies and TV Shows
+  show FirePlayer's own Movies and TV Shows pages' rows (an older FirePlayer: the films and shows
+  of its list). Select resumes it in FirePlayer where it was left; holding
   Select offers Resume and Remove. No FirePlayer (or an older one): no row.
 - **Sports** (ESPN): Live Now, My Teams, and a row per league: NBA; the Premier League, La Liga,
   the Champions League, Ligue 1, the Bundesliga and MLS; the NFL, college football and basketball,

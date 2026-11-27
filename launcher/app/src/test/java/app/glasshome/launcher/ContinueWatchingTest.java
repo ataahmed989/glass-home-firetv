@@ -2,6 +2,7 @@ package app.glasshome.launcher;
 
 import static android.view.KeyEvent.KEYCODE_DPAD_CENTER;
 import static android.view.KeyEvent.KEYCODE_DPAD_DOWN;
+import static android.view.KeyEvent.KEYCODE_DPAD_LEFT;
 import static android.view.KeyEvent.KEYCODE_DPAD_RIGHT;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -59,12 +60,19 @@ public class ContinueWatchingTest {
     /**
      * FirePlayer's provider, as the contract has it: rows newest first, delete by id, a change notified. As an older
      * FirePlayer unless {@link #newer}: then its rows also say where each plays from and whether its show's episodes
-     * can be listed, and it lists them ({@link #episodes}) on items/{id}/episodes.
+     * can be listed, and it lists them ({@link #episodes}) on items/{id}/episodes. With {@link #pages}, asked with
+     * ?lists it answers its Movies and TV Shows pages' rows after Home's ({@link #rows}), each row naming its list.
      */
     public static final class FakeFirePlayer extends ContentProvider {
         static final String[] EPISODE_COLUMNS = {"episode_id", "season", "episode", "name", "overview", "image",
                 "runtime_min", "air_date", "position_ms", "current"};
         static final List<Object[]> rows = Collections.synchronizedList(new ArrayList<>());
+        /** A FirePlayer that sends its Movies and TV Shows pages' rows ({@link #movieRows}, {@link #showRows}). */
+        static volatile boolean pages;
+        static final List<Object[]> movieRows = Collections.synchronizedList(new ArrayList<>()),
+                showRows = Collections.synchronizedList(new ArrayList<>());
+        /** Each ask of the list: whether it asked for the three lists at once. */
+        static final List<Boolean> askedLists = Collections.synchronizedList(new ArrayList<>());
         static final List<String> deleted = Collections.synchronizedList(new ArrayList<>());
         static volatile int queries;
         /** FirePlayer in the middle of an update (or its process restarting): it can't answer. */
@@ -84,6 +92,10 @@ public class ContinueWatchingTest {
         /** As an older FirePlayer with nothing on its list. */
         static void reset() {
             rows.clear();
+            pages = false;
+            movieRows.clear();
+            showRows.clear();
+            askedLists.clear();
             deleted.clear();
             queries = 0;
             failing = false;
@@ -107,7 +119,25 @@ public class ContinueWatchingTest {
             List<String> path = uri.getPathSegments();
             if (path.size() == 3 && path.get(0).equals("items") && path.get(2).equals("episodes")) return listEpisodes(path.get(1));
             queries++;
+            askedLists.add(uri.getQueryParameter(ContinueWatching.LISTS) != null);
             if (failing) throw new IllegalStateException("FirePlayer is being updated");
+            if (pages && uri.getQueryParameter(ContinueWatching.LISTS) != null) {
+                String[] columns = java.util.Arrays.copyOf(COLUMNS, COLUMNS.length + 1);
+                columns[COLUMNS.length] = ContinueWatching.LIST;
+                MatrixCursor c = new MatrixCursor(columns);
+                Object[][] lists = {{ContinueWatching.HOME, rows}, {ContinueWatching.MOVIES, movieRows}, {ContinueWatching.SHOWS, showRows}};
+                for (Object[] list : lists) {
+                    @SuppressWarnings("unchecked") List<Object[]> of = (List<Object[]>) list[1];
+                    synchronized (of) {
+                        for (Object[] r : of) {
+                            Object[] row = java.util.Arrays.copyOf(r, columns.length);
+                            row[COLUMNS.length] = list[0];
+                            c.addRow(row);
+                        }
+                    }
+                }
+                return c;
+            }
             if (!newer) {
                 MatrixCursor c = new MatrixCursor(COLUMNS);
                 synchronized (rows) {
@@ -156,6 +186,7 @@ public class ContinueWatchingTest {
             synchronized (rows) {
                 removed = rows.removeIf(r -> r[0].equals(id));
             }
+            removed |= movieRows.removeIf(r -> r[0].equals(id)) | showRows.removeIf(r -> r[0].equals(id));
             getContext().getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
             return removed ? 1 : 0;
         }
@@ -254,6 +285,26 @@ public class ContinueWatchingTest {
         Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
     }
 
+    /**
+     * A FirePlayer that sends its Movies and TV Shows pages' rows: Home's row has room for its newest three; its pages'
+     * have the films and shows Home's hasn't too, each in FirePlayer's order (NCIS before The Simpsons, watched later).
+     */
+    private static void withFirePlayerPages() {
+        long t = Fixtures.RECORDED_AT;
+        Object[] lawAndOrder = episode("e1", "Law & Order", 24, 5, "Hard Cases", 549, 18 * MIN, 42 * MIN, t - 1000),
+                sacrifice = movie("m1", "Sacrifice", 2026, 1284186, 28 * MIN, 100 * MIN, t - 2000),
+                masterplan = movie("m2", "Masterplan", 2026, 1561726, 75 * MIN, 110 * MIN, t - 3000);
+        FakeFirePlayer.pages = true;
+        Collections.addAll(FakeFirePlayer.rows, lawAndOrder, sacrifice, masterplan);
+        Collections.addAll(FakeFirePlayer.movieRows, sacrifice, masterplan,
+                movie("m3", "Animals", 2026, 1236045, 10 * MIN, 106 * MIN, t - 5000),
+                movie("m5", "The Breadwinner", 2026, 1440050, 50 * MIN, 100 * MIN, t - 8000));
+        Collections.addAll(FakeFirePlayer.showRows, lawAndOrder,
+                episode("e3", "NCIS", 23, 12, "Ghosts", 4614, 30 * MIN, 44 * MIN, t - 7000),
+                episode("e2", "The Simpsons", 37, 3, null, 456, 6 * MIN, 22 * MIN, t - 4000));
+        Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
+    }
+
     /** Home, then the tab bar along to page {@code p}, its content loaded and the row asked for. */
     private static TestHome open(int p) throws Exception {
         return open(TestHome.withTmdb(), p);
@@ -301,11 +352,11 @@ public class ContinueWatchingTest {
         assertEquals("the page's own shelves follow", "Top 10 Movies This Week", h.page(MOVIES).model().shelves.get(1).title);
         PageModel.Card sacrifice = row.cards.get(0);
         assertEquals("Sacrifice", sacrifice.title);
-        assertEquals("1 hr 12 min left", sacrifice.subtitle);
+        assertEquals("1h 12m left", sacrifice.subtitle);
         assertEquals(0.28f, sacrifice.progress, 0.001f);
         assertEquals("TMDB's backdrop, by its id", "https://image.tmdb.org/t/p/w780/oAUf1pvGlafCZVlEuPt1JyONHR1.jpg", sacrifice.imageUrl);
         assertNull("no TMDB id, and none found by its name: its title stands in for artwork", row.cards.get(3).imageUrl);
-        assertEquals("55 min left", row.cards.get(3).subtitle);
+        assertEquals("55m left", row.cards.get(3).subtitle);
 
         h.press(KEYCODE_DPAD_DOWN);   // the hero
         h.press(KEYCODE_DPAD_DOWN);   // the row
@@ -325,7 +376,7 @@ public class ContinueWatchingTest {
         assertEquals("Continue Watching", shows.title);
         assertEquals(java.util.Arrays.asList("e1", "e2", "e3"), ids(shows));
         assertEquals("Law & Order", shows.cards.get(0).title);
-        assertEquals("S24 E5  ·  24 min left", shows.cards.get(0).subtitle);
+        assertEquals("S24 E5 · 24m left", shows.cards.get(0).subtitle);
         assertEquals("https://image.tmdb.org/t/p/w780/hrfP9BQ4mOMZOa8nHbFJLSDHBLz.jpg", shows.cards.get(0).imageUrl);
         assertEquals("Top 10 Shows This Week", h.page(TV).model().shelves.get(1).title);
         h.press(KEYCODE_DPAD_DOWN);
@@ -333,6 +384,107 @@ public class ContinueWatchingTest {
         assertEquals(0, h.page(TV).focusedRow());
         TestHome.settleImages();
         h.capture("continue-tv.png");
+    }
+
+    /**
+     * The user: Glass Home's Movies tab shows the same Continue row as FirePlayer's Movies page, and TV Shows the same as
+     * its TV Shows page. Home's row stays FirePlayer Home's. All three come in one ask, each time the list is asked for.
+     */
+    @Test
+    public void moviesAndTvShowsAreFirePlayersOwnPagesRows() throws Exception {
+        new HomeSettings(org.robolectric.RuntimeEnvironment.getApplication()).setHomeContinue(true);
+        withFirePlayerPages();
+        TestHome h = open(MOVIES);
+        assertEquals("FirePlayer's Movies page's, films Home's row hasn't room for too",
+                java.util.Arrays.asList("m1", "m2", "m3", "m5"), ids(first(h, MOVIES)));
+        assertEquals("in FirePlayer's order", java.util.Arrays.asList("e1", "e3", "e2"), ids(h.page(TV).topShelf()));
+        assertEquals("S23 E12 · 14m left", h.page(TV).topShelf().cards.get(1).subtitle);
+        assertEquals("Home's row: FirePlayer Home's", java.util.Arrays.asList("e1", "m1", "m2"),
+                ids(h.activity.homeRow().model().shelves.get(0)));
+        assertFalse(FakeFirePlayer.askedLists.isEmpty());
+        assertFalse("every ask asks for the three at once", FakeFirePlayer.askedLists.contains(false));
+
+        // FirePlayer's list changed: asked once, and the tabs take its pages' rows as they are now
+        int asked = FakeFirePlayer.queries;
+        synchronized (FakeFirePlayer.movieRows) {
+            FakeFirePlayer.movieRows.add(0, FakeFirePlayer.movieRows.remove(3));
+        }
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
+        settleRow();
+        assertEquals("one ask for all three", asked + 1, FakeFirePlayer.queries);
+        assertEquals(java.util.Arrays.asList("m5", "m1", "m2", "m3"), ids(first(h, MOVIES)));
+
+        // Remove on a card only the Movies tab has: gone at once, FirePlayer told
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);
+        assertEquals("the row kept its place on its card", "m1", h.page(MOVIES).focusedCard().id);
+        h.press(KEYCODE_DPAD_LEFT);
+        assertEquals("m5", h.page(MOVIES).focusedCard().id);
+        holdSelect(h);
+        h.press(KEYCODE_DPAD_DOWN);
+        h.press(KEYCODE_DPAD_DOWN);   // Remove
+        h.press(KEYCODE_DPAD_CENTER);
+        settleRow();
+        assertEquals(java.util.Collections.singletonList("m5"), FakeFirePlayer.deleted);
+        assertEquals(java.util.Arrays.asList("m1", "m2", "m3"), ids(first(h, MOVIES)));
+        assertEquals(java.util.Arrays.asList("e1", "m1", "m2"), ids(h.activity.homeRow().model().shelves.get(0)));
+    }
+
+    /**
+     * An older FirePlayer answers the ask for the three lists as it always answered: its list alone, without the column
+     * naming a row's list. That one ask is all, and the tabs take the films and shows of it, as before.
+     */
+    @Test
+    public void anOlderFirePlayersListServesTheTabsAsBefore() throws Exception {
+        withFirePlayer();
+        android.content.Context app = org.robolectric.RuntimeEnvironment.getApplication();
+        ContinueWatching.Lists lists = ContinueWatching.query(app);
+        assertEquals(1, FakeFirePlayer.queries);
+        assertEquals(java.util.Collections.singletonList(true), FakeFirePlayer.askedLists);
+        assertNull(lists.movies);
+        assertNull(lists.shows);
+        assertEquals(8, lists.home.size());
+        assertEquals(lists.home, lists.tab(false));
+        assertEquals(lists.home, lists.tab(true));
+
+        TestHome h = open(MOVIES);
+        assertEquals(java.util.Arrays.asList("m1", "m2", "m3", "m4", "m5"), ids(first(h, MOVIES)));
+        assertEquals(java.util.Arrays.asList("e1", "e2", "e3"), ids(h.page(TV).topShelf()));
+        int asked = FakeFirePlayer.queries;
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
+        settleRow();
+        assertEquals("asked once, not again for the tabs", asked + 1, FakeFirePlayer.queries);
+    }
+
+    /** Time left as FirePlayer writes it on its cards (vod/data/VodLibrary.kt's Captions), character for character. */
+    @Test
+    public void timeLeftIsWrittenAsFirePlayerWritesIt() {
+        long t = Fixtures.RECORDED_AT;
+        // Captions.left: to the nearest minute (a half up), at least one; "1h", "1h 12m"
+        long[] remaining = {0, 29_999, 89_999, 90_000, 23 * MIN, 3_569_999, 3_570_000, 72 * MIN, 120 * MIN, 7_229_999,
+                7_230_000, 155 * MIN + 30_000};
+        String[] said = {"1m left", "1m left", "1m left", "2m left", "23m left", "59m left", "1h left", "1h 12m left",
+                "2h left", "2h left", "2h 1m left", "2h 36m left"};
+        for (int i = 0; i < remaining.length; i++) {
+            ContinueWatching.Item film = new ContinueWatching.Item("vod-m-tt0068646", false, "The Godfather", 1972, 0, 0, null,
+                    238, 10 * MIN, 10 * MIN + remaining[i], t);
+            assertEquals(remaining[i] + " ms left", said[i], film.timeLeft());
+            assertEquals(said[i], film.caption());
+        }
+        // Captions.caption: "S2 E5 · 23m left"; a special as FirePlayer numbers it; the next episode not yet played
+        assertEquals("S2 E5 · 23m left", show("vod-s-tt0903747", 2, 5, 22 * MIN, 45 * MIN).caption());
+        assertEquals("S0 E5 · 23m left", show("vod-s-tt0903747", 0, 5, 22 * MIN, 45 * MIN).caption());
+        assertEquals("S3 E1", show("vod-s-tt0903747", 3, 1, 0, 0).caption());
+        assertEquals("naming no episode", "23m left", show("vod-s-tt0903747", 0, 0, 22 * MIN, 45 * MIN).caption());
+        assertEquals("1h 12m left", show("vod-s-tt0903747", 1, 1, 0, 72 * MIN).timeLeft());
+        // Another app's video (an older FirePlayer's): season 0 is one FirePlayer didn't know, as before
+        assertEquals("E5 · 23m left", show("0123456789abcdef", 0, 5, 22 * MIN, 45 * MIN).caption());
+        assertEquals("S1 E5 · 23m left", show("0123456789abcdef", 1, 5, 22 * MIN, 45 * MIN).caption());
+    }
+
+    private static ContinueWatching.Item show(String id, int season, int number, long position, long duration) {
+        return new ContinueWatching.Item(id, true, "Breaking Bad", 2008, season, number, null, 1396, position, duration,
+                Fixtures.RECORDED_AT);
     }
 
     @Test
@@ -536,8 +688,9 @@ public class ContinueWatchingTest {
                 new Object[] {"x1", "movie", "No Length Again", 0, 0, 0, null, 0, 0, 30 * MIN, t},
                 new Object[] {"y1", "episode", "A Show", 0, 0, 0, null, 0, 0, 0, t});
         Robolectric.setupContentProvider(FakeFirePlayer.class, FirePlayer.authority(FirePlayer.V1));
-        List<ContinueWatching.Item> all = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
-        assertNotNull(all);
+        ContinueWatching.Lists lists = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
+        assertNotNull(lists);
+        List<ContinueWatching.Item> all = lists.home;
         List<ContinueWatching.Item> films = ContinueWatching.of(all, false);
         List<String> ids = new ArrayList<>();
         for (ContinueWatching.Item i : films) ids.add(i.id);
@@ -546,11 +699,11 @@ public class ContinueWatchingTest {
         assertEquals("no length: no bar, no time left", -1f, films.get(0).progress(), 0f);
         assertEquals("", films.get(0).caption());
         assertEquals(0f, films.get(1).progress(), 0f);
-        assertEquals("30 min left", films.get(1).caption());
+        assertEquals("30m left", films.get(1).caption());
         assertEquals(1f, films.get(2).progress(), 0f);
-        assertEquals("1 min left", films.get(2).caption());
+        assertEquals("1m left", films.get(2).caption());
         assertEquals(0f, films.get(3).progress(), 0f);
-        assertEquals("100 hr left", films.get(3).caption());
+        assertEquals("100h left", films.get(3).caption());
         ContinueWatching.Item show = ContinueWatching.of(all, true).get(0);
         assertEquals("no season or episode, no length: nothing to say", "", show.caption());
         assertEquals("not matched by FirePlayer: looked up by its name", "tv?A Show", show.artKey());
@@ -646,7 +799,7 @@ public class ContinueWatchingTest {
                 shows.cards.get(0).imageUrl);
         assertEquals("first aired before the year FirePlayer has", "https://image.tmdb.org/t/p/w780/lY2DhbA7Hy44fAKddr06UrXWWaQ.jpg",
                 shows.cards.get(1).imageUrl);
-        assertEquals("S2 E3  ·  40 min left", shows.cards.get(1).subtitle);
+        assertEquals("S2 E3 · 40m left", shows.cards.get(1).subtitle);
         assertNull("TMDB has two films by that name (1992's and 2024's) and FirePlayer gave no year to tell them apart:"
                 + " its title card, not perhaps the wrong cover", h.page(MOVIES).topShelf().cards.get(0).imageUrl);
         List<String> asked = java.util.Arrays.asList(
@@ -688,10 +841,10 @@ public class ContinueWatchingTest {
         PageModel.Card film = first(h, MOVIES).cards.get(0), show = h.page(TV).topShelf().cards.get(0);
         assertNull(film.imageUrl);
         assertEquals("Inside Out 2", film.title);
-        assertEquals("1 hr 7 min left", film.subtitle);
+        assertEquals("1h 7m left", film.subtitle);
         assertNull(show.imageUrl);
         assertEquals("The Last of Us", show.title);
-        assertEquals("S1 E2  ·  40 min left", show.subtitle);
+        assertEquals("S1 E2 · 40m left", show.subtitle);
         assertEquals("each with its year, then without it", 4, searches.size());
 
         h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
@@ -735,13 +888,13 @@ public class ContinueWatchingTest {
         FakeFirePlayer.failing = true;
         assertNull(ContinueWatching.query(app));
         FakeFirePlayer.failing = false;
-        assertEquals(1, ContinueWatching.query(app).size());
+        assertEquals(1, ContinueWatching.query(app).home.size());
     }
 
     @Test
     public void withoutFirePlayerTheListIsEmpty() {
-        List<ContinueWatching.Item> none = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
+        ContinueWatching.Lists none = ContinueWatching.query(org.robolectric.RuntimeEnvironment.getApplication());
         assertNotNull(none);
-        assertTrue(none.isEmpty());
+        assertTrue(none.all().isEmpty());
     }
 }

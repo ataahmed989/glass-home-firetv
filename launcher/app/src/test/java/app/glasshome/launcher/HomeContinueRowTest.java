@@ -445,6 +445,124 @@ public class HomeContinueRowTest {
         return n;
     }
 
+    /**
+     * Back from FirePlayer, where a title was taken off Continue Watching and another played on: Home's row is
+     * FirePlayer's list at once (asked as Home comes back), not the old one until the rest of the return, a second and
+     * a half later. While Home was away FirePlayer was never asked, only noted as changed; and the return asks once.
+     */
+    @Test
+    public void backFromFirePlayerTheRowIsItsNewListAtOnce() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        assertEquals(java.util.Arrays.asList("e1", "m1", "m2", "e2", "m3", "e3", "m5"), ids(h.activity.homeRow()));
+        h.controller.pause().stop();
+        int asked = FakeFirePlayer.queries;
+        // In FirePlayer: Sacrifice removed, Masterplan played on (first now), each change told as it's made
+        synchronized (FakeFirePlayer.rows) {
+            FakeFirePlayer.rows.remove(1);
+            Object[] m2 = FakeFirePlayer.rows.remove(1);
+            m2[8] = 80 * MIN;
+            m2[10] = Fixtures.RECORDED_AT;
+            FakeFirePlayer.rows.add(0, m2);
+        }
+        for (int i = 0; i < 3; i++) {
+            h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
+            TestHome.advance(60_000);
+        }
+        assertEquals("not asked while away (a film playing): only noted", asked, FakeFirePlayer.queries);
+
+        h.controller.start().resume();
+        TestHome.settle();   // 1.2 s: before the rest of the return (RESUME_REFRESH_MS)
+        assertEquals("the new list, as Home comes back", java.util.Arrays.asList("m2", "e1", "e2", "m3", "e3", "m5"),
+                ids(h.activity.homeRow()));
+        assertEquals("30m left", h.activity.homeRow().model().shelves.get(0).cards.get(0).subtitle);
+        for (int i = 0; i < 4; i++) TestHome.settle();
+        assertEquals("asked once", asked + 1, FakeFirePlayer.queries);
+
+        // Nothing changed in FirePlayer since: the next return asks nothing
+        h.controller.pause().stop();
+        TestHome.advance(10 * MIN);
+        h.controller.start().resume();
+        for (int i = 0; i < 4; i++) TestHome.settle();
+        assertEquals(asked + 1, FakeFirePlayer.queries);
+    }
+
+    /** Movies (which asks on every return) after a change in FirePlayer: the new list at once, and asked only once. */
+    @Test
+    public void backToMoviesAfterAChangeAsksOnceAndAtOnce() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        h.menu();
+        h.press(KEYCODE_DPAD_RIGHT);
+        TestHome.advance(1000);
+        for (int i = 0; i < 3; i++) TestHome.settle();
+        assertEquals(HomeActivity.MOVIES, h.activity.page());
+        h.controller.pause().stop();
+        int asked = FakeFirePlayer.queries;
+        synchronized (FakeFirePlayer.rows) {
+            FakeFirePlayer.rows.remove(1);   // Sacrifice, removed in FirePlayer
+        }
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
+        TestHome.advance(400);
+        h.controller.start().resume();
+        TestHome.settle();
+        List<String> films = new ArrayList<>();
+        for (PageModel.Card c : h.page(HomeActivity.MOVIES).topShelf().cards) films.add(c.id);
+        assertEquals(java.util.Arrays.asList("m2", "m3", "m5"), films);
+        for (int i = 0; i < 4; i++) TestHome.settle();
+        assertEquals("asked once", asked + 1, FakeFirePlayer.queries);
+    }
+
+    /**
+     * Seen in review: the usual return from a film, FirePlayer's save on leaving told just before Home comes back (its
+     * notice still settling when Home asks): asked once, as Home comes back, not a second time once the notice settles.
+     */
+    @Test
+    public void aNoticeJustBeforeTheReturnIsAskedOnce() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        h.controller.pause().stop();
+        int asked = FakeFirePlayer.queries;
+        synchronized (FakeFirePlayer.rows) {
+            FakeFirePlayer.rows.remove(1);   // Sacrifice, removed in FirePlayer while away
+        }
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
+        TestHome.advance(60_000);
+        // The save on leaving, told 100 ms before Home is back
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
+        TestHome.advance(100);
+        h.controller.start().resume();
+        for (int i = 0; i < 4; i++) TestHome.settle();
+        assertEquals(java.util.Arrays.asList("e1", "m2", "e2", "m3", "e3", "m5"), ids(h.activity.homeRow()));
+        assertEquals("asked once", asked + 1, FakeFirePlayer.queries);
+    }
+
+    /**
+     * Seen in review: FirePlayer updated while Home was away (the update ends its process), after a change it told. The
+     * list is stale, but FirePlayer isn't running, so Home doesn't start it while Home comes in: it's asked with the rest
+     * of the return, once keys are quiet, as before.
+     */
+    @Test
+    public void firePlayerUpdatedWhileAwayIsAskedWithTheRestOfTheReturn() throws Exception {
+        withFirePlayer();
+        TestHome h = home();
+        h.controller.pause().stop();
+        int asked = FakeFirePlayer.queries;
+        // A change told while a film played, then FirePlayer updated (which ends it)
+        h.activity.getContentResolver().notifyChange(FirePlayer.items(FirePlayer.V1), null);
+        TestHome.advance(60_000);
+        h.activity.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED, android.net.Uri.parse("package:" + FirePlayer.V1)));
+        TestHome.advance(10_000);
+        assertEquals("not asked while away", asked, FakeFirePlayer.queries);
+        h.controller.start().resume();
+        TestHome.advance(300);
+        Thread.sleep(150);
+        TestHome.advance(10);
+        assertEquals("not asked as Home comes in", asked, FakeFirePlayer.queries);
+        for (int i = 0; i < 4; i++) TestHome.settle();
+        assertEquals("asked with the rest of the return", asked + 1, FakeFirePlayer.queries);
+    }
+
     @Test
     public void backToHomeFromAnotherTabSeesFirePlayersNewList() throws Exception {
         withFirePlayer();
